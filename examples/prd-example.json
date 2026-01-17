@@ -11,7 +11,8 @@
       "acceptanceCriteria": [
         "User model has id, email, password_hash, created_at fields",
         "Model includes validation for email format",
-        "Password is never stored in plain text"
+        "Password is never stored in plain text",
+        "Unit tests written for validation logic"
       ],
       "dependsOn": [],
       "complexity": "senior",
@@ -20,11 +21,12 @@
     {
       "id": "US-002",
       "title": "Add User model tests",
-      "description": "As a developer, I want tests for the User model",
+      "description": "As a developer, I want comprehensive tests for the User model",
       "acceptanceCriteria": [
         "Test user creation with valid data",
         "Test email validation rejects invalid emails",
-        "Test password hashing works correctly"
+        "Test password hashing works correctly",
+        "Test edge cases: empty strings, null values, duplicate emails"
       ],
       "dependsOn": ["US-001"],
       "complexity": "junior",
@@ -38,7 +40,8 @@
         "POST /auth/login accepts email and password",
         "Returns JWT token on successful login",
         "Returns 401 on invalid credentials",
-        "Rate limits login attempts"
+        "Rate limits login attempts",
+        "Unit tests for token generation logic"
       ],
       "dependsOn": ["US-001"],
       "complexity": "senior",
@@ -51,7 +54,8 @@
       "acceptanceCriteria": [
         "Add --auth-token flag to root command",
         "Token is passed to API requests in Authorization header",
-        "Flag can also read from AUTH_TOKEN environment variable"
+        "Flag can also read from AUTH_TOKEN environment variable",
+        "Unit tests for flag parsing and header injection"
       ],
       "dependsOn": ["US-003"],
       "complexity": "junior",
@@ -60,12 +64,13 @@
     {
       "id": "US-005",
       "title": "Add login endpoint tests",
-      "description": "As a developer, I want tests for the login endpoint",
+      "description": "As a developer, I want integration tests for the login endpoint",
       "acceptanceCriteria": [
-        "Test successful login returns token",
+        "Test successful login returns valid JWT",
         "Test invalid password returns 401",
         "Test non-existent user returns 401",
-        "Test rate limiting works"
+        "Test rate limiting blocks after threshold",
+        "Test malformed request returns 400"
       ],
       "dependsOn": ["US-003"],
       "complexity": "junior",

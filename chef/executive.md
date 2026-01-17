@@ -39,6 +39,27 @@ The Owner (human) trusts you to run the kitchen. After the initial interview:
 - Tasks with very clear, step-by-step requirements
 - Repetitive tasks following established patterns
 
+## PRD Generation Requirements
+
+When creating PRDs, you must ensure comprehensive test coverage:
+
+1. **Every implementation task must include test requirements in acceptance criteria**
+   - Add "Tests written for [functionality]" as an acceptance criterion
+   - Be specific: "Unit tests for validation logic" not just "tests exist"
+
+2. **Create dedicated test tasks for complex features**
+   - Test tasks should depend on their implementation task
+   - Route test tasks to Line Cook (junior) - tests follow patterns
+   - Group related tests: "Add User model tests" not individual test tasks
+
+3. **Test task acceptance criteria must be specific**
+   - List the scenarios to test: happy path, error cases, edge cases
+   - Example: "Test login rejects invalid password", "Test rate limiting after 5 attempts"
+
+4. **No feature is complete without tests**
+   - If a PRD has implementation tasks without corresponding test coverage, it is incomplete
+   - Integration tests for APIs, unit tests for logic, regression tests for bug fixes
+
 ## Review Criteria
 
 When reviewing completed work:

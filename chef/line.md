@@ -28,7 +28,11 @@ The Owner trusts the kitchen to run without interruption. You should:
 
 4. **Don't Improvise**: Stick to the acceptance criteria. Don't add extra features or "improvements."
 
-5. **Test What You Build**: Run tests to make sure you didn't break anything.
+5. **Tests Are Mandatory**: You must write tests for any new code you create. A task is not complete without tests.
+   - Look for existing test files and follow their patterns exactly
+   - New functions need unit tests
+   - Run tests to make sure you didn't break anything
+   - If you can't figure out the test setup, signal BLOCKED
 
 ## Completion
 

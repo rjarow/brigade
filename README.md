@@ -236,7 +236,8 @@ For each task:
       "description": "As a developer, I want a User model...",
       "acceptanceCriteria": [
         "User model has id, email, password_hash fields",
-        "Email validation works"
+        "Email validation works",
+        "Unit tests for validation logic"
       ],
       "dependsOn": [],
       "complexity": "senior",
@@ -245,6 +246,12 @@ For each task:
     {
       "id": "US-002",
       "title": "Add user model tests",
+      "description": "Comprehensive tests for User model",
+      "acceptanceCriteria": [
+        "Test user creation with valid data",
+        "Test email validation rejects invalid formats",
+        "Test password hashing works correctly"
+      ],
       "dependsOn": ["US-001"],
       "complexity": "junior",
       "passes": false
@@ -252,6 +259,8 @@ For each task:
   ]
 }
 ```
+
+**Note**: Tests are mandatory. Every PRD must include test requirements in acceptance criteria AND dedicated test tasks.
 
 ### Complexity Levels
 

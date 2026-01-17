@@ -126,12 +126,20 @@ The Director creates a structured PRD:
       "id": "US-001",
       "title": "Add User model",
       "complexity": "senior",    // Architectural decision
+      "acceptanceCriteria": [
+        "User model has id, email, password_hash fields",
+        "Unit tests for validation logic"
+      ],
       "dependsOn": []
     },
     {
       "id": "US-002",
       "title": "Add User model tests",
       "complexity": "junior",    // Follows patterns
+      "acceptanceCriteria": [
+        "Test user creation with valid data",
+        "Test email validation rejects invalid formats"
+      ],
       "dependsOn": ["US-001"]
     }
   ]
@@ -143,6 +151,7 @@ Tasks are:
 - Properly assigned complexity
 - Ordered by dependencies
 - Have specific acceptance criteria
+- **Include test requirements** (both in acceptance criteria AND as dedicated test tasks)
 
 ## Phase 2: Execution
 

@@ -70,6 +70,47 @@ Each task should be:
 - Touches 1-3 files
 - Describable in 2-3 sentences
 
+## Test Requirements (MANDATORY)
+
+Every PRD must have comprehensive test coverage. No feature is complete without tests.
+
+### 1. Implementation tasks must include test criteria
+Add "Tests written for [specific functionality]" to acceptance criteria:
+```json
+{
+  "acceptanceCriteria": [
+    "POST /auth/login accepts email and password",
+    "Returns JWT token on successful login",
+    "Unit tests written for token generation logic"
+  ]
+}
+```
+
+### 2. Create dedicated test tasks for each major component
+- Test tasks depend on their implementation task
+- Route test tasks to Line Cook (junior) - tests follow patterns
+- Be specific about what to test:
+```json
+{
+  "id": "US-005",
+  "title": "Add login endpoint tests",
+  "acceptanceCriteria": [
+    "Test successful login returns valid JWT",
+    "Test invalid password returns 401",
+    "Test non-existent user returns 401",
+    "Test malformed email returns 400"
+  ],
+  "dependsOn": ["US-003"],
+  "complexity": "junior"
+}
+```
+
+### 3. Test coverage requirements by task type
+- **Models/Services**: Unit tests for all public methods
+- **API endpoints**: Integration tests for success + error cases
+- **Bug fixes**: Regression test proving the fix works
+- **Utilities**: Unit tests with edge cases
+
 ## Complexity Assignment
 
 ### Junior (Line Cook) - `"complexity": "junior"`
@@ -166,9 +207,15 @@ User: "Add user authentication with login and signup"
 
 After analysis, generate:
 - US-001: Add User model (senior) - foundational, needs security thought
-- US-002: Add User model tests (junior) - follows US-001 patterns
+  - Acceptance criteria includes: "Unit tests for model validation"
+- US-002: Add User model tests (junior) - comprehensive model test coverage
 - US-003: Add password hashing utility (senior) - security sensitive
+  - Acceptance criteria includes: "Unit tests for hash/verify functions"
 - US-004: Add signup endpoint (senior) - validation, error handling
-- US-005: Add login endpoint (senior) - auth logic, JWT
-- US-006: Add auth middleware (senior) - integration concern
-- US-007: Add endpoint tests (junior) - follows existing test patterns
+- US-005: Add signup endpoint tests (junior) - success, validation errors, duplicate email
+- US-006: Add login endpoint (senior) - auth logic, JWT
+- US-007: Add login endpoint tests (junior) - success, wrong password, rate limiting
+- US-008: Add auth middleware (senior) - integration concern
+- US-009: Add auth middleware tests (junior) - valid token, expired token, missing token
+
+**Pattern**: Implementation task → Test task → Next implementation task

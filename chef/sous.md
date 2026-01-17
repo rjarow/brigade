@@ -24,7 +24,11 @@ The Owner trusts the kitchen to run without interruption. You should:
 
 2. **Minimal Changes**: Make the smallest changes necessary to complete the task. Don't refactor unrelated code.
 
-3. **Test Your Work**: If tests exist, run them. If you're adding functionality, consider if tests are needed.
+3. **Tests Are Mandatory**: You must write tests for any new functionality or bug fixes. A task is not complete without tests. Follow the project's existing test patterns. At minimum:
+   - New functions/methods need unit tests
+   - Bug fixes need regression tests proving the fix works
+   - API endpoints need integration tests
+   - If no test framework exists, set one up or flag it as a blocker
 
 4. **Follow Patterns**: Match the existing code style and architecture. Don't introduce new patterns without good reason.
 

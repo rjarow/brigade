@@ -121,6 +121,11 @@ You can edit the PRD if needed:
 - Modify acceptance criteria
 - Reorder dependencies
 
+**Verify test coverage**: Every PRD should include:
+- Test requirements in implementation task acceptance criteria
+- Dedicated test tasks for each major component
+- Test tasks should depend on their implementation tasks
+
 ### Step 3: Execute
 
 Run the full service:

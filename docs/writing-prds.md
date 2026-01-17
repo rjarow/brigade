@@ -196,6 +196,72 @@ This will cause Brigade to hang:
 }
 ```
 
+## Test Requirements (Mandatory)
+
+Every PRD must include comprehensive test coverage. Tests are not optional.
+
+### 1. Include test criteria in implementation tasks
+
+Add test requirements directly to acceptance criteria:
+
+```json
+{
+  "id": "US-001",
+  "title": "Add User model",
+  "acceptanceCriteria": [
+    "User model has id, email, password_hash fields",
+    "Email validation rejects invalid formats",
+    "Unit tests written for validation logic"
+  ]
+}
+```
+
+### 2. Create dedicated test tasks
+
+For each major component, add a test task:
+
+```json
+{
+  "id": "US-002",
+  "title": "Add User model tests",
+  "description": "Comprehensive tests for User model",
+  "acceptanceCriteria": [
+    "Test user creation with valid data",
+    "Test email validation rejects invalid emails",
+    "Test password hashing works correctly",
+    "Test edge cases (empty strings, null values)"
+  ],
+  "dependsOn": ["US-001"],
+  "complexity": "junior"
+}
+```
+
+### 3. Test coverage by task type
+
+| Task Type | Required Tests |
+|-----------|----------------|
+| Models/Services | Unit tests for all public methods |
+| API endpoints | Integration tests for success + error cases |
+| Bug fixes | Regression test proving the fix works |
+| Utilities | Unit tests with edge cases |
+
+### 4. Pattern: Implementation → Tests
+
+```
+US-001: Add User model (senior)
+    ↓
+US-002: Add User model tests (junior)
+    ↓
+US-003: Add login endpoint (senior)
+    ↓
+US-004: Add login endpoint tests (junior)
+```
+
+Test tasks should:
+- Depend on their implementation task
+- Be assigned `junior` complexity (tests follow patterns)
+- Have specific scenarios listed in acceptance criteria
+
 ## Task Sizing
 
 ### Right-Sized Tasks
