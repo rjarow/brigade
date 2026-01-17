@@ -77,7 +77,7 @@ print_usage() {
   echo "  ticket <prd.json> <id>     Run single ticket"
   echo "  status <prd.json>          Show kitchen status"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
-  echo "  models                     List available OpenCode models"
+  echo "  opencode-models            List available OpenCode models"
   echo ""
   echo "Options:"
   echo "  --max-iterations <n>       Max iterations per task (default: 50)"
@@ -86,7 +86,7 @@ print_usage() {
   echo "Examples:"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
   echo "  ./brigade.sh service tasks/prd.json"
-  echo "  ./brigade.sh models | grep glm"
+  echo "  ./brigade.sh opencode-models"
 }
 
 load_config() {
@@ -1212,7 +1212,7 @@ cmd_analyze() {
   echo ""
 }
 
-cmd_models() {
+cmd_opencode_models() {
   echo -e "${BOLD}Available OpenCode Models${NC}"
   echo -e "${GRAY}Use these values for OPENCODE_MODEL in brigade.config${NC}"
   echo ""
@@ -1285,8 +1285,8 @@ main() {
     "analyze")
       cmd_analyze "$@"
       ;;
-    "models")
-      cmd_models "$@"
+    "opencode-models")
+      cmd_opencode_models "$@"
       ;;
     "help"|"--help"|"-h"|"")
       print_usage
