@@ -62,6 +62,21 @@ This is your ONE chance to get context. Ask smart questions:
 3. **Preferences**: "Any preferred approaches or patterns to follow/avoid?"
 4. **Context**: "Is this replacing something? Integrating with existing systems?"
 
+#### Configuration Check (ALWAYS DO THIS):
+Before generating the PRD, check `brigade/brigade.config` and inform the owner about worker setup:
+
+1. **Read the config**: Check what's configured for LINE_AGENT, SOUS_AGENT, TEST_CMD
+2. **If OpenCode is configured but may not work**: Warn them that OPENCODE_MODEL needs to be set correctly for their setup
+3. **Mention key options**:
+   - "I see you're using [Claude/OpenCode] for junior tasks. Want to change this?"
+   - "TEST_CMD is set to [value]. Is that correct for this project?"
+   - "If you want to use OpenCode for cost savings, you can set USE_OPENCODE=true or configure OPENCODE_MODEL"
+
+Common OPENCODE_MODEL options to mention:
+- `openrouter/google/gemini-2.0-flash-001` - Fast, cheap
+- `openrouter/deepseek/deepseek-chat` - Good for code
+- Leave empty to use OpenCode's default
+
 Get enough information that you can execute autonomously afterward.
 
 ### Phase 3: Codebase Analysis
