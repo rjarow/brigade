@@ -4,116 +4,251 @@ This guide will get you up and running with Brigade in 5 minutes.
 
 ## Prerequisites
 
-- **Claude CLI** (`claude`) - for Sous Chef and Executive Chef
+- **Claude CLI** (`claude`) - for Executive Chef and Sous Chef
 - **OpenCode** (`opencode`) - for Line Cook (or any other CLI-based AI)
 - **jq** - for JSON processing
 - **bash** 4.0+
 
 ## Installation
 
-### Option 1: Clone into your project
+Brigade can be dropped into any project - existing or new.
+
+### Existing Project
 
 ```bash
 cd your-project
+
+# Option 1: Clone as subdirectory
 git clone https://github.com/yourusername/brigade.git
-```
 
-### Option 2: Symlink (recommended for development)
-
-```bash
+# Option 2: Clone and symlink (recommended for development)
 git clone https://github.com/yourusername/brigade.git ~/brigade
-cd your-project
 ln -s ~/brigade ./brigade
+
+# Option 3: Add as git submodule
+git submodule add https://github.com/yourusername/brigade.git brigade
 ```
 
-### Option 3: Add as git submodule
+### New Project
 
 ```bash
-cd your-project
-git submodule add https://github.com/yourusername/brigade.git brigade
+# Create your project
+mkdir my-project && cd my-project
+git init
+
+# Add Brigade
+git clone https://github.com/yourusername/brigade.git
+
+# You're ready to go!
 ```
 
 ## Configuration
 
-Create or edit `brigade/brigade.config`:
+Copy and customize the config:
 
 ```bash
-# Workers - customize these for your setup
-EXECUTIVE_CMD="claude --model opus"
-SOUS_CMD="claude --model sonnet"
-LINE_CMD="opencode -p"
-
-# Test command (optional but recommended)
-TEST_CMD="npm test"  # or: go test ./..., pytest, cargo test, etc.
-
-# Limits
-MAX_ITERATIONS=50
+cp brigade/brigade.config.example brigade/brigade.config
 ```
 
-## Create Your First PRD
-
-Create `tasks/prd-my-feature.json`:
-
-```json
-{
-  "featureName": "My Feature",
-  "branchName": "feature/my-feature",
-  "tasks": [
-    {
-      "id": "US-001",
-      "title": "Add basic structure",
-      "description": "As a developer, I want the basic file structure",
-      "acceptanceCriteria": [
-        "Create src/feature.js",
-        "Export main function"
-      ],
-      "dependsOn": [],
-      "complexity": "junior",
-      "passes": false
-    },
-    {
-      "id": "US-002",
-      "title": "Implement core logic",
-      "description": "As a user, I want the feature to work",
-      "acceptanceCriteria": [
-        "Handle edge cases",
-        "Return correct results",
-        "Add error handling"
-      ],
-      "dependsOn": ["US-001"],
-      "complexity": "senior",
-      "passes": false
-    }
-  ]
-}
-```
-
-## Run Brigade
+Edit `brigade/brigade.config`:
 
 ```bash
-# Check status
-./brigade/brigade.sh status tasks/prd-my-feature.json
+# Workers - customize for your setup
+EXECUTIVE_CMD="claude --model opus"      # Director (plans, reviews)
+SOUS_CMD="claude --model sonnet"         # Senior (complex tasks)
+LINE_CMD="opencode -p"                   # Junior (routine tasks)
 
-# Analyze routing
-./brigade/brigade.sh analyze tasks/prd-my-feature.json
+# Test command (recommended)
+TEST_CMD="npm test"  # or: go test ./..., pytest, cargo test
+
+# Escalation
+ESCALATION_ENABLED=true
+ESCALATION_AFTER=3
+
+# Executive review
+REVIEW_ENABLED=true
+REVIEW_JUNIOR_ONLY=true
+```
+
+## Your First Feature
+
+### Step 1: Plan the Feature
+
+Tell Brigade what you want to build:
+
+```bash
+./brigade/brigade.sh plan "Add user authentication with JWT"
+```
+
+The Executive Chef (Opus) will:
+
+1. **Interview you** - Ask clarifying questions about scope and requirements
+2. **Analyze your codebase** - Understand project structure and patterns
+3. **Generate a PRD** - Create a task breakdown with proper complexity assignments
+
+Output:
+```
+═══════════════════════════════════════════════════════════
+EXECUTIVE CHEF: Planning Phase
+Feature: Add user authentication with JWT
+═══════════════════════════════════════════════════════════
+
+[Director explores codebase, asks questions, generates PRD...]
+
+╔═══════════════════════════════════════════════════════════╗
+║  PRD GENERATED                                            ║
+╚═══════════════════════════════════════════════════════════╝
+
+File: tasks/prd-add-user-authentication-with-jwt.json
+Tasks: 7 total (4 senior, 3 junior)
+
+Next steps:
+  1. Review the PRD: cat tasks/prd-add-user-authentication-with-jwt.json | jq
+  2. Run service:    ./brigade.sh service tasks/prd-add-user-authentication-with-jwt.json
+```
+
+### Step 2: Review the PRD
+
+Check what was generated:
+
+```bash
+cat tasks/prd-add-user-authentication-with-jwt.json | jq
+```
+
+You can edit the PRD if needed:
+- Adjust complexity assignments
+- Add/remove tasks
+- Modify acceptance criteria
+- Reorder dependencies
+
+### Step 3: Execute
+
+Run the full service:
+
+```bash
+./brigade/brigade.sh service tasks/prd-add-user-authentication-with-jwt.json
+```
+
+Brigade will:
+1. Execute each task in dependency order
+2. Route to Line Cook or Sous Chef based on complexity
+3. Escalate junior failures to senior
+4. Run tests after each task
+5. Have Executive Chef review before marking complete
+
+### Step 4: Monitor Progress
+
+Check status:
+
+```bash
+./brigade/brigade.sh status tasks/prd-add-user-authentication-with-jwt.json
+```
+
+Output:
+```
+Kitchen Status: User Authentication with JWT
+
+  Total tickets:    7
+  Complete:         4
+  Pending:          3
+
+Pending Tickets:
+  US-005: Add auth middleware [senior]
+  US-006: Add logout endpoint [junior]
+  US-007: Add endpoint tests [junior]
+
+Session Stats:
+  Escalations:      1
+  Reviews:          3 (3 passed, 0 failed)
+
+Escalation History:
+  US-003: line → sous (3 iterations failed)
+```
+
+## Using Claude Code Skills
+
+If you're working inside Claude Code, you can use skills directly:
+
+```
+/generate-prd Add user authentication with OAuth and JWT tokens
+```
+
+The skill will:
+1. Ask you clarifying questions
+2. Explore your codebase
+3. Generate and save the PRD
+4. Show you next steps
+
+## Commands Reference
+
+```bash
+# Plan a feature (Director generates PRD)
+./brigade.sh plan "Add feature description here"
 
 # Run full service
-./brigade/brigade.sh service tasks/prd-my-feature.json
+./brigade.sh service tasks/prd.json
 
 # Run single ticket
-./brigade/brigade.sh ticket tasks/prd-my-feature.json US-001
+./brigade.sh ticket tasks/prd.json US-001
+
+# Check kitchen status
+./brigade.sh status tasks/prd.json
+
+# Analyze task routing
+./brigade.sh analyze tasks/prd.json
 ```
 
-## What Happens
+## What Happens During Execution
 
-1. Brigade reads your PRD
-2. For each task (in dependency order):
-   - Routes to Line Cook (junior) or Sous Chef (senior) based on complexity
-   - Worker receives task + chef prompt + project context
-   - Worker implements the task
-   - If `TEST_CMD` is set, tests are run
-   - On success (`<promise>COMPLETE</promise>`), task is marked done
-3. Repeats until all tasks complete
+```
+┌───────────────────────────────────────────────────────────────┐
+│ 1. Load PRD                                                   │
+│    Read tasks, build dependency graph                         │
+└─────────────────────────┬─────────────────────────────────────┘
+                          ▼
+┌───────────────────────────────────────────────────────────────┐
+│ 2. Get next task                                              │
+│    Find task where: passes=false AND all dependencies met     │
+└─────────────────────────┬─────────────────────────────────────┘
+                          ▼
+┌───────────────────────────────────────────────────────────────┐
+│ 3. Route task                                                 │
+│    junior → Line Cook,  senior → Sous Chef                    │
+└─────────────────────────┬─────────────────────────────────────┘
+                          ▼
+┌───────────────────────────────────────────────────────────────┐
+│ 4. Fire ticket                                                │
+│    Send task + chef prompt to worker                          │
+└─────────────────────────┬─────────────────────────────────────┘
+                          ▼
+┌───────────────────────────────────────────────────────────────┐
+│ 5. Check for escalation                                       │
+│    Line Cook fails 3x? → Escalate to Sous Chef                │
+└─────────────────────────┬─────────────────────────────────────┘
+                          ▼
+┌───────────────────────────────────────────────────────────────┐
+│ 6. Run tests (if configured)                                  │
+│    Tests fail? → Iterate again                                │
+└─────────────────────────┬─────────────────────────────────────┘
+                          ▼
+┌───────────────────────────────────────────────────────────────┐
+│ 7. Executive review (if enabled)                              │
+│    Review fails? → Iterate again                              │
+└─────────────────────────┬─────────────────────────────────────┘
+                          ▼
+┌───────────────────────────────────────────────────────────────┐
+│ 8. Mark complete, move to next task                           │
+│    Repeat until all tasks done                                │
+└───────────────────────────────────────────────────────────────┘
+```
+
+## Stop and Resume
+
+Brigade saves progress to the PRD file. You can:
+
+- **Stop anytime**: Ctrl+C
+- **Resume later**: Run the same service command
+- **Manual override**: Edit `"passes": true/false` in the PRD
 
 ## Next Steps
 
