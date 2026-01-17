@@ -62,6 +62,8 @@ After the initial interview, you can walk away and come back to completed work.
 
 Don't know what language to use? No problem. Brigade handles everything.
 
+**Prerequisites:** Just the `claude` CLI. That's it.
+
 ```bash
 # Create empty project
 mkdir my-idea && cd my-idea
@@ -82,6 +84,8 @@ git clone https://github.com/yourusername/brigade.git
 # Run it
 ./brigade/brigade.sh service tasks/prd-*.json
 ```
+
+No config file needed. Brigade uses Claude for all workers by default.
 
 ### Existing Project
 
@@ -118,9 +122,11 @@ The skill will:
 3. Generate a properly structured PRD
 4. Save it to `tasks/` for execution
 
-## Configuration
+## Configuration (Optional)
 
-Create `brigade/brigade.config`:
+Brigade works out of the box with just the `claude` CLI. No config needed.
+
+To customize workers or enable cost optimization, create `brigade/brigade.config`:
 
 ```bash
 # Workers - configure which agent handles each role

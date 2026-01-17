@@ -4,10 +4,13 @@ This guide will get you up and running with Brigade in 5 minutes.
 
 ## Prerequisites
 
-- **Claude CLI** (`claude`) - for Executive Chef and Sous Chef
-- **OpenCode** (`opencode`) - for Line Cook (or any other CLI-based AI)
+**Required:**
+- **Claude CLI** (`claude`) - that's it!
 - **jq** - for JSON processing
 - **bash** 4.0+
+
+**Optional (for cost savings):**
+- **OpenCode** (`opencode`) - for Line Cook junior tasks (cheaper than Claude)
 
 ## Installation
 
@@ -25,12 +28,11 @@ git init
 # Add Brigade
 git clone https://github.com/yourusername/brigade.git
 
-# Configure (optional - defaults work for most setups)
-cp brigade/brigade.config.example brigade/brigade.config
-
 # Start planning - Brigade will ask about language, framework, everything
 ./brigade/brigade.sh plan "Build a CLI tool that does X"
 ```
+
+That's it. No config file needed. Brigade uses Claude for all workers by default.
 
 Brigade will:
 1. **Detect** that this is an empty project
@@ -54,9 +56,12 @@ ln -s ~/brigade ./brigade
 git submodule add https://github.com/yourusername/brigade.git brigade
 ```
 
-## Configuration
+## Configuration (Optional)
 
-Copy and customize the config:
+Brigade works out of the box with just Claude CLI. Config is only needed if you want to:
+- Use OpenCode for junior tasks (cost savings)
+- Customize escalation/review settings
+- Set a test command
 
 ```bash
 cp brigade/brigade.config.example brigade/brigade.config
@@ -65,13 +70,17 @@ cp brigade/brigade.config.example brigade/brigade.config
 Edit `brigade/brigade.config`:
 
 ```bash
-# Workers - customize for your setup
+# Workers - defaults use Claude for everything
 EXECUTIVE_CMD="claude --model opus"      # Director (plans, reviews)
 SOUS_CMD="claude --model sonnet"         # Senior (complex tasks)
-LINE_CMD="opencode -p"                   # Junior (routine tasks)
+LINE_CMD="claude --model sonnet"         # Junior (routine tasks)
 
-# Test command (recommended)
-TEST_CMD="npm test"  # or: go test ./..., pytest, cargo test
+# COST OPTIMIZATION: Use OpenCode for junior tasks
+# LINE_CMD="opencode run --command"
+# LINE_AGENT="opencode"
+
+# Test command (auto-detected from project setup tasks)
+TEST_CMD=""  # Leave empty - setup tasks configure this
 
 # Escalation
 ESCALATION_ENABLED=true

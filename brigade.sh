@@ -19,13 +19,13 @@ GRAY='\033[0;90m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# Defaults
+# Defaults (all Claude - works out of the box if you have claude CLI)
 EXECUTIVE_CMD="claude --model opus"
 EXECUTIVE_AGENT="claude"
 SOUS_CMD="claude --model sonnet"
 SOUS_AGENT="claude"
-LINE_CMD="opencode run --command"
-LINE_AGENT="opencode"
+LINE_CMD="claude --model sonnet"  # Default to Sonnet; configure OpenCode for cost savings
+LINE_AGENT="claude"
 TEST_CMD=""
 MAX_ITERATIONS=50
 

@@ -1,5 +1,8 @@
 # Brigade Configuration
 # Copy this to your project's brigade/ directory and customize
+#
+# NOTE: This file is OPTIONAL. Brigade works out of the box with just Claude CLI.
+# Use this file to customize workers, enable OpenCode for cost savings, etc.
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # WORKERS
@@ -7,13 +10,16 @@
 # Brigade supports multiple AI coding agents. Configure based on what you have.
 #
 # Supported agents:
-#   claude      - Anthropic Claude (via claude CLI)
+#   claude      - Anthropic Claude (via claude CLI) - DEFAULT
 #   opencode    - OpenCode (via opencode CLI) - recommended for junior tasks
 #   codex       - OpenAI Codex (coming soon)
 #   gemini      - Google Gemini (coming soon)
 #   aider       - Aider (coming soon)
 #   cursor      - Cursor (coming soon)
 #   local       - Local models via Ollama (coming soon)
+#
+# DEFAULT: All workers use Claude. This works if you only have claude CLI installed.
+# For cost savings, configure OpenCode for Line Cook (junior tasks).
 #
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -28,10 +34,14 @@ SOUS_CMD="claude --model sonnet"
 SOUS_AGENT="claude"
 
 # Line Cook (junior) - routine tasks, boilerplate, simple tests
-# Recommended: OpenCode with GLM for cost efficiency
-# OpenCode docs: https://opencode.ai/docs/cli/
-LINE_CMD="opencode run --command"
-LINE_AGENT="opencode"
+# Default: Claude Sonnet (works out of the box)
+# For cost savings: Use OpenCode with GLM - see https://opencode.ai/docs/cli/
+LINE_CMD="claude --model sonnet"
+LINE_AGENT="claude"
+
+# COST OPTIMIZATION: Uncomment these to use OpenCode for junior tasks
+# LINE_CMD="opencode run --command"
+# LINE_AGENT="opencode"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # AGENT-SPECIFIC SETTINGS
