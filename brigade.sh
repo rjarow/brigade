@@ -118,7 +118,7 @@ print_usage() {
   echo "  plan <description>         Generate PRD from feature description (Director/Opus)"
   echo "  service <prd.json>         Run full service (all tasks)"
   echo "  ticket <prd.json> <id>     Run single ticket"
-  echo "  status <prd.json>          Show kitchen status"
+  echo "  status [prd.json]          Show kitchen status (auto-detects active PRD)"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
   echo "  opencode-models            List available OpenCode models"
   echo ""
@@ -127,9 +127,9 @@ print_usage() {
   echo "  --dry-run                  Show what would be done without executing"
   echo ""
   echo "Examples:"
+  echo "  ./brigade.sh status                                  # Auto-detect active PRD"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
   echo "  ./brigade.sh service tasks/prd.json"
-  echo "  ./brigade.sh opencode-models"
 }
 
 load_config() {
@@ -266,6 +266,61 @@ get_state_path() {
   local prd_path="$1"
   local prd_dir=$(dirname "$prd_path")
   echo "$prd_dir/$STATE_FILE"
+}
+
+# Find active PRD - looks for state files with currentTask set, or most recent PRD
+find_active_prd() {
+  local search_dirs=("tasks" "." "prd" "prds")
+
+  # First, look for state files with an active currentTask
+  for dir in "${search_dirs[@]}"; do
+    if [ -d "$dir" ]; then
+      for state_file in "$dir"/$STATE_FILE "$dir"/*/$STATE_FILE; do
+        if [ -f "$state_file" ] 2>/dev/null; then
+          local current=$(jq -r '.currentTask // empty' "$state_file" 2>/dev/null)
+          if [ -n "$current" ]; then
+            # Found active state, find corresponding PRD
+            local state_dir=$(dirname "$state_file")
+            for prd in "$state_dir"/*.json; do
+              if [ -f "$prd" ] && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
+                echo "$prd"
+                return 0
+              fi
+            done
+          fi
+        fi
+      done
+    fi
+  done
+
+  # No active task found, look for most recent PRD with pending tasks
+  for dir in "${search_dirs[@]}"; do
+    if [ -d "$dir" ]; then
+      for prd in "$dir"/prd*.json "$dir"/*.json; do
+        if [ -f "$prd" ] 2>/dev/null && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
+          local pending=$(jq '[.tasks[] | select(.passes == false)] | length' "$prd" 2>/dev/null)
+          if [ "$pending" -gt 0 ]; then
+            echo "$prd"
+            return 0
+          fi
+        fi
+      done
+    fi
+  done
+
+  # Last resort: any PRD file
+  for dir in "${search_dirs[@]}"; do
+    if [ -d "$dir" ]; then
+      for prd in "$dir"/prd*.json "$dir"/*.json; do
+        if [ -f "$prd" ] 2>/dev/null && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
+          echo "$prd"
+          return 0
+        fi
+      done
+    fi
+  done
+
+  return 1
 }
 
 init_state() {
@@ -795,6 +850,19 @@ executive_review() {
 
 cmd_status() {
   local prd_path="$1"
+
+  # Auto-detect PRD if not provided
+  if [ -z "$prd_path" ]; then
+    prd_path=$(find_active_prd)
+    if [ -z "$prd_path" ]; then
+      echo -e "${YELLOW}No active PRD found.${NC}"
+      echo -e "${GRAY}Searched: tasks/, ., prd/, prds/${NC}"
+      echo ""
+      echo "Usage: ./brigade.sh status [prd.json]"
+      exit 1
+    fi
+    echo -e "${GRAY}Found: $prd_path${NC}"
+  fi
 
   if [ ! -f "$prd_path" ]; then
     echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
