@@ -1,0 +1,75 @@
+{
+  "featureName": "User Authentication",
+  "branchName": "feature/user-auth",
+  "createdAt": "2025-01-17",
+  "description": "Add user authentication with login, signup, and session management",
+  "tasks": [
+    {
+      "id": "US-001",
+      "title": "Add User model",
+      "description": "As a developer, I want a User model so that I can store user data",
+      "acceptanceCriteria": [
+        "User model has id, email, password_hash, created_at fields",
+        "Model includes validation for email format",
+        "Password is never stored in plain text"
+      ],
+      "dependsOn": [],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Add User model tests",
+      "description": "As a developer, I want tests for the User model",
+      "acceptanceCriteria": [
+        "Test user creation with valid data",
+        "Test email validation rejects invalid emails",
+        "Test password hashing works correctly"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "Add login endpoint",
+      "description": "As a user, I want to login so that I can access my account",
+      "acceptanceCriteria": [
+        "POST /auth/login accepts email and password",
+        "Returns JWT token on successful login",
+        "Returns 401 on invalid credentials",
+        "Rate limits login attempts"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "Add login CLI flag",
+      "description": "As a developer, I want a --auth-token flag for CLI commands",
+      "acceptanceCriteria": [
+        "Add --auth-token flag to root command",
+        "Token is passed to API requests in Authorization header",
+        "Flag can also read from AUTH_TOKEN environment variable"
+      ],
+      "dependsOn": ["US-003"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "Add login endpoint tests",
+      "description": "As a developer, I want tests for the login endpoint",
+      "acceptanceCriteria": [
+        "Test successful login returns token",
+        "Test invalid password returns 401",
+        "Test non-existent user returns 401",
+        "Test rate limiting works"
+      ],
+      "dependsOn": ["US-003"],
+      "complexity": "junior",
+      "passes": false
+    }
+  ]
+}
