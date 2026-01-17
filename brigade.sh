@@ -1230,11 +1230,13 @@ cmd_models() {
     echo ""
   fi
 
-  echo -e "${BOLD}Popular models:${NC}"
-  opencode models 2>&1 | grep -E "^(zai-coding-plan/glm|opencode/glm|anthropic/claude)" | head -20
+  echo -e "${BOLD}GLM models (cost-effective):${NC}"
+  opencode models 2>&1 | grep -E "(zai-coding-plan|opencode/glm)"
   echo ""
-  echo -e "${GRAY}Run 'opencode models' to see all available models${NC}"
-  echo -e "${GRAY}Run 'opencode models | grep <term>' to search${NC}"
+  echo -e "${BOLD}Claude models (via OpenCode):${NC}"
+  opencode models 2>&1 | grep "anthropic/claude" | head -10
+  echo ""
+  echo -e "${GRAY}Run 'opencode models' for full list${NC}"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
