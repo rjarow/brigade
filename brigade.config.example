@@ -109,8 +109,14 @@ TEST_CMD=""
 # Enable automatic escalation (Line Cook → Sous Chef after failures)
 ESCALATION_ENABLED=true
 
-# Number of iterations before escalating to next tier
+# Number of iterations before escalating Line Cook → Sous Chef
 ESCALATION_AFTER=3
+
+# Enable Sous Chef → Executive Chef escalation (rare, for truly stuck tasks)
+ESCALATION_TO_EXEC=true
+
+# Number of iterations before escalating Sous Chef → Executive Chef
+ESCALATION_TO_EXEC_AFTER=5
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXECUTIVE REVIEW

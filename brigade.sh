@@ -39,7 +39,9 @@ CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=true
 
 # Escalation defaults
 ESCALATION_ENABLED=true
-ESCALATION_AFTER=3
+ESCALATION_AFTER=3           # Line Cook → Sous Chef after N iterations
+ESCALATION_TO_EXEC=true      # Allow Sous Chef → Executive Chef (rare)
+ESCALATION_TO_EXEC_AFTER=5   # Sous Chef → Executive Chef after N iterations
 
 # Executive review defaults
 REVIEW_ENABLED=true
@@ -1023,7 +1025,7 @@ cmd_ticket() {
   # Route and fire
   local initial_worker=$(route_task "$prd_path" "$task_id")
   local worker="$initial_worker"
-  local escalated=false
+  local escalation_tier=0  # 0=none, 1=line→sous, 2=sous→exec
   local iteration_in_tier=0
 
   update_state_task "$prd_path" "$task_id" "$worker" "started"
@@ -1034,7 +1036,7 @@ cmd_ticket() {
     # Check for escalation (Line Cook → Sous Chef)
     if [ "$ESCALATION_ENABLED" == "true" ] && \
        [ "$worker" == "line" ] && \
-       [ "$escalated" == "false" ] && \
+       [ "$escalation_tier" -eq 0 ] && \
        [ "$iteration_in_tier" -gt "$ESCALATION_AFTER" ]; then
 
       echo ""
@@ -1046,7 +1048,27 @@ cmd_ticket() {
 
       record_escalation "$prd_path" "$task_id" "line" "sous" "Max iterations ($ESCALATION_AFTER) reached without completion"
       worker="sous"
-      escalated=true
+      escalation_tier=1
+      iteration_in_tier=0
+    fi
+
+    # Check for escalation (Sous Chef → Executive Chef) - rare
+    if [ "$ESCALATION_TO_EXEC" == "true" ] && \
+       [ "$worker" == "sous" ] && \
+       [ "$escalation_tier" -lt 2 ] && \
+       [ "$iteration_in_tier" -gt "$ESCALATION_TO_EXEC_AFTER" ]; then
+
+      echo ""
+      echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
+      log_event "ESCALATE" "ESCALATING $task_id: Sous Chef → Executive Chef (rare)"
+      echo -e "${RED}║  Reason: $ESCALATION_TO_EXEC_AFTER iterations without completion            ║${NC}"
+      echo -e "${RED}║  This is unusual - Executive Chef stepping in             ║${NC}"
+      echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
+      echo ""
+
+      record_escalation "$prd_path" "$task_id" "sous" "executive" "Max iterations ($ESCALATION_TO_EXEC_AFTER) reached without completion"
+      worker="executive"
+      escalation_tier=2
       iteration_in_tier=0
     fi
 
@@ -1084,7 +1106,7 @@ cmd_ticket() {
       # Blocked - try escalation if available
       if [ "$ESCALATION_ENABLED" == "true" ] && \
          [ "$worker" == "line" ] && \
-         [ "$escalated" == "false" ]; then
+         [ "$escalation_tier" -eq 0 ]; then
 
         echo ""
         echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
@@ -1095,9 +1117,28 @@ cmd_ticket() {
 
         record_escalation "$prd_path" "$task_id" "line" "sous" "Task blocked"
         worker="sous"
-        escalated=true
+        escalation_tier=1
         iteration_in_tier=0
         continue  # Try again with sous chef
+      fi
+
+      # Sous Chef blocked - escalate to Executive Chef
+      if [ "$ESCALATION_TO_EXEC" == "true" ] && \
+         [ "$worker" == "sous" ] && \
+         [ "$escalation_tier" -lt 2 ]; then
+
+        echo ""
+        echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
+        log_event "ESCALATE" "ESCALATING $task_id: Sous Chef → Executive Chef (blocked)"
+        echo -e "${RED}║  Reason: Sous Chef blocked - calling in Executive         ║${NC}"
+        echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+
+        record_escalation "$prd_path" "$task_id" "sous" "executive" "Task blocked"
+        worker="executive"
+        escalation_tier=2
+        iteration_in_tier=0
+        continue  # Try again with executive chef
       fi
 
       update_state_task "$prd_path" "$task_id" "$worker" "blocked"
