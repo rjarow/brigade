@@ -216,7 +216,9 @@ ln -s "$(pwd)/brigade/.claude/skills/brigade-generate-prd.md" .claude/skills/
 ln -s "$(pwd)/brigade/.claude/skills/brigade-convert-prd-to-json.md" .claude/skills/
 ```
 
-Or copy them:
+**Updating:** Since these are symlinks, just `git pull` in `brigade/` to get updates. No re-installation needed.
+
+Or copy them (but you'll need to re-copy after updates):
 ```bash
 mkdir -p .claude/skills
 cp brigade/.claude/skills/*.md .claude/skills/

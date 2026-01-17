@@ -130,6 +130,8 @@ ln -s "$(pwd)/brigade/.claude/skills/brigade-generate-prd.md" .claude/skills/
 ln -s "$(pwd)/brigade/.claude/skills/brigade-convert-prd-to-json.md" .claude/skills/
 ```
 
+**Updating:** Since these are symlinks, just `git pull` in `brigade/` to get updates. No re-installation needed.
+
 **Use skills** in Claude Code:
 ```
 /brigade-generate-prd Add user authentication with OAuth and JWT tokens
