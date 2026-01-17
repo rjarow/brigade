@@ -57,6 +57,49 @@ LEARNINGS_FILE="brigade-learnings.md"
 MAX_PARALLEL=3
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# LOGGING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Timestamp format for logs (ISO 8601 with local time)
+timestamp() {
+  date "+%Y-%m-%d %H:%M:%S"
+}
+
+# Log an event with timestamp - for key milestones directors need to see
+log_event() {
+  local level="$1"
+  local message="$2"
+  local ts=$(timestamp)
+
+  case "$level" in
+    "INFO")
+      echo -e "${GRAY}[$ts]${NC} $message"
+      ;;
+    "START")
+      echo -e "${CYAN}[$ts]${NC} ${BOLD}▶ $message${NC}"
+      ;;
+    "SUCCESS")
+      echo -e "${GREEN}[$ts]${NC} ✓ $message"
+      ;;
+    "WARN")
+      echo -e "${YELLOW}[$ts]${NC} ⚠ $message"
+      ;;
+    "ERROR")
+      echo -e "${RED}[$ts]${NC} ✗ $message"
+      ;;
+    "ESCALATE")
+      echo -e "${YELLOW}[$ts]${NC} ↑ $message"
+      ;;
+    "REVIEW")
+      echo -e "${CYAN}[$ts]${NC} 👁 $message"
+      ;;
+    *)
+      echo -e "${GRAY}[$ts]${NC} $message"
+      ;;
+  esac
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -526,7 +569,7 @@ fire_ticket() {
 
   echo ""
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
-  echo -e "${BOLD}FIRING: $task_id - $task_title${NC}"
+  log_event "START" "TASK: $task_id - $task_title"
   echo -e "${GRAY}Worker: $worker_name (agent: $worker_agent)${NC}"
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
   echo ""
@@ -612,15 +655,15 @@ fire_ticket() {
 
   # Check for completion signal
   if grep -q "<promise>COMPLETE</promise>" "$output_file" 2>/dev/null; then
-    echo -e "${GREEN}✓ Task signaled COMPLETE${NC}"
+    log_event "SUCCESS" "Task $task_id signaled COMPLETE (${duration}s)"
     rm -f "$output_file"
     return 0
   elif grep -q "<promise>BLOCKED</promise>" "$output_file" 2>/dev/null; then
-    echo -e "${RED}✗ Task is BLOCKED${NC}"
+    log_event "ERROR" "Task $task_id is BLOCKED (${duration}s)"
     rm -f "$output_file"
     return 2
   else
-    echo -e "${YELLOW}⚠ No completion signal - may need another iteration${NC}"
+    log_event "WARN" "Task $task_id - no completion signal, may need another iteration (${duration}s)"
     rm -f "$output_file"
     return 1
   fi
@@ -690,8 +733,7 @@ executive_review() {
 
   echo ""
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
-  echo -e "${BOLD}EXECUTIVE REVIEW: $task_id${NC}"
-  echo -e "${GRAY}Task: $task_title${NC}"
+  log_event "REVIEW" "EXECUTIVE REVIEW: $task_id - $task_title"
   echo -e "${GRAY}Completed by: $(get_worker_name "$completed_by")${NC}"
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
   echo ""
@@ -736,11 +778,11 @@ executive_review() {
   record_review "$prd_path" "$task_id" "$review_result" "$review_reason"
 
   if [ "$review_result" == "PASS" ]; then
-    echo -e "${GREEN}✓ Executive Review: PASSED${NC}"
+    log_event "SUCCESS" "Executive Review PASSED: $task_id (${duration}s)"
     echo -e "${GRAY}Reason: $review_reason${NC}"
     return 0
   else
-    echo -e "${RED}✗ Executive Review: FAILED${NC}"
+    log_event "ERROR" "Executive Review FAILED: $task_id (${duration}s)"
     echo -e "${GRAY}Reason: $review_reason${NC}"
     return 1
   fi
@@ -851,7 +893,7 @@ cmd_ticket() {
 
       echo ""
       echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
-      echo -e "${YELLOW}║  ESCALATING: Line Cook → Sous Chef                        ║${NC}"
+      log_event "ESCALATE" "ESCALATING $task_id: Line Cook → Sous Chef"
       echo -e "${YELLOW}║  Reason: $ESCALATION_AFTER iterations without completion            ║${NC}"
       echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
       echo ""
@@ -900,7 +942,7 @@ cmd_ticket() {
 
         echo ""
         echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${YELLOW}║  ESCALATING: Line Cook → Sous Chef                        ║${NC}"
+        log_event "ESCALATE" "ESCALATING $task_id: Line Cook → Sous Chef (blocked)"
         echo -e "${YELLOW}║  Reason: Task blocked                                     ║${NC}"
         echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
         echo ""
@@ -945,7 +987,7 @@ cmd_service() {
   local feature_name=$(jq -r '.featureName' "$prd_path")
   local total=$(get_task_count "$prd_path")
 
-  echo -e "${BOLD}Starting service: $feature_name${NC}"
+  log_event "START" "SERVICE STARTED: $feature_name"
   echo -e "Total tickets: $total"
   echo -e "${GRAY}Escalation: $([ "$ESCALATION_ENABLED" == "true" ] && echo "ON (after $ESCALATION_AFTER iterations)" || echo "OFF")${NC}"
   echo -e "${GRAY}Executive Review: $([ "$REVIEW_ENABLED" == "true" ] && echo "ON" || echo "OFF")${NC}"
@@ -994,7 +1036,7 @@ cmd_service() {
       if [ "$parallel_count" -gt 1 ]; then
         echo ""
         echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║  PARALLEL EXECUTION: $parallel_count junior tasks                       ║${NC}"
+        log_event "START" "PARALLEL EXECUTION: $parallel_count junior tasks"
         echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
         echo ""
 
@@ -1010,7 +1052,7 @@ cmd_service() {
           local pid=$!
           pids="$pids $pid"
           task_pid_map="$task_pid_map $task_id:$pid"
-          echo -e "${GRAY}Started $task_id (PID: $pid)${NC}"
+          log_event "INFO" "Started $task_id (PID: $pid)"
         done
 
         # Wait for all parallel tasks
@@ -1020,10 +1062,10 @@ cmd_service() {
           local pid=$(echo "$mapping" | cut -d: -f2)
 
           if wait "$pid"; then
-            echo -e "${GREEN}✓ $task_id completed${NC}"
+            log_event "SUCCESS" "$task_id completed (parallel)"
             completed=$((completed + 1))
           else
-            echo -e "${RED}✗ $task_id failed${NC}"
+            log_event "ERROR" "$task_id failed (parallel)"
             all_success=false
           fi
         done
@@ -1055,9 +1097,7 @@ cmd_service() {
 
   echo ""
   echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${GREEN}║  SERVICE COMPLETE                                         ║${NC}"
-  echo -e "${GREEN}║  Completed: $completed tasks                                      ║${NC}"
-  echo -e "${GREEN}║  Duration: ${hours}h ${minutes}m                                        ║${NC}"
+  log_event "SUCCESS" "SERVICE COMPLETE: $completed tasks in ${hours}h ${minutes}m"
   echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
 }
 
@@ -1080,8 +1120,7 @@ cmd_plan() {
 
   echo ""
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
-  echo -e "${BOLD}EXECUTIVE CHEF: Planning Phase${NC}"
-  echo -e "${GRAY}Feature: $description${NC}"
+  log_event "START" "PLANNING PHASE: $description"
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
   echo ""
 
@@ -1143,10 +1182,8 @@ BEGIN PLANNING:"
     if [ -f "$generated_file" ]; then
       echo ""
       echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
-      echo -e "${GREEN}║  PRD GENERATED                                            ║${NC}"
+      log_event "SUCCESS" "PRD GENERATED: $generated_file (${duration}s)"
       echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
-      echo ""
-      echo -e "File: ${CYAN}$generated_file${NC}"
       echo ""
 
       # Show summary
