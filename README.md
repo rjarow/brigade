@@ -91,13 +91,13 @@ No config file needed. Brigade uses Claude for all workers by default.
 
 ```bash
 USE_OPENCODE=true
-OPENCODE_MODEL="z-ai/glm-4.7"
+OPENCODE_MODEL="zai-coding-plan/glm-4.7"
 ```
 
-Model options:
-- `z-ai/glm-4.7` - GLM 4.7 (fast, cheap)
-- `openrouter/deepseek/deepseek-chat` - DeepSeek (good for code)
-- `openrouter/google/gemini-2.0-flash-001` - Gemini Flash (very fast)
+Run `opencode models` to see all available models. Common options:
+- `zai-coding-plan/glm-4.7` - GLM 4.7 (fast, cheap)
+- `opencode/glm-4.7-free` - GLM 4.7 free tier
+- `anthropic/claude-sonnet-4-5` - Claude Sonnet 4.5 via OpenCode
 
 ### Existing Project
 

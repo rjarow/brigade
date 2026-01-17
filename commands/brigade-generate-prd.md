@@ -72,10 +72,10 @@ Before generating the PRD, check `brigade/brigade.config` and inform the owner a
    - "TEST_CMD is set to [value]. Is that correct for this project?"
    - "If you want to use OpenCode for cost savings, you can set USE_OPENCODE=true or configure OPENCODE_MODEL"
 
-Common OPENCODE_MODEL options to mention:
-- `openrouter/google/gemini-2.0-flash-001` - Fast, cheap
-- `openrouter/deepseek/deepseek-chat` - Good for code
-- Leave empty to use OpenCode's default
+Common OPENCODE_MODEL options to mention (run `opencode models` to see all):
+- `zai-coding-plan/glm-4.7` - GLM 4.7 (fast, cheap)
+- `opencode/glm-4.7-free` - GLM 4.7 free tier
+- `anthropic/claude-sonnet-4-5` - Claude Sonnet via OpenCode
 
 Get enough information that you can execute autonomously afterward.
 
