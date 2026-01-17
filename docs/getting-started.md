@@ -34,6 +34,11 @@ git clone https://github.com/yourusername/brigade.git
 
 That's it. No config file needed. Brigade uses Claude for all workers by default.
 
+**For cost savings**, add `--opencode` to use OpenCode/GLM for junior tasks:
+```bash
+./brigade/brigade.sh --opencode plan "Build a CLI tool that does X"
+```
+
 Brigade will:
 1. **Detect** that this is an empty project
 2. **Interview you** about tech stack, requirements, scope

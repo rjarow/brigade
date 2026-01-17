@@ -66,7 +66,7 @@ print_banner() {
 }
 
 print_usage() {
-  echo "Usage: ./brigade.sh <command> [options]"
+  echo "Usage: ./brigade.sh [options] <command> [args]"
   echo ""
   echo "Commands:"
   echo "  plan <description>         Generate PRD from feature description (Director/Opus)"
@@ -76,14 +76,15 @@ print_usage() {
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
   echo ""
   echo "Options:"
+  echo "  --opencode                 Use OpenCode/GLM for junior tasks (cost savings)"
   echo "  --max-iterations <n>       Max iterations per task (default: 50)"
   echo "  --dry-run                  Show what would be done without executing"
   echo ""
   echo "Examples:"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
+  echo "  ./brigade.sh --opencode plan \"Build a CLI tool\""
   echo "  ./brigade.sh service tasks/prd.json"
-  echo "  ./brigade.sh ticket tasks/prd.json US-001"
-  echo "  ./brigade.sh status tasks/prd.json"
+  echo "  ./brigade.sh --opencode service tasks/prd.json"
 }
 
 load_config() {
@@ -1209,6 +1210,31 @@ cmd_analyze() {
 main() {
   print_banner
   load_config
+
+  # Parse global options
+  while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+      --opencode)
+        LINE_CMD="opencode run --command"
+        LINE_AGENT="opencode"
+        echo -e "${CYAN}Using OpenCode for junior tasks${NC}"
+        shift
+        ;;
+      --max-iterations)
+        MAX_ITERATIONS="$2"
+        shift 2
+        ;;
+      --dry-run)
+        DRY_RUN=true
+        shift
+        ;;
+      *)
+        echo -e "${RED}Unknown option: $1${NC}"
+        print_usage
+        exit 1
+        ;;
+    esac
+  done
 
   local command="${1:-}"
   shift || true

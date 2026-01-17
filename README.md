@@ -87,6 +87,12 @@ git clone https://github.com/yourusername/brigade.git
 
 No config file needed. Brigade uses Claude for all workers by default.
 
+**Want cost savings?** Add `--opencode` to use OpenCode/GLM for junior tasks:
+```bash
+./brigade/brigade.sh --opencode plan "Build X"
+./brigade/brigade.sh --opencode service tasks/prd-*.json
+```
+
 ### Existing Project
 
 ```bash
@@ -189,6 +195,10 @@ MAX_PARALLEL=3
 
 # Analyze routing
 ./brigade.sh analyze tasks/prd.json
+
+# Use OpenCode for junior tasks (cost savings)
+./brigade.sh --opencode plan "Build X"
+./brigade.sh --opencode service tasks/prd.json
 ```
 
 ## The Flow
