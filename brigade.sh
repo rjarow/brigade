@@ -47,6 +47,10 @@ ESCALATION_TO_EXEC_AFTER=5   # Sous Chef → Executive Chef after N iterations
 REVIEW_ENABLED=true
 REVIEW_JUNIOR_ONLY=true
 
+# Phase review defaults (Executive Chef checks overall progress)
+PHASE_REVIEW_ENABLED=false   # Off by default, enable for larger projects
+PHASE_REVIEW_AFTER=5         # Review every N completed tasks
+
 # Context isolation defaults
 CONTEXT_ISOLATION=true
 STATE_FILE="brigade-state.json"
@@ -847,6 +851,103 @@ executive_review() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PHASE REVIEW (Periodic progress check)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+phase_review() {
+  local prd_path="$1"
+  local completed_count="$2"
+
+  if [ "$PHASE_REVIEW_ENABLED" != "true" ]; then
+    return 0
+  fi
+
+  # Only review at intervals
+  if [ $((completed_count % PHASE_REVIEW_AFTER)) -ne 0 ]; then
+    return 0
+  fi
+
+  local feature_name=$(jq -r '.featureName' "$prd_path")
+  local total=$(jq '.tasks | length' "$prd_path")
+  local completed=$(jq '[.tasks[] | select(.passes == true)] | length' "$prd_path")
+  local pending=$((total - completed))
+
+  echo ""
+  echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  log_event "REVIEW" "PHASE REVIEW: $completed/$total tasks complete"
+  echo -e "${CYAN}║  Executive Chef checking overall progress against spec    ║${NC}"
+  echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+
+  # Build phase review prompt
+  local completed_tasks=$(jq -r '.tasks[] | select(.passes == true) | "- \(.id): \(.title)"' "$prd_path")
+  local pending_tasks=$(jq -r '.tasks[] | select(.passes == false) | "- \(.id): \(.title) [\(.complexity // "auto")]"' "$prd_path")
+  local prd_description=$(jq -r '.description // "No description"' "$prd_path")
+
+  local phase_prompt="You are the Executive Chef doing a phase review.
+
+FEATURE: $feature_name
+DESCRIPTION: $prd_description
+
+PROGRESS: $completed of $total tasks complete ($pending remaining)
+
+COMPLETED TASKS:
+$completed_tasks
+
+REMAINING TASKS:
+$pending_tasks
+
+Please review:
+1. Are completed tasks aligned with the PRD spec and acceptance criteria?
+2. Is there any drift from the original requirements?
+3. Are we on track to deliver the feature as specified?
+4. Any concerns or adjustments needed before continuing?
+
+Output your assessment:
+<phase_review>
+STATUS: on_track | minor_concerns | needs_attention
+ASSESSMENT: <your analysis>
+RECOMMENDATIONS: <any suggestions, or 'none'>
+</phase_review>"
+
+  local output_file=$(mktemp)
+  local start_time=$(date +%s)
+
+  if $EXECUTIVE_CMD --dangerously-skip-permissions -p "$phase_prompt" 2>&1 | tee "$output_file"; then
+    echo -e "${GREEN}Phase review completed${NC}"
+  else
+    echo -e "${YELLOW}Phase review exited${NC}"
+  fi
+
+  local end_time=$(date +%s)
+  local duration=$((end_time - start_time))
+
+  # Extract status
+  local status=$(grep -oP '(?<=STATUS: )\w+' "$output_file" 2>/dev/null | head -1)
+  [ -z "$status" ] && status="unknown"
+
+  rm -f "$output_file"
+
+  case "$status" in
+    "on_track")
+      log_event "SUCCESS" "Phase Review: ON TRACK (${duration}s)"
+      ;;
+    "minor_concerns")
+      log_event "WARN" "Phase Review: MINOR CONCERNS (${duration}s)"
+      ;;
+    "needs_attention")
+      log_event "ERROR" "Phase Review: NEEDS ATTENTION (${duration}s)"
+      echo -e "${YELLOW}Executive Chef flagged concerns - review output above${NC}"
+      ;;
+    *)
+      log_event "INFO" "Phase Review completed (${duration}s)"
+      ;;
+  esac
+
+  echo ""
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # COMMANDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1262,6 +1363,9 @@ cmd_service() {
           exit 1
         fi
 
+        # Phase review at intervals (after parallel batch)
+        phase_review "$prd_path" "$completed"
+
         continue  # Check for more tasks
       fi
     fi
@@ -1271,6 +1375,8 @@ cmd_service() {
 
     if cmd_ticket "$prd_path" "$next_task"; then
       completed=$((completed + 1))
+      # Phase review at intervals
+      phase_review "$prd_path" "$completed"
     else
       echo -e "${RED}Failed to complete $next_task${NC}"
       exit 1

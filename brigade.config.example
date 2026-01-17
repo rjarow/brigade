@@ -129,6 +129,17 @@ REVIEW_ENABLED=true
 REVIEW_JUNIOR_ONLY=true
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PHASE REVIEW (Optional - for larger projects)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Enable periodic phase reviews where Executive Chef checks overall progress
+# Useful for larger PRDs (10+ tasks) to catch drift from spec early
+PHASE_REVIEW_ENABLED=false
+
+# Review every N completed tasks (e.g., 5 = review after task 5, 10, 15...)
+PHASE_REVIEW_AFTER=5
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT ISOLATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
