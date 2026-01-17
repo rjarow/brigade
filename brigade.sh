@@ -77,6 +77,7 @@ print_usage() {
   echo "  ticket <prd.json> <id>     Run single ticket"
   echo "  status <prd.json>          Show kitchen status"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
+  echo "  models                     List available OpenCode models"
   echo ""
   echo "Options:"
   echo "  --max-iterations <n>       Max iterations per task (default: 50)"
@@ -85,7 +86,7 @@ print_usage() {
   echo "Examples:"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
   echo "  ./brigade.sh service tasks/prd.json"
-  echo "  ./brigade.sh ticket tasks/prd.json US-001"
+  echo "  ./brigade.sh models | grep glm"
 }
 
 load_config() {
@@ -1211,6 +1212,31 @@ cmd_analyze() {
   echo ""
 }
 
+cmd_models() {
+  echo -e "${BOLD}Available OpenCode Models${NC}"
+  echo -e "${GRAY}Use these values for OPENCODE_MODEL in brigade.config${NC}"
+  echo ""
+
+  if ! command -v opencode &> /dev/null; then
+    echo -e "${RED}Error: opencode CLI not found${NC}"
+    echo ""
+    echo "Install OpenCode: https://opencode.ai"
+    exit 1
+  fi
+
+  # Show current config
+  if [ -n "$OPENCODE_MODEL" ]; then
+    echo -e "${CYAN}Current config: OPENCODE_MODEL=\"$OPENCODE_MODEL\"${NC}"
+    echo ""
+  fi
+
+  echo -e "${BOLD}Popular models:${NC}"
+  opencode models 2>&1 | grep -E "^(zai-coding-plan/glm|opencode/glm|anthropic/claude)" | head -20
+  echo ""
+  echo -e "${GRAY}Run 'opencode models' to see all available models${NC}"
+  echo -e "${GRAY}Run 'opencode models | grep <term>' to search${NC}"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1256,6 +1282,9 @@ main() {
       ;;
     "analyze")
       cmd_analyze "$@"
+      ;;
+    "models")
+      cmd_models "$@"
       ;;
     "help"|"--help"|"-h"|"")
       print_usage
