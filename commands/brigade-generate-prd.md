@@ -77,6 +77,23 @@ Common OPENCODE_MODEL options to mention (run `opencode models` to see all):
 - `opencode/glm-4.7-free` - GLM 4.7 free tier
 - `anthropic/claude-sonnet-4-5` - Claude Sonnet via OpenCode
 
+#### Gitignore Check (ALWAYS ASK):
+Ask: "Should I add Brigade's working files to .gitignore? This includes:
+- `brigade-state.json` (session state)
+- `brigade-learnings.md` (worker learnings)
+- `tasks/*.json` (PRD files) - or do you want to keep these in version control?"
+
+If yes, offer to add them as the first task or do it immediately before generating the PRD.
+
+Recommended .gitignore additions:
+```
+# Brigade working files
+brigade-state.json
+brigade-learnings.md
+# Uncomment to also ignore PRD files:
+# tasks/*.json
+```
+
 Get enough information that you can execute autonomously afterward.
 
 ### Phase 3: Codebase Analysis
