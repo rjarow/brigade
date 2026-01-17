@@ -60,6 +60,13 @@ LINE_AGENT="claude"
 # OPENCODE SETTINGS (Advanced)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# IMPORTANT: OpenCode must be configured to auto-approve permissions.
+# Add this to ~/.config/opencode/opencode.json:
+#   {
+#     "permission": "allow"
+#   }
+# Without this, OpenCode will prompt for approval and hang in non-interactive mode.
+
 # Optional: OpenCode server for faster cold starts
 # OPENCODE_SERVER="http://localhost:4096"
 

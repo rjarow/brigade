@@ -34,15 +34,24 @@ git clone https://github.com/yourusername/brigade.git
 
 That's it. No config file needed. Brigade uses Claude for all workers by default.
 
-**For cost savings**, use OpenCode/GLM for junior tasks:
-```bash
-# Option 1: Flag (one-off)
-./brigade/brigade.sh --opencode plan "Build a CLI tool that does X"
+**For cost savings**, use OpenCode for junior tasks:
 
-# Option 2: Config (permanent)
-echo "USE_OPENCODE=true" > brigade/brigade.config
-./brigade/brigade.sh plan "Build a CLI tool that does X"
+First, configure OpenCode to auto-approve (required for non-interactive use):
+```bash
+# Add to ~/.config/opencode/opencode.json
+{
+  "permission": "allow"
+}
 ```
+
+Then enable in Brigade config:
+```bash
+# brigade/brigade.config
+USE_OPENCODE=true
+OPENCODE_MODEL="zai-coding-plan/glm-4.7"
+```
+
+Run `./brigade.sh opencode-models` to see available models.
 
 Brigade will:
 1. **Detect** that this is an empty project
