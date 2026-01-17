@@ -123,11 +123,9 @@ cat tasks/prd-add-user-authentication-with-jwt.json | jq
 
 Brigade includes Claude Code skills for interactive PRD generation.
 
-**Install skills** (from your project root):
+**Install commands** (one-time, works across all projects):
 ```bash
-mkdir -p .claude/skills
-ln -s "$(pwd)/brigade/.claude/skills/brigade-generate-prd.md" .claude/skills/
-ln -s "$(pwd)/brigade/.claude/skills/brigade-convert-prd-to-json.md" .claude/skills/
+./brigade/install-commands.sh
 ```
 
 **Updating:** Since these are symlinks, just `git pull` in `brigade/` to get updates. No re-installation needed.

@@ -205,26 +205,19 @@ Escalation History:
 
 Brigade includes Claude Code skills for interactive PRD generation.
 
-### Install Skills
+### Install Commands
 
-Link Brigade's skills to your project:
+Run the install script (one-time, works across all projects):
 
 ```bash
-# From your project root (not inside brigade/)
-mkdir -p .claude/skills
-ln -s "$(pwd)/brigade/.claude/skills/brigade-generate-prd.md" .claude/skills/
-ln -s "$(pwd)/brigade/.claude/skills/brigade-convert-prd-to-json.md" .claude/skills/
+./brigade/install-commands.sh
 ```
+
+This symlinks Brigade's commands to `~/.claude/commands/` where Claude Code discovers them.
 
 **Updating:** Since these are symlinks, just `git pull` in `brigade/` to get updates. No re-installation needed.
 
-Or copy them (but you'll need to re-copy after updates):
-```bash
-mkdir -p .claude/skills
-cp brigade/.claude/skills/*.md .claude/skills/
-```
-
-### Use Skills
+### Use Commands
 
 Now in Claude Code:
 
