@@ -7,10 +7,18 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # QUICK START - COST OPTIMIZATION
 # ═══════════════════════════════════════════════════════════════════════════════
-# Set this to true to use OpenCode/GLM for junior tasks (significant cost savings)
-# This is the only setting most people need to change.
+# Two settings for cost savings with OpenCode:
 
-USE_OPENCODE=false  # Set to true for cost savings
+USE_OPENCODE=false  # Set to true to use OpenCode for junior tasks
+
+# Pick your OpenCode model (only used if USE_OPENCODE=true):
+OPENCODE_MODEL="z-ai/glm-4.7"  # Default: GLM 4.7 (fast, cheap)
+
+# Other model options - just change the line above:
+#   z-ai/glm-4.7                              - GLM 4.7 (default, fast)
+#   openrouter/google/gemini-2.0-flash-001    - Gemini Flash (very fast)
+#   openrouter/deepseek/deepseek-chat         - DeepSeek (good for code)
+#   anthropic/claude-3-5-sonnet               - Claude via OpenCode (if you have key)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # WORKERS (Advanced - most people don't need to change these)
@@ -48,18 +56,8 @@ LINE_CMD="claude --model sonnet"
 LINE_AGENT="claude"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# OPENCODE SETTINGS (only needed if USE_OPENCODE=true)
+# OPENCODE SETTINGS (Advanced)
 # ═══════════════════════════════════════════════════════════════════════════════
-# Configure based on your OpenCode setup. Run `opencode` to see available providers.
-# Models use provider/model format - see https://opencode.ai/docs/providers/
-
-# Common options (uncomment ONE):
-# OPENCODE_MODEL="openrouter/google/gemini-2.0-flash-001"  # Fast, cheap
-# OPENCODE_MODEL="openrouter/deepseek/deepseek-chat"      # Good for code
-# OPENCODE_MODEL="anthropic/claude-3-5-sonnet"            # If you have Anthropic key in OpenCode
-
-# Leave empty to use OpenCode's default model:
-OPENCODE_MODEL=""
 
 # Optional: OpenCode server for faster cold starts
 # OPENCODE_SERVER="http://localhost:4096"
