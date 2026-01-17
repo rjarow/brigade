@@ -597,7 +597,8 @@ fire_ticket() {
     "opencode")
       # OpenCode CLI: opencode run --command "prompt"
       # See: https://opencode.ai/docs/cli/
-      local opencode_flags="--log-level ERROR"
+      # -q/--quiet hides spinner, --log-level ERROR suppresses info logs
+      local opencode_flags="-q --log-level ERROR"
       if [ -n "$OPENCODE_MODEL" ]; then
         opencode_flags="$opencode_flags --model $OPENCODE_MODEL"
       fi
