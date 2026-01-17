@@ -124,7 +124,7 @@ cat tasks/prd-add-user-authentication-with-jwt.json | jq
 If you're using Claude Code, you can also use the skills directly:
 
 ```
-/generate-prd Add user authentication with OAuth and JWT tokens
+/brigade-generate-prd Add user authentication with OAuth and JWT tokens
 ```
 
 The skill will:
@@ -210,7 +210,7 @@ MAX_PARALLEL=3
 
 ### 1. Planning Phase (Director/Opus)
 
-When you run `./brigade.sh plan "..."` or `/generate-prd`:
+When you run `./brigade.sh plan "..."` or `/brigade-generate-prd`:
 
 1. **Interview**: Director asks clarifying questions
    - What's the scope?

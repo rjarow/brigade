@@ -206,7 +206,7 @@ Escalation History:
 If you're working inside Claude Code, you can use skills directly:
 
 ```
-/generate-prd Add user authentication with OAuth and JWT tokens
+/brigade-generate-prd Add user authentication with OAuth and JWT tokens
 ```
 
 The skill will:

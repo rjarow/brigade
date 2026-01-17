@@ -1,4 +1,4 @@
-# Convert PRD to JSON Skill
+# Brigade Convert PRD to JSON Skill
 
 You are converting a PRD (Product Requirements Document) from various formats into Brigade's JSON format.
 

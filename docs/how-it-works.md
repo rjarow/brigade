@@ -54,7 +54,7 @@ Brigade uses kitchen terminology because the workflow mirrors a professional kit
 │  User Request ──► Interview ──► Codebase Analysis ──► PRD      │
 │                                                                 │
 │  ./brigade.sh plan "Add user authentication"                   │
-│  or: /generate-prd Add user authentication                     │
+│  or: /brigade-generate-prd Add user authentication                     │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
@@ -90,7 +90,7 @@ Brigade uses kitchen terminology because the workflow mirrors a professional kit
 
 ## Phase 1: Planning
 
-When you run `./brigade.sh plan "..."` or use `/generate-prd`:
+When you run `./brigade.sh plan "..."` or use `/brigade-generate-prd`:
 
 ### 1.1 Interview
 
