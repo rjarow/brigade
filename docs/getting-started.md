@@ -203,7 +203,28 @@ Escalation History:
 
 ## Using Claude Code Skills
 
-If you're working inside Claude Code, you can use skills directly:
+Brigade includes Claude Code skills for interactive PRD generation.
+
+### Install Skills
+
+Link Brigade's skills to your project:
+
+```bash
+# From your project root (not inside brigade/)
+mkdir -p .claude/skills
+ln -s "$(pwd)/brigade/.claude/skills/brigade-generate-prd.md" .claude/skills/
+ln -s "$(pwd)/brigade/.claude/skills/brigade-convert-prd-to-json.md" .claude/skills/
+```
+
+Or copy them:
+```bash
+mkdir -p .claude/skills
+cp brigade/.claude/skills/*.md .claude/skills/
+```
+
+### Use Skills
+
+Now in Claude Code:
 
 ```
 /brigade-generate-prd Add user authentication with OAuth and JWT tokens
@@ -211,7 +232,7 @@ If you're working inside Claude Code, you can use skills directly:
 
 The skill will:
 1. Ask you clarifying questions
-2. Explore your codebase
+2. Explore your codebase (or detect greenfield)
 3. Generate and save the PRD
 4. Show you next steps
 

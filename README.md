@@ -121,8 +121,16 @@ cat tasks/prd-add-user-authentication-with-jwt.json | jq
 
 ### Using Claude Code Skills
 
-If you're using Claude Code, you can also use the skills directly:
+Brigade includes Claude Code skills for interactive PRD generation.
 
+**Install skills** (from your project root):
+```bash
+mkdir -p .claude/skills
+ln -s "$(pwd)/brigade/.claude/skills/brigade-generate-prd.md" .claude/skills/
+ln -s "$(pwd)/brigade/.claude/skills/brigade-convert-prd-to-json.md" .claude/skills/
+```
+
+**Use skills** in Claude Code:
 ```
 /brigade-generate-prd Add user authentication with OAuth and JWT tokens
 ```
