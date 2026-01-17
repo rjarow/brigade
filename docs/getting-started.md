@@ -34,9 +34,14 @@ git clone https://github.com/yourusername/brigade.git
 
 That's it. No config file needed. Brigade uses Claude for all workers by default.
 
-**For cost savings**, add `--opencode` to use OpenCode/GLM for junior tasks:
+**For cost savings**, use OpenCode/GLM for junior tasks:
 ```bash
+# Option 1: Flag (one-off)
 ./brigade/brigade.sh --opencode plan "Build a CLI tool that does X"
+
+# Option 2: Config (permanent)
+echo "USE_OPENCODE=true" > brigade/brigade.config
+./brigade/brigade.sh plan "Build a CLI tool that does X"
 ```
 
 Brigade will:

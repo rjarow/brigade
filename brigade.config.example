@@ -5,7 +5,15 @@
 # Use this file to customize workers, enable OpenCode for cost savings, etc.
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# WORKERS
+# QUICK START - COST OPTIMIZATION
+# ═══════════════════════════════════════════════════════════════════════════════
+# Set this to true to use OpenCode/GLM for junior tasks (significant cost savings)
+# This is the only setting most people need to change.
+
+USE_OPENCODE=false  # Set to true for cost savings
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WORKERS (Advanced - most people don't need to change these)
 # ═══════════════════════════════════════════════════════════════════════════════
 # Brigade supports multiple AI coding agents. Configure based on what you have.
 #
@@ -35,13 +43,9 @@ SOUS_AGENT="claude"
 
 # Line Cook (junior) - routine tasks, boilerplate, simple tests
 # Default: Claude Sonnet (works out of the box)
-# For cost savings: Use OpenCode with GLM - see https://opencode.ai/docs/cli/
+# For cost savings: Set USE_OPENCODE=true above (recommended) or customize here
 LINE_CMD="claude --model sonnet"
 LINE_AGENT="claude"
-
-# COST OPTIMIZATION: Uncomment these to use OpenCode for junior tasks
-# LINE_CMD="opencode run --command"
-# LINE_AGENT="opencode"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # AGENT-SPECIFIC SETTINGS

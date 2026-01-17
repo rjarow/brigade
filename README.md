@@ -87,10 +87,15 @@ git clone https://github.com/yourusername/brigade.git
 
 No config file needed. Brigade uses Claude for all workers by default.
 
-**Want cost savings?** Add `--opencode` to use OpenCode/GLM for junior tasks:
+**Want cost savings?** Two options:
+
 ```bash
+# Option 1: Flag (one-off)
 ./brigade/brigade.sh --opencode plan "Build X"
-./brigade/brigade.sh --opencode service tasks/prd-*.json
+
+# Option 2: Config (permanent)
+echo "USE_OPENCODE=true" > brigade/brigade.config
+./brigade/brigade.sh plan "Build X"
 ```
 
 ### Existing Project

@@ -29,6 +29,9 @@ LINE_AGENT="claude"
 TEST_CMD=""
 MAX_ITERATIONS=50
 
+# Simple toggle for OpenCode (set in config or via --opencode flag)
+USE_OPENCODE=false
+
 # Agent-specific defaults
 OPENCODE_MODEL=""
 OPENCODE_SERVER=""
@@ -93,6 +96,13 @@ load_config() {
     echo -e "${GRAY}Loaded config from $CONFIG_FILE${NC}"
   else
     echo -e "${YELLOW}Warning: No brigade.config found, using defaults${NC}"
+  fi
+
+  # Apply USE_OPENCODE if set in config
+  if [ "$USE_OPENCODE" = true ]; then
+    LINE_CMD="opencode run --command"
+    LINE_AGENT="opencode"
+    echo -e "${CYAN}Using OpenCode for junior tasks (USE_OPENCODE=true)${NC}"
   fi
 }
 
