@@ -87,21 +87,17 @@ git clone https://github.com/yourusername/brigade.git
 
 No config file needed. Brigade uses Claude for all workers by default.
 
-**Want cost savings?** Use OpenCode with your preferred model:
+**Want cost savings?** Configure OpenCode in `brigade/brigade.config`:
 
 ```bash
-# Quick flags (pick a model):
-./brigade/brigade.sh --glm service tasks/prd.json        # GLM 4.7 (fast, cheap)
-./brigade/brigade.sh --deepseek service tasks/prd.json   # DeepSeek (good for code)
-./brigade/brigade.sh --gemini service tasks/prd.json     # Gemini Flash (very fast)
-./brigade/brigade.sh --model <provider/model> service tasks/prd.json  # Any model
-
-# Or set in config (permanent):
-cat > brigade/brigade.config << 'EOF'
 USE_OPENCODE=true
 OPENCODE_MODEL="z-ai/glm-4.7"
-EOF
 ```
+
+Model options:
+- `z-ai/glm-4.7` - GLM 4.7 (fast, cheap)
+- `openrouter/deepseek/deepseek-chat` - DeepSeek (good for code)
+- `openrouter/google/gemini-2.0-flash-001` - Gemini Flash (very fast)
 
 ### Existing Project
 

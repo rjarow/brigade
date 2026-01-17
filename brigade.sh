@@ -79,18 +79,13 @@ print_usage() {
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
   echo ""
   echo "Options:"
-  echo "  --opencode                 Use OpenCode for junior tasks (uses OPENCODE_MODEL from config)"
-  echo "  --model <provider/model>   Set OpenCode model (implies --opencode)"
-  echo "  --glm                      Use OpenCode with z-ai/glm-4.7 (fast, cheap)"
-  echo "  --deepseek                 Use OpenCode with openrouter/deepseek/deepseek-chat"
-  echo "  --gemini                   Use OpenCode with openrouter/google/gemini-2.0-flash-001"
   echo "  --max-iterations <n>       Max iterations per task (default: 50)"
   echo "  --dry-run                  Show what would be done without executing"
   echo ""
   echo "Examples:"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
-  echo "  ./brigade.sh --glm service tasks/prd.json"
-  echo "  ./brigade.sh --model openrouter/deepseek/deepseek-chat service tasks/prd.json"
+  echo "  ./brigade.sh service tasks/prd.json"
+  echo "  ./brigade.sh ticket tasks/prd.json US-001"
 }
 
 load_config() {
@@ -1227,40 +1222,6 @@ main() {
   # Parse global options
   while [[ "${1:-}" == --* ]]; do
     case "$1" in
-      --opencode)
-        LINE_CMD="opencode run --command"
-        LINE_AGENT="opencode"
-        echo -e "${CYAN}Using OpenCode for junior tasks${NC}"
-        shift
-        ;;
-      --model)
-        LINE_CMD="opencode run --command"
-        LINE_AGENT="opencode"
-        OPENCODE_MODEL="$2"
-        echo -e "${CYAN}Using OpenCode with model: $2${NC}"
-        shift 2
-        ;;
-      --glm)
-        LINE_CMD="opencode run --command"
-        LINE_AGENT="opencode"
-        OPENCODE_MODEL="z-ai/glm-4.7"
-        echo -e "${CYAN}Using OpenCode with GLM 4.7${NC}"
-        shift
-        ;;
-      --deepseek)
-        LINE_CMD="opencode run --command"
-        LINE_AGENT="opencode"
-        OPENCODE_MODEL="openrouter/deepseek/deepseek-chat"
-        echo -e "${CYAN}Using OpenCode with DeepSeek${NC}"
-        shift
-        ;;
-      --gemini)
-        LINE_CMD="opencode run --command"
-        LINE_AGENT="opencode"
-        OPENCODE_MODEL="openrouter/google/gemini-2.0-flash-001"
-        echo -e "${CYAN}Using OpenCode with Gemini Flash${NC}"
-        shift
-        ;;
       --max-iterations)
         MAX_ITERATIONS="$2"
         shift 2
