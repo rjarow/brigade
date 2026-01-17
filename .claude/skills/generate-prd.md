@@ -33,9 +33,30 @@ Do NOT escalate for:
 
 ## Process
 
-### Phase 1: Interview (REQUIRED - DO THIS THOROUGHLY)
+### Phase 1: Project Detection
+First, check if this is a **greenfield** (new/empty) or **existing** project:
+
+**Greenfield indicators:**
+- No source files (only brigade/, .git/, maybe README)
+- No package.json, go.mod, Cargo.toml, requirements.txt, etc.
+- No existing code structure
+
+**Existing project indicators:**
+- Has source files and folder structure
+- Has dependency files (package.json, go.mod, etc.)
+- Has existing patterns to follow
+
+### Phase 2: Interview (REQUIRED - DO THIS THOROUGHLY)
 This is your ONE chance to get context. Ask smart questions:
 
+#### For Greenfield Projects (CRITICAL - ASK ALL OF THESE):
+1. **Tech stack**: "What language/framework should we use? (e.g., Node/Express, Go, Python/FastAPI, Rust)"
+2. **Project type**: "Is this a CLI tool, REST API, web app, library, or something else?"
+3. **Scope**: "For [feature], what's the MVP? What's out of scope for now?"
+4. **Requirements**: "Any must-haves? Database needs? Auth requirements?"
+5. **Preferences**: "Any preferred patterns, libraries, or approaches?"
+
+#### For Existing Projects:
 1. **Scope**: "For [feature], should I include [related capabilities]? What's out of scope?"
 2. **Requirements**: "Any must-haves? Security requirements? Performance targets?"
 3. **Preferences**: "Any preferred approaches or patterns to follow/avoid?"
@@ -43,23 +64,40 @@ This is your ONE chance to get context. Ask smart questions:
 
 Get enough information that you can execute autonomously afterward.
 
-### Phase 2: Codebase Analysis
+### Phase 3: Codebase Analysis
 After getting answers, explore the project:
 
+#### For Greenfield Projects:
+- Confirm the project is indeed empty
+- Note any existing files (README, etc.) to preserve
+
+#### For Existing Projects:
 1. Look at project structure (where do models, controllers, tests go?)
 2. Identify existing patterns (error handling, naming conventions)
 3. Check the tech stack and dependencies
 4. Review test patterns
 
-### Phase 3: Task Breakdown
+### Phase 4: Task Breakdown
 Decompose the feature into atomic, well-scoped tasks:
 
+#### For Greenfield Projects, ALWAYS start with setup tasks:
+1. **US-001: Initialize project structure** (senior)
+   - Set up the chosen language/framework
+   - Create folder structure
+   - Initialize dependency management
+2. **US-002: Set up test framework** (senior)
+   - Install and configure test runner
+   - Create example test to verify setup
+   - Add test script to package manager
+3. **US-003+: Feature tasks...**
+
+#### For Existing Projects:
 1. Break into small, completable units
 2. Assign complexity based on requirements
 3. Define dependencies between tasks
 4. Write specific acceptance criteria
 
-### Phase 4: Generate PRD
+### Phase 5: Generate PRD
 Output the final PRD JSON and save it. After this, execution is autonomous.
 
 ## Task Sizing Guidelines
@@ -170,10 +208,31 @@ When the user invokes `/generate-prd`:
 ### Step 1: Get Feature Description
 If no feature description provided, ask: "What feature would you like me to plan?"
 
-### Step 2: Interview (ALWAYS DO THIS)
-Before exploring code, ask the user 2-4 clarifying questions:
+### Step 2: Detect Project Type
+Explore the directory to determine if this is greenfield or existing:
+- Check for source files, package managers, existing structure
+- If only brigade/, .git/, README exist → **greenfield**
 
-Example questions:
+### Step 3: Interview (ALWAYS DO THIS)
+
+#### For Greenfield Projects:
+Ask these questions (adjust based on what they've already told you):
+
+1. "What language/framework would you like to use? Some options based on your feature:
+   - **Node.js/TypeScript** - Great for APIs, CLIs, web apps
+   - **Go** - Great for CLIs, APIs, performance-critical tools
+   - **Python** - Great for scripts, APIs, data processing
+   - **Rust** - Great for CLIs, performance-critical, systems tools
+   - Or tell me your preference"
+
+2. "What type of project is this? (CLI tool, REST API, web app, library, etc.)"
+
+3. "For [feature], what's the core MVP? What can we skip for now?"
+
+4. "Any specific requirements? (database, auth, external APIs, etc.)"
+
+#### For Existing Projects:
+Ask 2-4 clarifying questions:
 - "For [feature], should I include [related capability]? Or keep it minimal?"
 - "Do you have preferences on [approach A] vs [approach B]?"
 - "Should this integrate with [existing system] or be standalone?"
@@ -181,31 +240,105 @@ Example questions:
 
 **IMPORTANT**: Wait for the user's answers before proceeding. Do not skip this step.
 
-### Step 3: Codebase Analysis
+### Step 4: Codebase Analysis
 After getting answers, explore to understand:
-- Project structure and conventions
+- Project structure and conventions (or confirm empty for greenfield)
 - Existing patterns to follow
 - Tech stack and dependencies
 - Test patterns
 
-### Step 4: Generate PRD
+### Step 5: Generate PRD
+
+#### For Greenfield Projects:
+The PRD MUST start with setup tasks:
+
+```json
+{
+  "tasks": [
+    {
+      "id": "US-001",
+      "title": "Initialize [language] project with [framework]",
+      "description": "Set up the project foundation",
+      "acceptanceCriteria": [
+        "Project initialized with [package manager]",
+        "Folder structure created (src/, tests/, etc.)",
+        "Dependencies installed",
+        "Project builds/runs successfully"
+      ],
+      "complexity": "senior",
+      "dependsOn": []
+    },
+    {
+      "id": "US-002",
+      "title": "Set up test framework",
+      "description": "Configure testing infrastructure",
+      "acceptanceCriteria": [
+        "[Test framework] installed and configured",
+        "Test script added to package manager",
+        "Example test passes when run",
+        "Test coverage reporting configured (optional)"
+      ],
+      "complexity": "senior",
+      "dependsOn": ["US-001"]
+    },
+    // ... feature tasks follow, all depending on US-001 or US-002
+  ]
+}
+```
+
+#### For Existing Projects:
 Create the PRD with:
 - Clear task breakdown
-   - Appropriate complexity assignments
-   - Correct dependency ordering
-   - Specific, verifiable acceptance criteria
+- Appropriate complexity assignments
+- Correct dependency ordering
+- Specific, verifiable acceptance criteria
 
-5. Save to `tasks/prd-{feature-name}.json`
-
-6. Show the user:
-   - Summary of tasks
+### Step 6: Save and Report
+1. Save to `tasks/prd-{feature-name}.json`
+2. Show the user:
+   - Summary of tasks (highlighting setup tasks for greenfield)
    - Suggested command: `./brigade.sh service tasks/prd-{feature-name}.json`
 
-## Example
+## Examples
+
+### Example 1: Greenfield Project
+
+User: "Build a CLI tool that syncs files to S3"
+
+**Interview questions to ask:**
+1. "What language would you like? Go and Rust are great for CLIs, Node/Python work too."
+2. "Should this support multiple cloud providers or just S3 for now?"
+3. "Any specific features? (watch mode, filters, dry-run, etc.)"
+
+**After interview (user chose Go, S3 only, wants watch mode):**
+
+- US-001: Initialize Go project (senior)
+  - "go mod init, create cmd/ and internal/ structure, add Makefile"
+- US-002: Set up test framework (senior)
+  - "Configure go test, add test helpers, verify tests run"
+- US-003: Add S3 client wrapper (senior)
+  - "AWS SDK setup, credential handling, basic upload/download"
+- US-004: Add S3 client tests (junior)
+  - "Mock S3 responses, test upload, test error handling"
+- US-005: Add file sync logic (senior)
+  - "Compare local vs remote, determine changes, sync strategy"
+- US-006: Add file sync tests (junior)
+  - "Test change detection, test sync decisions"
+- US-007: Add CLI interface (senior)
+  - "cobra/urfave CLI, flags for bucket, path, credentials"
+- US-008: Add CLI tests (junior)
+  - "Test flag parsing, test help output"
+- US-009: Add watch mode (senior)
+  - "fsnotify for file watching, debounce, incremental sync"
+- US-010: Add watch mode tests (junior)
+  - "Test file change detection, test debounce logic"
+
+### Example 2: Existing Project
 
 User: "Add user authentication with login and signup"
 
-After analysis, generate:
+**After analysis of existing Node/Express project:**
+
 - US-001: Add User model (senior) - foundational, needs security thought
   - Acceptance criteria includes: "Unit tests for model validation"
 - US-002: Add User model tests (junior) - comprehensive model test coverage

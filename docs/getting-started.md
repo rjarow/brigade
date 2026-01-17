@@ -13,6 +13,31 @@ This guide will get you up and running with Brigade in 5 minutes.
 
 Brigade can be dropped into any project - existing or new.
 
+### New Project (Greenfield)
+
+The simplest way to start. You don't need to set up anything - Brigade handles it all.
+
+```bash
+# Create your project
+mkdir my-idea && cd my-idea
+git init
+
+# Add Brigade
+git clone https://github.com/yourusername/brigade.git
+
+# Configure (optional - defaults work for most setups)
+cp brigade/brigade.config.example brigade/brigade.config
+
+# Start planning - Brigade will ask about language, framework, everything
+./brigade/brigade.sh plan "Build a CLI tool that does X"
+```
+
+Brigade will:
+1. **Detect** that this is an empty project
+2. **Interview you** about tech stack, requirements, scope
+3. **Generate a PRD** that starts with project setup (language, test framework, etc.)
+4. **Execute** everything - you come back to a working project with tests
+
 ### Existing Project
 
 ```bash
@@ -27,19 +52,6 @@ ln -s ~/brigade ./brigade
 
 # Option 3: Add as git submodule
 git submodule add https://github.com/yourusername/brigade.git brigade
-```
-
-### New Project
-
-```bash
-# Create your project
-mkdir my-project && cd my-project
-git init
-
-# Add Brigade
-git clone https://github.com/yourusername/brigade.git
-
-# You're ready to go!
 ```
 
 ## Configuration

@@ -14,6 +14,18 @@ The Owner (human) trusts you to run the kitchen. After the initial interview:
   - There's a fundamental blocker requiring business decision
   - Multiple valid approaches exist and owner preference matters
 
+## Greenfield Projects
+
+If the project is empty (no source files, just brigade/), you must:
+
+1. **Ask about tech stack** - Language, framework, project type
+2. **Include setup tasks first** in any PRD:
+   - US-001: Initialize project (language, package manager, folder structure)
+   - US-002: Set up test framework
+   - Then feature tasks...
+
+The Owner should not need to set anything up manually. Brigade handles everything from `git init` to working feature.
+
 ## Your Team
 
 - **Sous Chef** (Senior): Handles complex architecture, difficult bugs, integration work

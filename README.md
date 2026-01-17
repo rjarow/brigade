@@ -58,6 +58,31 @@ After the initial interview, you can walk away and come back to completed work.
 
 ## Quick Start
 
+### New Project (Greenfield) - Zero Setup
+
+Don't know what language to use? No problem. Brigade handles everything.
+
+```bash
+# Create empty project
+mkdir my-idea && cd my-idea
+git init
+
+# Add Brigade
+git clone https://github.com/yourusername/brigade.git
+
+# Start the interview - Brigade asks about tech stack, requirements, everything
+./brigade/brigade.sh plan "Build a CLI tool that syncs files to S3"
+
+# Brigade will:
+# 1. Ask what language/framework you want
+# 2. Ask about scope and requirements
+# 3. Generate PRD with setup tasks (project init, test framework) + feature tasks
+# 4. Execute everything autonomously
+
+# Run it
+./brigade/brigade.sh service tasks/prd-*.json
+```
+
 ### Existing Project
 
 ```bash
@@ -77,26 +102,6 @@ cat tasks/prd-add-user-authentication-with-jwt.json | jq
 
 # Execute with your multi-model team
 ./brigade/brigade.sh service tasks/prd-add-user-authentication-with-jwt.json
-```
-
-### New Project
-
-```bash
-# Create your project
-mkdir my-project && cd my-project
-git init
-
-# Add Brigade
-git clone https://github.com/yourusername/brigade.git
-
-# Configure
-cp brigade/brigade.config.example brigade/brigade.config
-
-# Plan your first feature
-./brigade/brigade.sh plan "Create a REST API for todo management"
-
-# Execute
-./brigade/brigade.sh service tasks/prd-create-a-rest-api-for-todo.json
 ```
 
 ### Using Claude Code Skills

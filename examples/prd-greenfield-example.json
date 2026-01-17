@@ -1,0 +1,151 @@
+{
+  "featureName": "S3 File Sync CLI",
+  "branchName": "feature/s3-sync-cli",
+  "createdAt": "2025-01-17",
+  "description": "A CLI tool that syncs local files to S3 with watch mode support",
+  "tasks": [
+    {
+      "id": "US-001",
+      "title": "Initialize Go project",
+      "description": "Set up the Go project foundation with proper structure",
+      "acceptanceCriteria": [
+        "go mod init creates go.mod",
+        "Create cmd/s3sync/ for main entry point",
+        "Create internal/ for private packages",
+        "Create Makefile with build, test, clean targets",
+        "go build produces working binary"
+      ],
+      "dependsOn": [],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Set up test framework",
+      "description": "Configure Go testing infrastructure",
+      "acceptanceCriteria": [
+        "go test ./... runs successfully",
+        "Create internal/testutil/ with test helpers",
+        "Add test target to Makefile",
+        "Example test in internal/testutil/example_test.go passes"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "Add S3 client wrapper",
+      "description": "Create a wrapper around AWS SDK for S3 operations",
+      "acceptanceCriteria": [
+        "AWS SDK v2 added as dependency",
+        "S3Client interface defined with Upload, Download, List methods",
+        "Credential loading from env vars and AWS config",
+        "Unit tests for client initialization"
+      ],
+      "dependsOn": ["US-002"],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "Add S3 client tests",
+      "description": "Comprehensive tests for S3 client wrapper",
+      "acceptanceCriteria": [
+        "Mock S3 responses for unit tests",
+        "Test successful upload returns correct metadata",
+        "Test upload with invalid credentials returns error",
+        "Test list objects pagination works correctly"
+      ],
+      "dependsOn": ["US-003"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "Add file sync logic",
+      "description": "Core sync logic to compare and transfer files",
+      "acceptanceCriteria": [
+        "Compare local files to S3 objects by size and modified time",
+        "Identify files to upload, download, or skip",
+        "Support include/exclude patterns",
+        "Unit tests for comparison logic"
+      ],
+      "dependsOn": ["US-003"],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-006",
+      "title": "Add file sync tests",
+      "description": "Tests for sync decision logic",
+      "acceptanceCriteria": [
+        "Test detects new local files need upload",
+        "Test detects modified files need upload",
+        "Test skips unchanged files",
+        "Test include/exclude patterns filter correctly"
+      ],
+      "dependsOn": ["US-005"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-007",
+      "title": "Add CLI interface",
+      "description": "Command-line interface with cobra",
+      "acceptanceCriteria": [
+        "cobra CLI framework added",
+        "sync command accepts --bucket, --path, --region flags",
+        "--dry-run flag shows what would change",
+        "--verbose flag enables detailed output",
+        "Unit tests for flag parsing"
+      ],
+      "dependsOn": ["US-005"],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-008",
+      "title": "Add CLI tests",
+      "description": "Tests for CLI flag handling",
+      "acceptanceCriteria": [
+        "Test required flags return error when missing",
+        "Test --help outputs usage information",
+        "Test --dry-run prevents actual uploads",
+        "Test env var fallbacks for credentials"
+      ],
+      "dependsOn": ["US-007"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-009",
+      "title": "Add watch mode",
+      "description": "File system watching for continuous sync",
+      "acceptanceCriteria": [
+        "fsnotify added for file watching",
+        "--watch flag enables continuous mode",
+        "Debounce rapid changes (500ms default)",
+        "Graceful shutdown on SIGINT",
+        "Unit tests for debounce logic"
+      ],
+      "dependsOn": ["US-007"],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-010",
+      "title": "Add watch mode tests",
+      "description": "Tests for watch functionality",
+      "acceptanceCriteria": [
+        "Test file create triggers sync",
+        "Test file modify triggers sync",
+        "Test rapid changes are debounced",
+        "Test ignored patterns don't trigger sync"
+      ],
+      "dependsOn": ["US-009"],
+      "complexity": "junior",
+      "passes": false
+    }
+  ]
+}
