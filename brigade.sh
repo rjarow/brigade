@@ -808,27 +808,104 @@ cmd_status() {
 
   echo ""
   echo -e "${BOLD}Kitchen Status: $feature_name${NC}"
-  echo ""
-  echo -e "  Total tickets:    $total"
-  echo -e "  ${GREEN}Complete:${NC}         $complete"
-  echo -e "  ${YELLOW}Pending:${NC}          $pending"
-  echo ""
+  echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
 
-  if [ "$pending" -gt 0 ]; then
-    echo -e "${BOLD}Pending Tickets:${NC}"
-    jq -r '.tasks[] | select(.passes == false) | "  \(.id): \(.title) [\(.complexity // "auto")]"' "$prd_path"
+  # Show currently cooking task if service is running
+  local state_path=$(get_state_path "$prd_path")
+  if [ -f "$state_path" ]; then
+    local current_task=$(jq -r '.currentTask // empty' "$state_path")
+
+    if [ -n "$current_task" ]; then
+      # Get last history entry for current task to find worker and start time
+      local last_entry=$(jq -r --arg task "$current_task" \
+        '[.taskHistory[] | select(.taskId == $task)] | last' "$state_path")
+
+      if [ "$last_entry" != "null" ]; then
+        local worker=$(echo "$last_entry" | jq -r '.worker // "unknown"')
+        local status=$(echo "$last_entry" | jq -r '.status // "unknown"')
+        local started_at=$(echo "$last_entry" | jq -r '.timestamp // empty')
+
+        # Only show if task is in progress (not completed/blocked)
+        if [ "$status" = "started" ] || [ "$status" = "review_failed" ]; then
+          local task_title=$(jq -r --arg id "$current_task" '.tasks[] | select(.id == $id) | .title' "$prd_path")
+          local worker_name=$(get_worker_name "$worker")
+
+          echo ""
+          echo -e "${YELLOW}🔥 CURRENTLY COOKING:${NC}"
+          echo -e "   ${BOLD}$current_task${NC}: $task_title"
+          echo -e "   ${GRAY}Worker: $worker_name${NC}"
+
+          # Calculate running time if we have a start timestamp
+          if [ -n "$started_at" ]; then
+            local start_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${started_at%%+*}" "+%s" 2>/dev/null || \
+                               date -d "$started_at" "+%s" 2>/dev/null || echo "")
+            if [ -n "$start_epoch" ]; then
+              local now_epoch=$(date +%s)
+              local elapsed=$((now_epoch - start_epoch))
+              local mins=$((elapsed / 60))
+              local secs=$((elapsed % 60))
+              echo -e "   ${GRAY}Running: ${mins}m ${secs}s${NC}"
+            fi
+          fi
+          echo ""
+        fi
+      fi
+    fi
   fi
 
-  # Show state info if available
-  local state_path=$(get_state_path "$prd_path")
+  # Progress bar
+  local pct=0
+  if [ "$total" -gt 0 ]; then
+    pct=$((complete * 100 / total))
+  fi
+  local filled=$((pct / 5))
+  local empty=$((20 - filled))
+  local bar=$(printf "█%.0s" $(seq 1 $filled 2>/dev/null) || echo "")
+  local bar_empty=$(printf "░%.0s" $(seq 1 $empty 2>/dev/null) || echo "")
+
+  echo -e "${BOLD}📊 Progress:${NC} [${GREEN}${bar}${NC}${bar_empty}] ${pct}% ($complete/$total)"
+  echo ""
+
+  # Task list with status indicators
+  echo -e "${BOLD}Tasks:${NC}"
+  local current_task_id=""
+  if [ -f "$state_path" ]; then
+    current_task_id=$(jq -r '.currentTask // empty' "$state_path")
+  fi
+
+  jq -r --arg current "$current_task_id" '.tasks[] |
+    if .passes == true then
+      "  \u001b[32m✓\u001b[0m \(.id): \(.title)"
+    elif .id == $current then
+      "  \u001b[33m→\u001b[0m \(.id): \(.title) \u001b[33m(in progress)\u001b[0m"
+    else
+      "  ○ \(.id): \(.title) \u001b[90m[\(.complexity // "auto")]\u001b[0m"
+    end' "$prd_path"
+
+  # Session stats
   if [ -f "$state_path" ]; then
     local escalation_count=$(jq '.escalations | length' "$state_path")
     local review_count=$(jq '.reviews | length' "$state_path")
     local review_pass=$(jq '[.reviews[] | select(.result == "PASS")] | length' "$state_path")
     local review_fail=$(jq '[.reviews[] | select(.result == "FAIL")] | length' "$state_path")
+    local session_start=$(jq -r '.startedAt // empty' "$state_path")
 
     echo ""
     echo -e "${BOLD}Session Stats:${NC}"
+
+    # Session duration
+    if [ -n "$session_start" ]; then
+      local start_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${session_start%%+*}" "+%s" 2>/dev/null || \
+                         date -d "$session_start" "+%s" 2>/dev/null || echo "")
+      if [ -n "$start_epoch" ]; then
+        local now_epoch=$(date +%s)
+        local elapsed=$((now_epoch - start_epoch))
+        local hours=$((elapsed / 3600))
+        local mins=$(((elapsed % 3600) / 60))
+        echo -e "  Session time:     ${hours}h ${mins}m"
+      fi
+    fi
+
     echo -e "  Escalations:      $escalation_count"
     echo -e "  Reviews:          $review_count (${GREEN}$review_pass passed${NC}, ${RED}$review_fail failed${NC})"
 
