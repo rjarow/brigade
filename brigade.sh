@@ -124,7 +124,7 @@ print_usage() {
   echo ""
   echo "Commands:"
   echo "  plan <description>         Generate PRD from feature description (Director/Opus)"
-  echo "  service <prd.json>         Run full service (all tasks)"
+  echo "  service [prd.json]         Run full service (defaults to tasks/latest.json)"
   echo "  ticket <prd.json> <id>     Run single ticket"
   echo "  status [prd.json]          Show kitchen status (auto-detects active PRD)"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
@@ -136,9 +136,10 @@ print_usage() {
   echo "  --dry-run                  Show what would be done without executing"
   echo ""
   echo "Examples:"
-  echo "  ./brigade.sh status                                  # Auto-detect active PRD"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
-  echo "  ./brigade.sh service tasks/prd.json"
+  echo "  ./brigade.sh service                                 # Uses tasks/latest.json"
+  echo "  ./brigade.sh service tasks/prd.json                  # Specific PRD"
+  echo "  ./brigade.sh status                                  # Auto-detect active PRD"
 }
 
 load_config() {
@@ -265,6 +266,20 @@ mark_task_complete() {
   mv "$tmp_file" "$prd_path"
 
   echo -e "${GREEN}✓ Marked $task_id as complete${NC}"
+}
+
+update_latest_symlink() {
+  local prd_path="$1"
+  local prd_dir=$(dirname "$prd_path")
+  local prd_name=$(basename "$prd_path")
+  local latest_link="$prd_dir/latest.json"
+
+  # Remove existing symlink if present
+  [ -L "$latest_link" ] && rm -f "$latest_link"
+
+  # Create new symlink
+  ln -s "$prd_name" "$latest_link"
+  echo -e "${GRAY}Updated $latest_link → $prd_name${NC}"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1376,10 +1391,28 @@ cmd_ticket() {
 cmd_service() {
   local prd_path="$1"
 
+  # Default to tasks/latest.json if no PRD specified
+  if [ -z "$prd_path" ]; then
+    if [ -L "tasks/latest.json" ] && [ -f "tasks/latest.json" ]; then
+      prd_path="tasks/latest.json"
+      echo -e "${GRAY}Using $prd_path${NC}"
+    elif [ -L "../tasks/latest.json" ] && [ -f "../tasks/latest.json" ]; then
+      prd_path="../tasks/latest.json"
+      echo -e "${GRAY}Using $prd_path${NC}"
+    else
+      echo -e "${RED}Error: No PRD specified and tasks/latest.json not found${NC}"
+      echo "Usage: ./brigade.sh service [prd.json]"
+      exit 1
+    fi
+  fi
+
   if [ ! -f "$prd_path" ]; then
     echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
     exit 1
   fi
+
+  # Update latest symlink
+  update_latest_symlink "$prd_path"
 
   local feature_name=$(jq -r '.featureName' "$prd_path")
   local total=$(get_task_count "$prd_path")
@@ -1656,6 +1689,9 @@ BEGIN PLANNING:"
     local generated_file=$(sed -n 's/.*<prd_generated>\(.*\)<\/prd_generated>.*/\1/p' "$output_file" | head -1)
 
     if [ -f "$generated_file" ]; then
+      # Update latest symlink
+      update_latest_symlink "$generated_file"
+
       echo ""
       echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
       log_event "SUCCESS" "PRD GENERATED: $generated_file (${duration}s)"
@@ -1671,16 +1707,17 @@ BEGIN PLANNING:"
       echo ""
       echo -e "${BOLD}Next steps:${NC}"
       echo -e "  1. Review the PRD: ${CYAN}cat $generated_file | jq${NC}"
-      echo -e "  2. Run service:    ${CYAN}./brigade.sh service $generated_file${NC}"
+      echo -e "  2. Run service:    ${CYAN}./brigade.sh service${NC}"
       echo ""
     else
       echo -e "${YELLOW}PRD file not found at expected location: $generated_file${NC}"
     fi
   elif [ -f "$prd_file" ]; then
     # PRD might have been created without the signal
+    update_latest_symlink "$prd_file"
     echo ""
     echo -e "${GREEN}PRD may have been generated: $prd_file${NC}"
-    echo -e "Run: ${CYAN}./brigade.sh status $prd_file${NC}"
+    echo -e "Run: ${CYAN}./brigade.sh service${NC}"
   else
     echo ""
     echo -e "${YELLOW}PRD generation may have failed. Check output above.${NC}"
