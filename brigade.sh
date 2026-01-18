@@ -151,7 +151,7 @@ load_config() {
 
   # Apply USE_OPENCODE if set in config
   if [ "$USE_OPENCODE" = true ]; then
-    LINE_CMD="opencode run --command"
+    LINE_CMD="opencode run"
     LINE_AGENT="opencode"
     echo -e "${CYAN}Using OpenCode for junior tasks (USE_OPENCODE=true)${NC}"
   fi
@@ -660,10 +660,9 @@ fire_ticket() {
       ;;
 
     "opencode")
-      # OpenCode CLI: opencode run --command "prompt"
+      # OpenCode CLI: opencode run [options] "prompt"
       # See: https://opencode.ai/docs/cli/
-      # -q/--quiet hides spinner, --log-level ERROR suppresses info logs
-      local opencode_flags="-q --log-level ERROR"
+      local opencode_flags="--log-level ERROR"
       if [ -n "$OPENCODE_MODEL" ]; then
         opencode_flags="$opencode_flags --model $OPENCODE_MODEL"
       fi
