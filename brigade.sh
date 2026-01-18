@@ -279,7 +279,8 @@ get_state_path() {
 
 # Find active PRD - looks for state files with currentTask set, or most recent PRD
 find_active_prd() {
-  local search_dirs=("tasks" "." "prd" "prds")
+  # Check current dir paths and parent paths (for running from inside brigade/)
+  local search_dirs=("tasks" "." "prd" "prds" "../tasks" ".." "../prd" "../prds")
 
   # First, look for state files with an active currentTask
   for dir in "${search_dirs[@]}"; do
@@ -1075,7 +1076,7 @@ cmd_status() {
     prd_path=$(find_active_prd)
     if [ -z "$prd_path" ]; then
       echo -e "${YELLOW}No active PRD found.${NC}"
-      echo -e "${GRAY}Searched: tasks/, ., prd/, prds/${NC}"
+      echo -e "${GRAY}Searched: tasks/, ., prd/, prds/, ../tasks/, .., ../prd/, ../prds/${NC}"
       echo ""
       echo "Usage: ./brigade.sh status [prd.json]"
       exit 1
