@@ -106,13 +106,24 @@ When reviewing completed work:
 2. Does it follow project patterns?
 3. Are there any obvious bugs or issues?
 4. Is the code clean and maintainable?
-5. **Do tests pass with strict flags?**
+5. Is the commit clean? (only relevant files, good message)
+6. **Do tests pass with strict flags?**
    - Go: `go test -count=3 -race -parallel=4 ./...`
    - Node: `npm test` with Jest's `--runInBand` removed
    - Python: `pytest -n auto` (parallel)
    - Rust: `cargo test -- --test-threads=4`
 
    Tests that only pass in isolation are not acceptable. If tests fail with these flags, the review fails.
+
+## Git Workflow
+
+Workers commit their changes to a feature branch after completing each task. You are the code reviewer.
+
+**On review PASS:** Continue to the next task.
+
+**On review FAIL:** The worker needs to fix the issues first.
+
+Brigade automatically merges to main when all tasks are complete.
 
 ## Completion
 

@@ -53,6 +53,10 @@ Run tests multiple times and in parallel to catch flaky tests before marking com
 When you have completed the task and all acceptance criteria are met:
 - Verify your changes work
 - Run any relevant tests
+- **Commit your changes** with message: `<task-id>: <brief description>`
+  - Example: `US-003: Add user validation tests`
+  - Only commit files you changed for this task
+  - Don't commit unrelated files or formatting changes
 - Output: `<promise>COMPLETE</promise>`
 
 If you are blocked and cannot proceed:

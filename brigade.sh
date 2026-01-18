@@ -1491,6 +1491,23 @@ cmd_service() {
     init_learnings "$prd_path"
   fi
 
+  # Setup feature branch
+  local branch_name=$(jq -r '.branchName // empty' "$prd_path")
+  if [ -n "$branch_name" ]; then
+    local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ "$current_branch" != "$branch_name" ]; then
+      if git show-ref --verify --quiet "refs/heads/$branch_name"; then
+        echo -e "${GRAY}Checking out existing branch: $branch_name${NC}"
+        git checkout "$branch_name"
+      else
+        echo -e "${GRAY}Creating feature branch: $branch_name${NC}"
+        git checkout -b "$branch_name"
+      fi
+    else
+      echo -e "${GRAY}Already on branch: $branch_name${NC}"
+    fi
+  fi
+
   log_event "START" "SERVICE STARTED: $feature_name"
   echo -e "Total tickets: $total"
   echo -e "${GRAY}Escalation: $([ "$ESCALATION_ENABLED" == "true" ] && echo "ON (after $ESCALATION_AFTER iterations)" || echo "OFF")${NC}"
@@ -1608,6 +1625,24 @@ cmd_service() {
   echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
   log_event "SUCCESS" "SERVICE COMPLETE: $completed tasks in ${hours}h ${minutes}m"
   echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+
+  # Merge feature branch to main
+  local branch_name=$(jq -r '.branchName // empty' "$prd_path")
+  if [ -n "$branch_name" ]; then
+    local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ "$current_branch" == "$branch_name" ]; then
+      echo ""
+      echo -e "${CYAN}Merging $branch_name to main...${NC}"
+      if git checkout main && git merge "$branch_name" --no-edit; then
+        echo -e "${GREEN}✓ Merged $branch_name to main${NC}"
+        git push origin main 2>/dev/null && echo -e "${GREEN}✓ Pushed to origin/main${NC}"
+        git checkout "$branch_name"  # Return to feature branch
+      else
+        echo -e "${RED}Merge failed - resolve conflicts manually${NC}"
+        git checkout "$branch_name"
+      fi
+    fi
+  fi
 }
 
 cmd_plan() {

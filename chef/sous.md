@@ -55,6 +55,10 @@ Signal BLOCKED when you genuinely cannot proceed - the kitchen hierarchy will ha
 When you have completed the task and all acceptance criteria are met:
 - Verify your changes work
 - Run any relevant tests
+- **Commit your changes** with message: `<task-id>: <brief description>`
+  - Example: `US-003: Implement JWT authentication flow`
+  - Only commit files you changed for this task
+  - Don't commit unrelated files or formatting changes
 - Output: `<promise>COMPLETE</promise>`
 
 If you are blocked and cannot proceed:
