@@ -28,6 +28,7 @@ LINE_CMD="claude --model sonnet"  # Default to Sonnet; configure OpenCode for co
 LINE_AGENT="claude"
 TEST_CMD=""
 MAX_ITERATIONS=50
+DRY_RUN=false
 
 # Simple toggle for OpenCode (set in config or via --opencode flag)
 USE_OPENCODE=false
@@ -127,6 +128,7 @@ print_usage() {
   echo "  ticket <prd.json> <id>     Run single ticket"
   echo "  status [prd.json]          Show kitchen status (auto-detects active PRD)"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
+  echo "  validate <prd.json>        Validate PRD structure and dependencies"
   echo "  opencode-models            List available OpenCode models"
   echo ""
   echo "Options:"
@@ -1376,6 +1378,73 @@ cmd_service() {
     exit 1
   fi
 
+  local feature_name=$(jq -r '.featureName' "$prd_path")
+  local total=$(get_task_count "$prd_path")
+
+  # Dry-run mode - show execution plan without running
+  if [ "$DRY_RUN" == "true" ]; then
+    echo ""
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║  DRY RUN - Execution Plan (nothing will be executed)      ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${BOLD}Feature:${NC} $feature_name"
+    echo -e "${BOLD}PRD:${NC} $prd_path"
+    echo ""
+
+    # Show config
+    echo -e "${BOLD}Configuration:${NC}"
+    echo -e "  Executive Chef: ${CYAN}$EXECUTIVE_CMD${NC}"
+    echo -e "  Sous Chef:      ${CYAN}$SOUS_CMD${NC}"
+    echo -e "  Line Cook:      ${CYAN}$LINE_CMD${NC}"
+    echo -e "  Test Command:   ${CYAN}${TEST_CMD:-"(none)"}${NC}"
+    echo -e "  Max Iterations: $MAX_ITERATIONS"
+    echo -e "  Escalation:     $([ "$ESCALATION_ENABLED" == "true" ] && echo "Line→Sous after $ESCALATION_AFTER, Sous→Exec after $ESCALATION_TO_EXEC_AFTER" || echo "OFF")"
+    echo -e "  Exec Review:    $([ "$REVIEW_ENABLED" == "true" ] && echo "ON (junior only: $REVIEW_JUNIOR_ONLY)" || echo "OFF")"
+    echo -e "  Phase Review:   $([ "$PHASE_REVIEW_ENABLED" == "true" ] && echo "Every $PHASE_REVIEW_AFTER tasks ($PHASE_REVIEW_ACTION)" || echo "OFF")"
+    echo ""
+
+    # Show task execution order
+    echo -e "${BOLD}Execution Plan:${NC}"
+    local task_num=0
+    jq -r '.tasks[] | "\(.id)|\(.title)|\(.complexity // "auto")|\(.dependsOn | if length == 0 then "-" else join(",") end)|\(.passes)"' "$prd_path" | \
+    while IFS='|' read -r id title complexity deps passes; do
+      task_num=$((task_num + 1))
+      if [ "$passes" == "true" ]; then
+        echo -e "  ${GREEN}✓${NC} $id: $title ${GRAY}[done]${NC}"
+      else
+        local worker="?"
+        case "$complexity" in
+          "junior") worker="Line Cook" ;;
+          "senior") worker="Sous Chef" ;;
+          "auto") worker="Auto-route" ;;
+        esac
+        local dep_str=""
+        [ "$deps" != "-" ] && dep_str=" ${GRAY}(after: $deps)${NC}"
+        echo -e "  ○ $id: $title → ${CYAN}$worker${NC}$dep_str"
+      fi
+    done
+    echo ""
+
+    # Show warnings
+    local pending=$(jq '[.tasks[] | select(.passes == false)] | length' "$prd_path")
+    local junior_count=$(jq '[.tasks[] | select(.passes == false and .complexity == "junior")] | length' "$prd_path")
+    local senior_count=$(jq '[.tasks[] | select(.passes == false and .complexity == "senior")] | length' "$prd_path")
+
+    echo -e "${BOLD}Summary:${NC}"
+    echo -e "  Pending tasks:  $pending"
+    echo -e "  Junior tasks:   $junior_count → Line Cook ($LINE_AGENT)"
+    echo -e "  Senior tasks:   $senior_count → Sous Chef ($SOUS_AGENT)"
+    if [ "$REVIEW_ENABLED" == "true" ]; then
+      local review_count=$junior_count
+      [ "$REVIEW_JUNIOR_ONLY" != "true" ] && review_count=$pending
+      echo -e "  Exec reviews:   ~$review_count (Opus calls)"
+    fi
+    echo ""
+    echo -e "${GRAY}Run without --dry-run to execute${NC}"
+    return 0
+  fi
+
   # Initialize state for context isolation
   if [ "$CONTEXT_ISOLATION" == "true" ]; then
     init_state "$prd_path"
@@ -1385,9 +1454,6 @@ cmd_service() {
   if [ "$KNOWLEDGE_SHARING" == "true" ]; then
     init_learnings "$prd_path"
   fi
-
-  local feature_name=$(jq -r '.featureName' "$prd_path")
-  local total=$(get_task_count "$prd_path")
 
   log_event "START" "SERVICE STARTED: $feature_name"
   echo -e "Total tickets: $total"
@@ -1656,6 +1722,152 @@ cmd_analyze() {
   echo ""
 }
 
+cmd_validate() {
+  local prd_path="$1"
+
+  if [ ! -f "$prd_path" ]; then
+    echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
+    exit 1
+  fi
+
+  echo ""
+  echo -e "${BOLD}Validating PRD:${NC} $prd_path"
+  echo ""
+
+  local errors=0
+  local warnings=0
+
+  # Check JSON structure
+  if ! jq empty "$prd_path" 2>/dev/null; then
+    echo -e "${RED}✗ Invalid JSON${NC}"
+    exit 1
+  fi
+  echo -e "${GREEN}✓${NC} Valid JSON"
+
+  # Check required fields
+  local feature_name=$(jq -r '.featureName // empty' "$prd_path")
+  if [ -z "$feature_name" ]; then
+    echo -e "${RED}✗ Missing featureName${NC}"
+    errors=$((errors + 1))
+  else
+    echo -e "${GREEN}✓${NC} Has featureName: $feature_name"
+  fi
+
+  # Check tasks array exists
+  local task_count=$(jq '.tasks | length' "$prd_path" 2>/dev/null)
+  if [ -z "$task_count" ] || [ "$task_count" == "null" ]; then
+    echo -e "${RED}✗ Missing or invalid tasks array${NC}"
+    errors=$((errors + 1))
+  else
+    echo -e "${GREEN}✓${NC} Has $task_count tasks"
+  fi
+
+  # Check for duplicate task IDs
+  local unique_ids=$(jq -r '.tasks[].id' "$prd_path" | sort -u | wc -l | tr -d ' ')
+  local total_ids=$(jq -r '.tasks[].id' "$prd_path" | wc -l | tr -d ' ')
+  if [ "$unique_ids" != "$total_ids" ]; then
+    echo -e "${RED}✗ Duplicate task IDs found${NC}"
+    jq -r '.tasks[].id' "$prd_path" | sort | uniq -d | while read -r dup; do
+      echo -e "    Duplicate: $dup"
+    done
+    errors=$((errors + 1))
+  else
+    echo -e "${GREEN}✓${NC} All task IDs unique"
+  fi
+
+  # Check for missing task fields
+  local missing_fields=$(jq -r '.tasks[] | select(.id == null or .title == null) | .id // "unnamed"' "$prd_path")
+  if [ -n "$missing_fields" ]; then
+    echo -e "${RED}✗ Tasks missing id or title${NC}"
+    errors=$((errors + 1))
+  fi
+
+  # Check for circular dependencies
+  echo -e "${GRAY}Checking for circular dependencies...${NC}"
+  local has_cycle=false
+
+  # Get all task IDs
+  local all_ids=$(jq -r '.tasks[].id' "$prd_path")
+
+  # For each task, follow dependency chain and check for cycles
+  for task_id in $all_ids; do
+    local visited=""
+    local current="$task_id"
+    local depth=0
+    local max_depth=$task_count
+
+    while [ $depth -lt $max_depth ]; do
+      # Check if we've seen this task before in this chain
+      if echo "$visited" | grep -q "^${current}$"; then
+        echo -e "${RED}✗ Circular dependency detected involving: $task_id${NC}"
+        has_cycle=true
+        errors=$((errors + 1))
+        break
+      fi
+
+      visited="$visited
+$current"
+
+      # Get dependencies of current task
+      local deps=$(jq -r --arg id "$current" '.tasks[] | select(.id == $id) | .dependsOn // [] | .[]' "$prd_path" 2>/dev/null | head -1)
+
+      if [ -z "$deps" ]; then
+        break  # No more dependencies
+      fi
+
+      current="$deps"
+      depth=$((depth + 1))
+    done
+
+    if [ "$has_cycle" == "true" ]; then
+      break
+    fi
+  done
+
+  if [ "$has_cycle" != "true" ]; then
+    echo -e "${GREEN}✓${NC} No circular dependencies"
+  fi
+
+  # Check for invalid dependency references
+  for task_id in $all_ids; do
+    local deps=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .dependsOn // [] | .[]' "$prd_path" 2>/dev/null)
+    for dep in $deps; do
+      if ! echo "$all_ids" | grep -q "^${dep}$"; then
+        echo -e "${RED}✗ Task $task_id depends on non-existent task: $dep${NC}"
+        errors=$((errors + 1))
+      fi
+    done
+  done
+  echo -e "${GREEN}✓${NC} All dependency references valid"
+
+  # Check for tasks without acceptance criteria
+  local no_criteria=$(jq -r '.tasks[] | select(.acceptanceCriteria == null or (.acceptanceCriteria | length) == 0) | .id' "$prd_path")
+  if [ -n "$no_criteria" ]; then
+    echo -e "${YELLOW}⚠${NC} Tasks without acceptance criteria:"
+    echo "$no_criteria" | while read -r id; do
+      echo -e "    $id"
+    done
+    warnings=$((warnings + 1))
+  fi
+
+  # Summary
+  echo ""
+  if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║  PRD VALID - Ready for execution                          ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  elif [ $errors -eq 0 ]; then
+    echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║  PRD VALID with $warnings warning(s)                              ║${NC}"
+    echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
+  else
+    echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║  PRD INVALID - $errors error(s) found                            ║${NC}"
+    echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
+    exit 1
+  fi
+}
+
 cmd_opencode_models() {
   echo -e "${BOLD}Available OpenCode Models${NC}"
   echo -e "${GRAY}Use these values for OPENCODE_MODEL in brigade.config${NC}"
@@ -1728,6 +1940,9 @@ main() {
       ;;
     "analyze")
       cmd_analyze "$@"
+      ;;
+    "validate")
+      cmd_validate "$@"
       ;;
     "opencode-models")
       cmd_opencode_models "$@"
