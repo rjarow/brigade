@@ -162,6 +162,46 @@ load_config() {
 # PRD HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Quick validation for essential PRD structure (called before service)
+validate_prd_quick() {
+  local prd_path="$1"
+
+  # Check valid JSON
+  if ! jq empty "$prd_path" 2>/dev/null; then
+    echo -e "${RED}Invalid JSON in PRD${NC}"
+    return 1
+  fi
+
+  # Check tasks array exists
+  local task_count=$(jq '.tasks | length' "$prd_path" 2>/dev/null)
+  if [ -z "$task_count" ] || [ "$task_count" == "null" ] || [ "$task_count" -eq 0 ]; then
+    echo -e "${RED}No tasks found in PRD${NC}"
+    return 1
+  fi
+
+  # Check for duplicate IDs
+  local unique_ids=$(jq -r '.tasks[].id' "$prd_path" | sort -u | wc -l | tr -d ' ')
+  local total_ids=$(jq -r '.tasks[].id' "$prd_path" | wc -l | tr -d ' ')
+  if [ "$unique_ids" != "$total_ids" ]; then
+    echo -e "${RED}Duplicate task IDs found${NC}"
+    return 1
+  fi
+
+  # Check all dependsOn references are valid
+  local all_ids=$(jq -r '.tasks[].id' "$prd_path")
+  for task_id in $all_ids; do
+    local deps=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .dependsOn // [] | .[]' "$prd_path" 2>/dev/null)
+    for dep in $deps; do
+      if ! echo "$all_ids" | grep -q "^${dep}$"; then
+        echo -e "${RED}Task $task_id depends on non-existent: $dep${NC}"
+        return 1
+      fi
+    done
+  done
+
+  return 0
+}
+
 get_task_count() {
   local prd_path="$1"
   jq '.tasks | length' "$prd_path"
@@ -480,6 +520,15 @@ add_learning() {
   fi
 
   local learnings_path=$(get_learnings_path "$prd_path")
+
+  # Deduplicate: check if similar learning already exists
+  # Extract first 50 chars as a signature to check for duplicates
+  local signature=$(echo "$content" | head -c 50 | tr -d '\n')
+  if [ -f "$learnings_path" ] && grep -qF "$signature" "$learnings_path" 2>/dev/null; then
+    # Similar learning already exists, skip
+    return
+  fi
+
   local timestamp=$(date "+%Y-%m-%d %H:%M")
   local worker_name=$(get_worker_name "$worker")
 
@@ -880,7 +929,27 @@ executive_review() {
 
   # Extract reason if present (macOS compatible)
   review_reason=$(sed -n 's/.*<reason>\(.*\)<\/reason>.*/\1/p' "$output_file" 2>/dev/null | head -1)
-  [ -z "$review_reason" ] && review_reason="No reason provided"
+
+  # If no explicit reason, generate one from context
+  if [ -z "$review_reason" ]; then
+    if [ "$review_result" == "PASS" ]; then
+      # Try to extract something useful from output
+      local summary=$(grep -i "criteria\|pass\|complete\|success" "$output_file" 2>/dev/null | head -1 | cut -c1-100)
+      if [ -n "$summary" ]; then
+        review_reason="$summary"
+      else
+        review_reason="All acceptance criteria verified"
+      fi
+    else
+      # For failures, try to find the issue
+      local issue=$(grep -i "fail\|error\|issue\|problem\|missing" "$output_file" 2>/dev/null | head -1 | cut -c1-100)
+      if [ -n "$issue" ]; then
+        review_reason="$issue"
+      else
+        review_reason="Review failed - check implementation"
+      fi
+    fi
+  fi
 
   rm -f "$output_file"
 
@@ -1454,6 +1523,14 @@ cmd_service() {
     exit 1
   fi
 
+  # Validate PRD before running
+  echo -e "${GRAY}Validating PRD...${NC}"
+  if ! validate_prd_quick "$prd_path"; then
+    echo -e "${RED}PRD validation failed. Run './brigade.sh validate $prd_path' for details.${NC}"
+    exit 1
+  fi
+  echo -e "${GREEN}✓${NC} PRD valid"
+
   # Update latest symlink
   update_latest_symlink "$prd_path"
 
@@ -1505,15 +1582,68 @@ cmd_service() {
     done
     echo ""
 
-    # Show warnings
+    # Show parallel execution waves
+    echo -e "${BOLD}Execution Waves (parallel groups):${NC}"
+    local wave=1
+    local processed=""
+    local all_ids=$(jq -r '.tasks[] | select(.passes == false) | .id' "$prd_path")
+    local remaining="$all_ids"
+
+    while [ -n "$remaining" ]; do
+      local wave_tasks=""
+      local next_remaining=""
+
+      for task_id in $remaining; do
+        local deps=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .dependsOn // [] | .[]' "$prd_path" 2>/dev/null)
+        local can_run=true
+
+        # Check if all dependencies are either done or processed
+        for dep in $deps; do
+          if ! echo "$processed" | grep -q "^${dep}$" && \
+             ! jq -r --arg id "$dep" '.tasks[] | select(.id == $id) | .passes' "$prd_path" | grep -q "true"; then
+            can_run=false
+            break
+          fi
+        done
+
+        if [ "$can_run" == "true" ]; then
+          wave_tasks="$wave_tasks $task_id"
+        else
+          next_remaining="$next_remaining $task_id"
+        fi
+      done
+
+      if [ -n "$wave_tasks" ]; then
+        local wave_count=$(echo $wave_tasks | wc -w | tr -d ' ')
+        local parallel_note=""
+        [ "$wave_count" -gt 1 ] && [ "$MAX_PARALLEL" -gt 1 ] && parallel_note=" ${GREEN}(can run in parallel)${NC}"
+        echo -e "  Wave $wave:$parallel_note"
+        for task_id in $wave_tasks; do
+          local title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title' "$prd_path")
+          local complexity=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .complexity // "auto"' "$prd_path")
+          echo -e "    - $task_id: $title ${GRAY}[$complexity]${NC}"
+          processed="$processed
+$task_id"
+        done
+        wave=$((wave + 1))
+      fi
+
+      remaining=$(echo $next_remaining)
+      # Safety check to prevent infinite loop
+      [ "$remaining" == "$next_remaining" ] && break
+    done
+    echo ""
+
+    # Show summary
     local pending=$(jq '[.tasks[] | select(.passes == false)] | length' "$prd_path")
     local junior_count=$(jq '[.tasks[] | select(.passes == false and .complexity == "junior")] | length' "$prd_path")
     local senior_count=$(jq '[.tasks[] | select(.passes == false and .complexity == "senior")] | length' "$prd_path")
 
     echo -e "${BOLD}Summary:${NC}"
-    echo -e "  Pending tasks:  $pending"
+    echo -e "  Pending tasks:  $pending (in $((wave - 1)) waves)"
     echo -e "  Junior tasks:   $junior_count → Line Cook ($LINE_AGENT)"
     echo -e "  Senior tasks:   $senior_count → Sous Chef ($SOUS_AGENT)"
+    echo -e "  Max parallel:   $MAX_PARALLEL"
     if [ "$REVIEW_ENABLED" == "true" ]; then
       local review_count=$junior_count
       [ "$REVIEW_JUNIOR_ONLY" != "true" ] && review_count=$pending
@@ -1967,6 +2097,28 @@ $current"
       echo -e "    $id"
     done
     warnings=$((warnings + 1))
+  fi
+
+  # Check for tasks missing complexity field
+  local no_complexity=$(jq -r '.tasks[] | select(.complexity == null or .complexity == "") | .id' "$prd_path")
+  if [ -n "$no_complexity" ]; then
+    echo -e "${YELLOW}⚠${NC} Tasks missing complexity field (will default to 'auto'):"
+    echo "$no_complexity" | while read -r id; do
+      echo -e "    $id"
+    done
+    warnings=$((warnings + 1))
+  else
+    echo -e "${GREEN}✓${NC} All tasks have complexity assigned"
+  fi
+
+  # Check for invalid complexity values
+  local invalid_complexity=$(jq -r '.tasks[] | select(.complexity != null and .complexity != "" and .complexity != "junior" and .complexity != "senior" and .complexity != "auto" and .complexity != "line" and .complexity != "sous") | "\(.id): \(.complexity)"' "$prd_path")
+  if [ -n "$invalid_complexity" ]; then
+    echo -e "${RED}✗ Tasks with invalid complexity values:${NC}"
+    echo "$invalid_complexity" | while read -r line; do
+      echo -e "    $line"
+    done
+    errors=$((errors + 1))
   fi
 
   # Summary
