@@ -201,6 +201,9 @@ MAX_PARALLEL=3
 # Run full service (all tasks)
 ./brigade.sh service brigade/tasks/prd.json
 
+# Chain multiple PRDs for overnight/unattended execution
+./brigade.sh --auto-continue service brigade/tasks/prd-*.json
+
 # Run single ticket
 ./brigade.sh ticket brigade/tasks/prd.json US-001
 

@@ -46,7 +46,25 @@ Signal BLOCKED when you genuinely cannot proceed - the kitchen hierarchy will ha
    - No shared global state between tests
    - Run tests multiple times and in parallel to catch flaky tests
 
-4. **Follow Patterns**: Match the existing code style and architecture. Don't introduce new patterns without good reason.
+5. **Check Learnings Before Writing Tests**: Read the LEARNINGS section carefully before writing test code.
+   - Look for warnings about functions that spawn editors or interactive processes
+   - Check for platform-specific gotchas (macOS vs Linux paths)
+   - Don't repeat patterns that already failed
+
+6. **Cross-Platform Awareness**: Code runs on macOS and Linux.
+   - Paths differ: macOS uses `/usr/local/bin`, `/opt/homebrew/bin`; Linux uses `/usr/bin`, `/bin`
+   - Use `$PATH` lookup, not hardcoded paths
+   - macOS has BSD tools (different flags); use portable options
+   - For tests: don't assume tools exist at specific paths
+
+7. **Diagnose Hanging Tests**: If tests hang or time out repeatedly:
+   - Check output for escape sequences (`[0m`) → interactive process
+   - Look for "not a terminal", "vim", "emacs", "nano" → editor spawned
+   - DON'T test functions with `exec.Command` directly if they spawn editors
+   - Extract the logic and test it separately; mock the exec call
+   - After 2 failed iterations, reconsider your approach entirely
+
+8. **Follow Patterns**: Match the existing code style and architecture. Don't introduce new patterns without good reason.
 
 5. **Handle Errors**: Add appropriate error handling. Don't let errors fail silently.
 

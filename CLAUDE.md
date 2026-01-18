@@ -35,6 +35,9 @@ See `ROADMAP.md` for planned features and recent changes. Check it before starti
 # Preview execution without running
 ./brigade.sh --dry-run service brigade/tasks/prd.json
 
+# Chain multiple PRDs for unattended execution
+./brigade.sh --auto-continue service brigade/tasks/prd-*.json
+
 # Run tests (requires bats-core)
 ./tests/run_tests.sh
 ```

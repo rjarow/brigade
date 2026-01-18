@@ -27,6 +27,7 @@ SOUS_AGENT="claude"
 LINE_CMD="claude --model sonnet"  # Default to Sonnet; configure OpenCode for cost savings
 LINE_AGENT="claude"
 TEST_CMD=""
+TEST_TIMEOUT=120                 # Seconds before considering test hung
 MAX_ITERATIONS=50
 DRY_RUN=false
 
@@ -52,6 +53,10 @@ REVIEW_JUNIOR_ONLY=true
 PHASE_REVIEW_ENABLED=false   # Off by default, enable for larger projects
 PHASE_REVIEW_AFTER=5         # Review every N completed tasks
 PHASE_REVIEW_ACTION=continue # continue | pause | remediate
+
+# Auto-continue defaults (chain multiple PRDs)
+AUTO_CONTINUE=false          # Chain numbered PRDs without user intervention
+PHASE_GATE="continue"        # review | continue | pause (between PRDs)
 
 # Context isolation defaults
 CONTEXT_ISOLATION=true
@@ -135,11 +140,14 @@ print_usage() {
   echo "Options:"
   echo "  --max-iterations <n>       Max iterations per task (default: 50)"
   echo "  --dry-run                  Show what would be done without executing"
+  echo "  --auto-continue            Chain multiple PRDs for unattended execution"
+  echo "  --phase-gate <mode>        Between-PRD behavior: review|continue|pause (default: continue)"
   echo ""
   echo "Examples:"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
   echo "  ./brigade.sh service                                 # Uses brigade/tasks/latest.json"
   echo "  ./brigade.sh service brigade/tasks/prd.json          # Specific PRD"
+  echo "  ./brigade.sh --auto-continue service brigade/tasks/prd-*.json  # Chain numbered PRDs"
   echo "  ./brigade.sh status                                  # Auto-detect active PRD"
 }
 
@@ -1252,6 +1260,109 @@ RECOMMENDATIONS: <any suggestions, or 'none'>
   esac
 }
 
+# Phase gate between PRDs in auto-continue mode
+# Returns: 0=continue, 1=stop, 2=pause
+prd_phase_gate() {
+  local completed_prd="$1"
+  local next_prd="$2"
+  local prd_num="$3"
+  local total_prds="$4"
+
+  local completed_name=$(jq -r '.featureName' "$completed_prd")
+  local next_name=$(jq -r '.featureName' "$next_prd")
+
+  echo ""
+  echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║  PRD PHASE GATE ($prd_num/$total_prds complete)                         ${NC}"
+  echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "${GREEN}✓ Completed:${NC} $completed_name"
+  echo -e "${CYAN}→ Next:${NC}      $next_name"
+  echo ""
+
+  case "$PHASE_GATE" in
+    "continue")
+      log_event "INFO" "Phase gate: continuing to next PRD"
+      return 0
+      ;;
+    "pause")
+      echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
+      echo -e "${YELLOW}║  AUTO-CONTINUE PAUSED                                     ║${NC}"
+      echo -e "${YELLOW}║  Run './brigade.sh --auto-continue service ...' to resume ║${NC}"
+      echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
+      return 2
+      ;;
+    "review")
+      log_event "REVIEW" "Executive Chef reviewing phase transition"
+
+      # Get summary of completed PRD
+      local completed_tasks=$(jq -r '[.tasks[] | select(.passes == true)] | length' "$completed_prd")
+      local total_tasks=$(jq '.tasks | length' "$completed_prd")
+      local next_tasks=$(jq '.tasks | length' "$next_prd")
+
+      local review_prompt="You are the Executive Chef reviewing a phase transition between PRDs.
+
+COMPLETED PRD: $completed_name
+Tasks completed: $completed_tasks/$total_tasks
+
+NEXT PRD: $next_name
+Tasks planned: $next_tasks
+
+Review the completed work and assess readiness to proceed:
+1. Was the completed phase delivered successfully?
+2. Are there any concerns or blockers for the next phase?
+3. Should we proceed, pause, or stop?
+
+Output your assessment:
+<phase_gate>
+STATUS: proceed | pause | stop
+ASSESSMENT: <your analysis>
+</phase_gate>"
+
+      local output_file=$(mktemp)
+      local start_time=$(date +%s)
+
+      if $EXECUTIVE_CMD --dangerously-skip-permissions -p "$review_prompt" 2>&1 | tee "$output_file"; then
+        echo -e "${GREEN}Phase gate review completed${NC}"
+      fi
+
+      local end_time=$(date +%s)
+      local duration=$((end_time - start_time))
+
+      # Extract status
+      local status=$(sed -n 's/.*STATUS: *\([a-z]*\).*/\1/p' "$output_file" 2>/dev/null | head -1)
+      [ -z "$status" ] && status="proceed"
+
+      rm -f "$output_file"
+
+      case "$status" in
+        "proceed")
+          log_event "SUCCESS" "Phase gate APPROVED: proceed to next PRD (${duration}s)"
+          return 0
+          ;;
+        "pause")
+          log_event "WARN" "Phase gate: PAUSE requested (${duration}s)"
+          echo -e "${YELLOW}Executive Chef recommends pausing before next PRD${NC}"
+          return 2
+          ;;
+        "stop")
+          log_event "ERROR" "Phase gate: STOP requested (${duration}s)"
+          echo -e "${RED}Executive Chef recommends stopping - review concerns above${NC}"
+          return 1
+          ;;
+        *)
+          log_event "INFO" "Phase gate completed (${duration}s)"
+          return 0
+          ;;
+      esac
+      ;;
+    *)
+      # Unknown mode, default to continue
+      return 0
+      ;;
+  esac
+}
+
 # Apply remediation tasks from Executive Chef
 apply_remediation() {
   local prd_path="$1"
@@ -1660,13 +1771,44 @@ cmd_ticket() {
       local tests_passed=true
 
       if [ -n "$TEST_CMD" ]; then
-        echo -e "${CYAN}Running tests...${NC}"
-        if $TEST_CMD; then
-          echo -e "${GREEN}Tests passed${NC}"
+        echo -e "${CYAN}Running tests (timeout: ${TEST_TIMEOUT}s)...${NC}"
+        local test_output=$(mktemp)
+        local test_start=$(date +%s)
+
+        # Use timeout if available (GNU coreutils), otherwise run directly
+        if command -v timeout >/dev/null 2>&1; then
+          timeout "$TEST_TIMEOUT" bash -c "$TEST_CMD" 2>&1 | tee "$test_output"
+          local test_exit=${PIPESTATUS[0]}
         else
-          echo -e "${YELLOW}Tests failed, continuing...${NC}"
+          # macOS fallback: use perl for timeout
+          perl -e 'alarm shift; exec @ARGV' "$TEST_TIMEOUT" bash -c "$TEST_CMD" 2>&1 | tee "$test_output"
+          local test_exit=${PIPESTATUS[0]}
+        fi
+
+        local test_end=$(date +%s)
+        local test_duration=$((test_end - test_start))
+
+        if [ $test_exit -eq 0 ]; then
+          echo -e "${GREEN}Tests passed (${test_duration}s)${NC}"
+        else
+          # Detect hanging vs failing
+          # Exit code 124 = timeout (GNU), 142 = SIGALRM (perl)
+          if [ $test_exit -eq 124 ] || [ $test_exit -eq 142 ] || [ $test_duration -ge $((TEST_TIMEOUT - 5)) ]; then
+            echo -e "${RED}Tests appear HUNG (${test_duration}s, exit $test_exit)${NC}"
+            # Check for terminal/editor indicators
+            if grep -qE '\x1b\[|Warning:.*terminal|not a terminal|vim|emacs|nano|editor' "$test_output" 2>/dev/null; then
+              echo -e "${YELLOW}⚠ Detected terminal/editor activity - test may be spawning interactive process${NC}"
+              add_learning "$prd_path" "$task_id" "$worker" "test_issue" \
+                "Tests hung after ${test_duration}s with terminal activity detected. Likely spawning an editor (vim/nano) or interactive process. Don't test functions with exec.Command directly - extract and test the logic separately."
+            else
+              echo -e "${YELLOW}⚠ Test timed out without obvious terminal activity - check for infinite loops or blocking I/O${NC}"
+            fi
+          else
+            echo -e "${YELLOW}Tests failed (exit $test_exit, ${test_duration}s)${NC}"
+          fi
           tests_passed=false
         fi
+        rm -f "$test_output"
       fi
 
       if [ "$tests_passed" == "true" ]; then
@@ -1745,6 +1887,80 @@ cmd_ticket() {
 }
 
 cmd_service() {
+  # Auto-continue mode: chain multiple PRDs
+  if [ "$AUTO_CONTINUE" == "true" ] && [ $# -gt 1 ]; then
+    local prd_files=("$@")
+    local total_prds=${#prd_files[@]}
+
+    # Sort PRDs by filename for deterministic order (prd-001, prd-002, etc.)
+    IFS=$'\n' sorted_prds=($(sort <<<"${prd_files[*]}")); unset IFS
+
+    echo ""
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║  AUTO-CONTINUE MODE: $total_prds PRDs queued                        ${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${BOLD}Execution order:${NC}"
+    local idx=1
+    for prd in "${sorted_prds[@]}"; do
+      local name=$(jq -r '.featureName // "Unknown"' "$prd" 2>/dev/null || echo "Unknown")
+      echo -e "  $idx. $(basename "$prd"): $name"
+      idx=$((idx + 1))
+    done
+    echo ""
+    echo -e "${GRAY}Phase gate between PRDs: $PHASE_GATE${NC}"
+    echo ""
+
+    local completed=0
+    local auto_start=$(date +%s)
+
+    for ((i=0; i<${#sorted_prds[@]}; i++)); do
+      local current_prd="${sorted_prds[$i]}"
+      local prd_num=$((i + 1))
+
+      echo ""
+      echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+      log_event "START" "AUTO-CONTINUE: PRD $prd_num/$total_prds - $(basename "$current_prd")"
+      echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+
+      # Run single PRD (disable auto-continue to prevent recursion)
+      AUTO_CONTINUE=false
+      if cmd_service "$current_prd"; then
+        completed=$((completed + 1))
+
+        # Phase gate before next PRD (if not the last one)
+        if [ $i -lt $((${#sorted_prds[@]} - 1)) ]; then
+          local next_prd="${sorted_prds[$((i + 1))]}"
+          prd_phase_gate "$current_prd" "$next_prd" "$prd_num" "$total_prds"
+          local gate_result=$?
+
+          if [ $gate_result -eq 1 ]; then
+            echo -e "${RED}Auto-continue stopped by phase gate${NC}"
+            break
+          elif [ $gate_result -eq 2 ]; then
+            echo -e "${YELLOW}Auto-continue paused at PRD $prd_num${NC}"
+            break
+          fi
+        fi
+      else
+        echo -e "${RED}PRD $prd_num failed - stopping auto-continue${NC}"
+        break
+      fi
+    done
+
+    local auto_end=$(date +%s)
+    local duration=$((auto_end - auto_start))
+    local hours=$((duration / 3600))
+    local minutes=$(((duration % 3600) / 60))
+
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+    log_event "SUCCESS" "AUTO-CONTINUE COMPLETE: $completed/$total_prds PRDs in ${hours}h ${minutes}m"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+
+    return 0
+  fi
+
   local prd_path="$1"
 
   # Default to brigade/tasks/latest.json if no PRD specified
@@ -2432,6 +2648,14 @@ main() {
       --dry-run)
         DRY_RUN=true
         shift
+        ;;
+      --auto-continue)
+        AUTO_CONTINUE=true
+        shift
+        ;;
+      --phase-gate)
+        PHASE_GATE="$2"
+        shift 2
         ;;
       *)
         echo -e "${RED}Unknown option: $1${NC}"

@@ -146,6 +146,42 @@ my-project/
 └── src/
 ```
 
+## Auto-Continue Mode
+
+Chain multiple numbered PRDs for overnight/unattended execution:
+
+```bash
+# Execute PRDs in order (prd-001.json, prd-002.json, etc.)
+./brigade.sh --auto-continue service brigade/tasks/prd-*.json
+```
+
+### Configuration
+
+```bash
+# Enable auto-continue by default
+AUTO_CONTINUE=false
+
+# Phase gate behavior between PRDs:
+#   continue  - Proceed immediately (default)
+#   pause     - Stop after each PRD for manual restart
+#   review    - Executive Chef reviews before next PRD
+PHASE_GATE="continue"
+```
+
+### Phase Gate Modes
+
+| Mode | Behavior |
+|------|----------|
+| `continue` | Proceed to next PRD immediately |
+| `pause` | Stop and wait for manual restart |
+| `review` | Executive Chef reviews completion before proceeding |
+
+Use `--phase-gate` flag to override:
+
+```bash
+./brigade.sh --auto-continue --phase-gate review service brigade/tasks/prd-*.json
+```
+
 ## Chef Prompts
 
 Customize worker behavior by editing:

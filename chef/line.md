@@ -48,6 +48,62 @@ Before marking a task complete, verify your tests:
 
 Run tests multiple times and in parallel to catch flaky tests before marking complete.
 
+## Before Writing Tests
+
+**CRITICAL: Check learnings first.** Before writing any test code:
+
+1. Read the LEARNINGS section above carefully
+2. Look for warnings about:
+   - Functions that spawn editors or interactive processes
+   - Platform-specific gotchas
+   - Test patterns that failed before
+3. If learnings warn against testing something directly, find an alternative approach
+
+Common pitfalls learnings may warn about:
+- Functions calling `exec.Command` with editors (vim, nano, etc.) will hang in tests
+- Tests that work on Linux may fail on macOS (different paths, tools)
+- Tests that assume specific ports/paths will fail in parallel
+
+## Cross-Platform Considerations
+
+Code runs on macOS and Linux. When writing code or tests:
+
+1. **Paths differ**:
+   - macOS: `/usr/local/bin`, `/opt/homebrew/bin`
+   - Linux: `/usr/bin`, `/bin`
+   - Use `$PATH` lookup, not hardcoded paths
+
+2. **Default tools differ**:
+   - macOS may have BSD versions (different flags)
+   - Use portable flags or check platform first
+
+3. **For tests**:
+   - Don't assume specific tools exist at specific paths
+   - Use `command -v` or `which` to find tools
+   - Test with environment variables, not hardcoded paths
+
+## When Tests Fail or Hang
+
+If tests fail multiple times, **STOP and analyze**:
+
+1. **Check test output for**:
+   - Escape sequences (`[0m`, `[1;33m`) → terminal/color codes from interactive process
+   - "Warning: not a terminal" → command expecting TTY
+   - "vim", "emacs", "nano" → editor spawned accidentally
+   - Long duration before failure → test is hanging, not failing
+
+2. **If you see terminal/editor indicators**:
+   - The test is spawning an interactive process
+   - DON'T test the function directly
+   - Extract and test the logic separately
+   - Mock or stub the exec.Command call
+
+3. **After 2 failed iterations**:
+   - Re-read the test output carefully
+   - Check if the same error repeats
+   - Consider if the approach is fundamentally flawed
+   - Signal BLOCKED with a detailed explanation
+
 ## Completion
 
 When you have completed the task and all acceptance criteria are met:

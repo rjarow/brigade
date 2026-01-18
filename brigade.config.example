@@ -111,6 +111,10 @@ TEST_CMD=""
 # TEST_CMD="pytest"
 # TEST_CMD="cargo test"
 
+# Timeout for test execution in seconds
+# Tests exceeding this are flagged as "hung" (likely spawning interactive processes)
+TEST_TIMEOUT=120
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ESCALATION
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -180,6 +184,20 @@ LEARNINGS_FILE="brigade-learnings.md"
 
 # Maximum parallel workers (0 = sequential)
 MAX_PARALLEL=3
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUTO-CONTINUE (Multi-PRD Chaining)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Enable auto-continue mode for chaining multiple PRDs
+# Use with: ./brigade.sh --auto-continue service brigade/tasks/prd-*.json
+AUTO_CONTINUE=false
+
+# Phase gate behavior between PRDs:
+#   continue  - Proceed immediately to next PRD (default)
+#   pause     - Stop after each PRD, require manual restart
+#   review    - Executive Chef reviews before proceeding to next PRD
+PHASE_GATE="continue"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LIMITS
