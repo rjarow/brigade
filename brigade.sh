@@ -1210,6 +1210,9 @@ cmd_ticket() {
   local prd_path="$1"
   local task_id="$2"
 
+  # Hot-reload config between tasks
+  load_config >/dev/null 2>&1
+
   if [ ! -f "$prd_path" ]; then
     echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
     exit 1
