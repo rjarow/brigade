@@ -649,7 +649,8 @@ INSTRUCTIONS:
 3. Run tests if applicable
 4. When complete, output: <promise>COMPLETE</promise>
 5. If blocked, output: <promise>BLOCKED</promise> with explanation
-6. Share useful learnings with: <learning>What you learned</learning>
+6. If already done by a prior task, output: <promise>ALREADY_DONE</promise>
+7. Share useful learnings with: <learning>What you learned</learning>
 
 BEGIN WORK:
 EOF
@@ -763,6 +764,10 @@ fire_ticket() {
     log_event "SUCCESS" "Task $task_id signaled COMPLETE (${duration}s)"
     rm -f "$output_file"
     return 0
+  elif grep -q "<promise>ALREADY_DONE</promise>" "$output_file" 2>/dev/null; then
+    log_event "SUCCESS" "Task $task_id signaled ALREADY_DONE - completed by prior task (${duration}s)"
+    rm -f "$output_file"
+    return 3  # Special return code for already done
   elif grep -q "<promise>BLOCKED</promise>" "$output_file" 2>/dev/null; then
     log_event "ERROR" "Task $task_id is BLOCKED (${duration}s)"
     rm -f "$output_file"
@@ -1334,6 +1339,9 @@ cmd_ticket() {
 
     echo -e "${GRAY}Iteration $i/$MAX_ITERATIONS (tier: $iteration_in_tier, worker: $(get_worker_name "$worker"))${NC}"
 
+    # Track each iteration attempt
+    update_state_task "$prd_path" "$task_id" "$worker" "iteration_$i"
+
     fire_ticket "$prd_path" "$task_id" "$worker"
     local result=$?
 
@@ -1362,6 +1370,12 @@ cmd_ticket() {
           update_state_task "$prd_path" "$task_id" "$worker" "review_failed"
         fi
       fi
+    elif [ $result -eq 3 ]; then
+      # Already done by prior task - mark complete without tests/review
+      echo -e "${GREEN}Task was already completed by a prior task${NC}"
+      update_state_task "$prd_path" "$task_id" "$worker" "already_done"
+      mark_task_complete "$prd_path" "$task_id"
+      return 0
     elif [ $result -eq 2 ]; then
       # Blocked - try escalation if available
       if [ "$ESCALATION_ENABLED" == "true" ] && \

@@ -59,6 +59,11 @@ When you have completed the task and all acceptance criteria are met:
   - Don't commit unrelated files or formatting changes
 - Output: `<promise>COMPLETE</promise>`
 
+If the task was already completed by a prior task:
+- Verify the acceptance criteria are already met
+- Explain what prior task completed this work
+- Output: `<promise>ALREADY_DONE</promise>`
+
 If you are blocked and cannot proceed:
 - Explain what's blocking you
 - Output: `<promise>BLOCKED</promise>`
