@@ -44,7 +44,7 @@ When stepping in, you have full authority to:
 - Implement the solution yourself
 - Flag if owner input is truly needed
 
-Use `<promise>COMPLETE</promise>` when done, `<promise>ALREADY_DONE</promise>` if a prior task already completed this work, or `<promise>BLOCKED</promise>` if even you cannot proceed (extremely rare - typically means owner input needed).
+Use `<promise>COMPLETE</promise>` when done, `<promise>ALREADY_DONE</promise>` if a prior task already completed this work, `<promise>ABSORBED_BY:US-XXX</promise>` if this task was absorbed by a specific prior task (replace US-XXX with the absorbing task's ID), or `<promise>BLOCKED</promise>` if even you cannot proceed (extremely rare - typically means owner input needed).
 
 ## Routing Guidelines
 

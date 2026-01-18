@@ -25,6 +25,10 @@ See `ROADMAP.md` for planned features and recent changes. Check it before starti
 # Check progress (auto-detects active PRD)
 ./brigade.sh status
 
+# Resume after interruption (retry or skip the failed task)
+./brigade.sh resume
+./brigade.sh resume brigade/tasks/prd.json retry
+
 # Validate PRD structure
 ./brigade.sh validate brigade/tasks/prd.json
 
@@ -111,10 +115,11 @@ Workers signal status via XML tags in their output:
 |--------|-------------|---------|
 | `<promise>COMPLETE</promise>` | 0 | Task completed successfully |
 | `<promise>ALREADY_DONE</promise>` | 3 | Prior task already did this work |
+| `<promise>ABSORBED_BY:US-XXX</promise>` | 4 | Work absorbed by specific prior task |
 | `<promise>BLOCKED</promise>` | 2 | Cannot proceed, needs escalation |
 | `<learning>...</learning>` | - | Share knowledge with team |
 
-The `ALREADY_DONE` signal skips tests/review since no new code was written.
+The `ALREADY_DONE` and `ABSORBED_BY` signals skip tests/review since no new code was written.
 
 ## Adding New Signals
 

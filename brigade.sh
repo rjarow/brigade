@@ -125,6 +125,7 @@ print_usage() {
   echo "Commands:"
   echo "  plan <description>         Generate PRD from feature description (Director/Opus)"
   echo "  service [prd.json]         Run full service (defaults to brigade/tasks/latest.json)"
+  echo "  resume [prd.json] [action] Resume after interruption (action: retry|skip)"
   echo "  ticket <prd.json> <id>     Run single ticket"
   echo "  status [prd.json]          Show kitchen status (auto-detects active PRD)"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
@@ -465,6 +466,24 @@ record_review() {
   mv "$tmp_file" "$state_path"
 }
 
+record_absorption() {
+  local prd_path="$1"
+  local task_id="$2"
+  local absorbed_by="$3"
+
+  if [ "$CONTEXT_ISOLATION" != "true" ]; then
+    return
+  fi
+
+  local state_path=$(get_state_path "$prd_path")
+  local tmp_file=$(mktemp)
+
+  jq --arg task "$task_id" --arg absorbed_by "$absorbed_by" --arg ts "$(date -Iseconds)" \
+    '.absorptions += [{"taskId": $task, "absorbedBy": $absorbed_by, "timestamp": $ts}]' \
+    "$state_path" > "$tmp_file"
+  mv "$tmp_file" "$state_path"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # KNOWLEDGE SHARING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -559,6 +578,97 @@ extract_learnings_from_output() {
       add_learning "$prd_path" "$task_id" "$worker" "note" "$learning"
       echo -e "${CYAN}📝 Learning captured${NC}"
     fi
+  fi
+}
+
+search_learnings() {
+  local prd_path="$1"
+  local task_id="$2"
+
+  if [ "$KNOWLEDGE_SHARING" != "true" ]; then
+    echo ""
+    return
+  fi
+
+  local learnings_path=$(get_learnings_path "$prd_path")
+  if [ ! -f "$learnings_path" ]; then
+    echo ""
+    return
+  fi
+
+  # Get task title and acceptance criteria for keyword extraction
+  local task_json=$(get_task_by_id "$prd_path" "$task_id")
+  local title=$(echo "$task_json" | jq -r '.title // ""')
+  local criteria=$(echo "$task_json" | jq -r '.acceptanceCriteria // [] | join(" ")')
+
+  # Extract meaningful keywords (3+ chars, not common words)
+  local text="$title $criteria"
+  local stopwords="the|and|for|are|but|not|you|all|can|has|have|will|with|this|that|from|they|been|would|there|their|what|about|which|when|make|like|into|just|over|such|more|some|than|them|then|these|only|come|made|find|here|many|your|those|being|most"
+
+  # Get unique keywords (lowercase, 3+ chars, not stopwords)
+  local keywords=$(echo "$text" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alpha:]' '\n' | \
+    grep -v "^$" | awk 'length >= 3' | grep -vE "^($stopwords)$" | sort -u | head -10)
+
+  if [ -z "$keywords" ]; then
+    echo ""
+    return
+  fi
+
+  # Search learnings file for sections matching keywords
+  # Each section starts with "## [" and ends with "---"
+  local results=""
+  local match_count=0
+
+  # Read file in sections (split on "## [")
+  local current_section=""
+  local in_section=false
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ "$line" == "## ["* ]]; then
+      # Score and save previous section if it exists
+      if [ -n "$current_section" ]; then
+        local score=0
+        local section_lower=$(echo "$current_section" | tr '[:upper:]' '[:lower:]')
+        for kw in $keywords; do
+          if echo "$section_lower" | grep -q "$kw"; then
+            score=$((score + 1))
+          fi
+        done
+        if [ $score -gt 0 ]; then
+          results="${results}${score}|${current_section}
+SECTION_BREAK
+"
+        fi
+      fi
+      current_section="$line"
+      in_section=true
+    elif [ "$in_section" == "true" ]; then
+      current_section="${current_section}
+${line}"
+      if [ "$line" == "---" ]; then
+        in_section=false
+      fi
+    fi
+  done < "$learnings_path"
+
+  # Handle last section
+  if [ -n "$current_section" ]; then
+    local score=0
+    local section_lower=$(echo "$current_section" | tr '[:upper:]' '[:lower:]')
+    for kw in $keywords; do
+      if echo "$section_lower" | grep -q "$kw"; then
+        score=$((score + 1))
+      fi
+    done
+    if [ $score -gt 0 ]; then
+      results="${results}${score}|${current_section}"
+    fi
+  fi
+
+  # Sort by score (descending) and take top 3
+  if [ -n "$results" ]; then
+    echo "$results" | sed 's/SECTION_BREAK/\n/g' | grep -v "^$" | \
+      sort -t'|' -k1 -rn | head -3 | cut -d'|' -f2-
   fi
 }
 
@@ -670,14 +780,16 @@ build_prompt() {
 
   local task_json=$(get_task_by_id "$prd_path" "$task_id")
   local feature_name=$(jq -r '.featureName' "$prd_path")
-  local learnings=$(get_learnings "$prd_path")
+
+  # Search for relevant learnings based on task keywords
+  local relevant_learnings=$(search_learnings "$prd_path" "$task_id")
 
   local learnings_section=""
-  if [ -n "$learnings" ] && [ "$KNOWLEDGE_SHARING" == "true" ]; then
+  if [ -n "$relevant_learnings" ] && [ "$KNOWLEDGE_SHARING" == "true" ]; then
     learnings_section="
 ---
-TEAM LEARNINGS (from previous tasks):
-$learnings
+RELEVANT LEARNINGS (from previous tasks - matched by keywords):
+$relevant_learnings
 ---
 "
   fi
@@ -699,7 +811,8 @@ INSTRUCTIONS:
 4. When complete, output: <promise>COMPLETE</promise>
 5. If blocked, output: <promise>BLOCKED</promise> with explanation
 6. If already done by a prior task, output: <promise>ALREADY_DONE</promise>
-7. Share useful learnings with: <learning>What you learned</learning>
+7. If absorbed by a prior task (prior task completed this work), output: <promise>ABSORBED_BY:US-XXX</promise> (replace US-XXX with the task ID)
+8. Share useful learnings with: <learning>What you learned</learning>
 
 BEGIN WORK:
 EOF
@@ -817,6 +930,12 @@ fire_ticket() {
     log_event "SUCCESS" "Task $task_id signaled ALREADY_DONE - completed by prior task (${duration}s)"
     rm -f "$output_file"
     return 3  # Special return code for already done
+  elif grep -oq "<promise>ABSORBED_BY:" "$output_file" 2>/dev/null; then
+    # Extract the absorbing task ID (e.g., ABSORBED_BY:US-001 -> US-001)
+    LAST_ABSORBED_BY=$(grep -o "<promise>ABSORBED_BY:[^<]*</promise>" "$output_file" | sed 's/<promise>ABSORBED_BY://;s/<\/promise>//')
+    log_event "SUCCESS" "Task $task_id ABSORBED BY $LAST_ABSORBED_BY (${duration}s)"
+    rm -f "$output_file"
+    return 4  # Special return code for absorbed
   elif grep -q "<promise>BLOCKED</promise>" "$output_file" 2>/dev/null; then
     log_event "ERROR" "Task $task_id is BLOCKED (${duration}s)"
     rm -f "$output_file"
@@ -1270,12 +1389,19 @@ cmd_status() {
   # Task list with status indicators
   echo -e "${BOLD}Tasks:${NC}"
   local current_task_id=""
+  local absorptions_json="[]"
   if [ -f "$state_path" ]; then
     current_task_id=$(jq -r '.currentTask // empty' "$state_path")
+    absorptions_json=$(jq -c '.absorptions // []' "$state_path")
   fi
 
-  jq -r --arg current "$current_task_id" '.tasks[] |
-    if .passes == true then
+  jq -r --arg current "$current_task_id" --argjson absorptions "$absorptions_json" '.tasks[] |
+    # Check if this task was absorbed
+    .id as $id |
+    ($absorptions | map(select(.taskId == $id)) | first // null) as $absorption |
+    if .passes == true and $absorption != null then
+      "  \u001b[32m✓\u001b[0m \(.id): \(.title) \u001b[90m(absorbed by \($absorption.absorbedBy))\u001b[0m"
+    elif .passes == true then
       "  \u001b[32m✓\u001b[0m \(.id): \(.title)"
     elif .id == $current then
       "  \u001b[33m→\u001b[0m \(.id): \(.title) \u001b[33m(in progress)\u001b[0m"
@@ -1307,7 +1433,10 @@ cmd_status() {
       fi
     fi
 
+    local absorption_count=$(jq '.absorptions | length' "$state_path")
+
     echo -e "  Escalations:      $escalation_count"
+    echo -e "  Absorptions:      $absorption_count"
     echo -e "  Reviews:          $review_count (${GREEN}$review_pass passed${NC}, ${RED}$review_fail failed${NC})"
 
     if [ "$escalation_count" -gt 0 ]; then
@@ -1315,9 +1444,121 @@ cmd_status() {
       echo -e "${BOLD}Escalation History:${NC}"
       jq -r '.escalations[] | "  \(.taskId): \(.from) → \(.to) (\(.reason))"' "$state_path"
     fi
+
+    if [ "$absorption_count" -gt 0 ]; then
+      echo ""
+      echo -e "${BOLD}Absorbed Tasks:${NC}"
+      jq -r '.absorptions[] | "  \(.taskId) ← absorbed by \(.absorbedBy)"' "$state_path"
+    fi
   fi
 
   echo ""
+}
+
+cmd_resume() {
+  local prd_path="$1"
+  local action="$2"  # "retry" or "skip" (optional)
+
+  # Auto-detect PRD if not provided
+  if [ -z "$prd_path" ]; then
+    prd_path=$(find_active_prd)
+    if [ -z "$prd_path" ]; then
+      echo -e "${YELLOW}No active PRD found.${NC}"
+      echo "Usage: ./brigade.sh resume [prd.json] [retry|skip]"
+      exit 1
+    fi
+    echo -e "${GRAY}Found: $prd_path${NC}"
+  fi
+
+  if [ ! -f "$prd_path" ]; then
+    echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
+    exit 1
+  fi
+
+  local state_path=$(get_state_path "$prd_path")
+  if [ ! -f "$state_path" ]; then
+    echo -e "${YELLOW}No state file found - nothing to resume.${NC}"
+    echo -e "${GRAY}Run './brigade.sh service $prd_path' to start fresh.${NC}"
+    exit 0
+  fi
+
+  # Check for interrupted task
+  local current_task=$(jq -r '.currentTask // empty' "$state_path")
+  if [ -z "$current_task" ]; then
+    echo -e "${YELLOW}No interrupted task found.${NC}"
+    echo -e "${GRAY}Run './brigade.sh service $prd_path' to continue.${NC}"
+    exit 0
+  fi
+
+  # Check if the current task is already completed
+  local task_passes=$(jq -r --arg id "$current_task" '.tasks[] | select(.id == $id) | .passes' "$prd_path")
+  if [ "$task_passes" == "true" ]; then
+    echo -e "${GREEN}Task $current_task is already completed.${NC}"
+    # Clear currentTask from state
+    local tmp_file=$(mktemp)
+    jq '.currentTask = null' "$state_path" > "$tmp_file"
+    mv "$tmp_file" "$state_path"
+    echo -e "${GRAY}Run './brigade.sh service $prd_path' to continue.${NC}"
+    exit 0
+  fi
+
+  # Get info about the interrupted task
+  local task_title=$(jq -r --arg id "$current_task" '.tasks[] | select(.id == $id) | .title' "$prd_path")
+  local last_entry=$(jq -r --arg task "$current_task" '[.taskHistory[] | select(.taskId == $task)] | last' "$state_path")
+  local last_worker=$(echo "$last_entry" | jq -r '.worker // "unknown"')
+  local last_status=$(echo "$last_entry" | jq -r '.status // "unknown"')
+  local last_time=$(echo "$last_entry" | jq -r '.timestamp // "unknown"')
+
+  echo ""
+  echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${YELLOW}║  INTERRUPTED TASK DETECTED                                ║${NC}"
+  echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "${BOLD}Task:${NC}   $current_task - $task_title"
+  echo -e "${BOLD}Worker:${NC} $(get_worker_name "$last_worker")"
+  echo -e "${BOLD}Status:${NC} $last_status"
+  echo -e "${BOLD}Time:${NC}   $last_time"
+  echo ""
+
+  # Determine action
+  if [ -z "$action" ]; then
+    echo -e "What would you like to do?"
+    echo -e "  ${CYAN}retry${NC} - Retry the interrupted task from scratch"
+    echo -e "  ${CYAN}skip${NC}  - Mark as failed and continue to next task"
+    echo ""
+    read -p "Enter choice [retry/skip]: " action
+  fi
+
+  case "$action" in
+    "retry"|"r")
+      echo ""
+      log_event "RESUME" "Retrying interrupted task: $current_task"
+      # Clear currentTask to allow fresh start
+      local tmp_file=$(mktemp)
+      jq '.currentTask = null' "$state_path" > "$tmp_file"
+      mv "$tmp_file" "$state_path"
+      # Run the service - it will pick up from where we left off
+      cmd_service "$prd_path"
+      ;;
+    "skip"|"s")
+      echo ""
+      log_event "RESUME" "Skipping interrupted task: $current_task"
+      # Mark task as blocked/skipped in state
+      update_state_task "$prd_path" "$current_task" "$last_worker" "skipped"
+      # Clear currentTask
+      local tmp_file=$(mktemp)
+      jq '.currentTask = null' "$state_path" > "$tmp_file"
+      mv "$tmp_file" "$state_path"
+      echo -e "${YELLOW}Task $current_task skipped.${NC}"
+      echo -e "${GRAY}Note: Dependent tasks may be blocked.${NC}"
+      echo ""
+      echo -e "Run './brigade.sh service $prd_path' to continue with remaining tasks."
+      ;;
+    *)
+      echo -e "${RED}Invalid choice. Use 'retry' or 'skip'.${NC}"
+      exit 1
+      ;;
+  esac
 }
 
 cmd_ticket() {
@@ -1443,6 +1684,13 @@ cmd_ticket() {
       # Already done by prior task - mark complete without tests/review
       echo -e "${GREEN}Task was already completed by a prior task${NC}"
       update_state_task "$prd_path" "$task_id" "$worker" "already_done"
+      mark_task_complete "$prd_path" "$task_id"
+      return 0
+    elif [ $result -eq 4 ]; then
+      # Absorbed by another task - mark complete without tests/review
+      echo -e "${GREEN}Task was absorbed by $LAST_ABSORBED_BY${NC}"
+      update_state_task "$prd_path" "$task_id" "$worker" "absorbed"
+      record_absorption "$prd_path" "$task_id" "$LAST_ABSORBED_BY"
       mark_task_complete "$prd_path" "$task_id"
       return 0
     elif [ $result -eq 2 ]; then
@@ -2202,6 +2450,9 @@ main() {
       ;;
     "service")
       cmd_service "$@"
+      ;;
+    "resume")
+      cmd_resume "$@"
       ;;
     "ticket")
       cmd_ticket "$@"

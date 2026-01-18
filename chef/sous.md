@@ -66,6 +66,11 @@ If the task was already completed by a prior task:
 - Explain what prior task completed this work
 - Output: `<promise>ALREADY_DONE</promise>`
 
+If this task was absorbed by a prior task (that task explicitly completed this work as part of its scope):
+- Verify the acceptance criteria are already met
+- Identify which prior task absorbed this work
+- Output: `<promise>ABSORBED_BY:US-XXX</promise>` (replace US-XXX with the absorbing task's ID)
+
 If you are blocked and cannot proceed:
 - Explain what's blocking you
 - Output: `<promise>BLOCKED</promise>`
