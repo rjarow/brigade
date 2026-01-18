@@ -70,6 +70,21 @@ Signal BLOCKED when you genuinely cannot proceed - the kitchen hierarchy will ha
 
 ## Completion
 
+### FIRST: Check If Already Done
+
+**Before writing ANY code**, verify the task isn't already complete:
+
+1. Review acceptance criteria against existing codebase
+2. Run relevant tests - do they already pass?
+3. Check if prior tasks implemented this functionality
+4. If `git diff` would be empty after your "changes", it's already done
+
+**If acceptance criteria are met → signal ALREADY_DONE immediately.**
+
+Do NOT try to "improve" or refactor working code. Your job is to complete tasks, not polish existing work.
+
+### Signaling Completion
+
 When you have completed the task and all acceptance criteria are met:
 - Verify your changes work
 - Run any relevant tests
@@ -81,8 +96,9 @@ When you have completed the task and all acceptance criteria are met:
 
 If the task was already completed by a prior task:
 - Verify the acceptance criteria are already met
-- Explain what prior task completed this work
+- Briefly note what already exists
 - Output: `<promise>ALREADY_DONE</promise>`
+- **Do not modify working code**
 
 If this task was absorbed by a prior task (that task explicitly completed this work as part of its scope):
 - Verify the acceptance criteria are already met

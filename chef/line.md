@@ -106,6 +106,27 @@ If tests fail multiple times, **STOP and analyze**:
 
 ## Completion
 
+### FIRST: Check If Already Done
+
+**Before writing ANY code**, check if the task is already complete:
+
+1. Read the acceptance criteria carefully
+2. Check if the code/functionality already exists
+3. Run relevant tests to see if they already pass
+4. Check `git diff` - if your changes would be empty, it's already done
+
+**If acceptance criteria are already met and tests pass → signal ALREADY_DONE immediately.**
+
+Do NOT:
+- Add "improvements" to working code
+- Refactor existing implementations
+- Add comments or documentation to code you didn't write
+- Try to "contribute" when the work is done
+
+This saves significant time and tokens. Prior tasks may have completed this work.
+
+### Signaling Completion
+
 When you have completed the task and all acceptance criteria are met:
 - Verify your changes work
 - Run any relevant tests
@@ -117,8 +138,9 @@ When you have completed the task and all acceptance criteria are met:
 
 If the task was already completed by a prior task:
 - Verify the acceptance criteria are already met
-- Explain what prior task completed this work
+- Briefly explain what already exists
 - Output: `<promise>ALREADY_DONE</promise>`
+- **Do not attempt to modify working code**
 
 If this task was absorbed by a prior task (that task explicitly completed this work as part of its scope):
 - Verify the acceptance criteria are already met

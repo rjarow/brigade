@@ -1716,6 +1716,20 @@ cmd_ticket() {
 
   update_state_task "$prd_path" "$task_id" "$worker" "started"
 
+  # Pre-flight check: if tests already pass, task may be done
+  if [ -n "$TEST_CMD" ]; then
+    echo -e "${GRAY}Pre-flight check: running tests to see if task is already complete...${NC}"
+    if timeout 30 bash -c "$TEST_CMD" >/dev/null 2>&1; then
+      echo -e "${GREEN}✓ Tests already pass - task appears complete${NC}"
+      log_event "SUCCESS" "Task $task_id: pre-flight tests pass → ALREADY_DONE"
+      update_state_task "$prd_path" "$task_id" "$worker" "preflight_already_done"
+      mark_task_complete "$prd_path" "$task_id"
+      return 0
+    else
+      echo -e "${GRAY}Pre-flight: tests don't pass yet, proceeding with worker${NC}"
+    fi
+  fi
+
   for ((i=1; i<=MAX_ITERATIONS; i++)); do
     iteration_in_tier=$((iteration_in_tier + 1))
 
@@ -1767,7 +1781,28 @@ cmd_ticket() {
     local result=$?
 
     if [ $result -eq 0 ]; then
-      # Task signaled complete - run tests if configured
+      # Task signaled complete - check if worker actually changed anything
+      local git_diff_empty=false
+      if git diff --quiet HEAD 2>/dev/null; then
+        # No changes - worker said COMPLETE but didn't modify anything
+        if git diff --cached --quiet 2>/dev/null; then
+          git_diff_empty=true
+        fi
+      fi
+
+      if [ "$git_diff_empty" == "true" ]; then
+        echo -e "${YELLOW}⚠ Worker signaled COMPLETE but git diff is empty${NC}"
+        echo -e "${YELLOW}  Task was likely already done - converting to ALREADY_DONE${NC}"
+        log_event "WARN" "Task $task_id: COMPLETE with empty diff → treating as ALREADY_DONE"
+        add_learning "$prd_path" "$task_id" "$worker" "workflow" \
+          "Task $task_id was already complete but worker didn't signal ALREADY_DONE. Check acceptance criteria before writing code."
+        # Skip tests/review since nothing changed
+        update_state_task "$prd_path" "$task_id" "$worker" "already_done_detected"
+        mark_task_complete "$prd_path" "$task_id"
+        return 0
+      fi
+
+      # Run tests if configured
       local tests_passed=true
 
       if [ -n "$TEST_CMD" ]; then
