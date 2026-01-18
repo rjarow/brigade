@@ -73,6 +73,7 @@ When creating PRDs, you must ensure comprehensive test coverage:
 1. **Every implementation task must include test requirements in acceptance criteria**
    - Add "Tests written for [functionality]" as an acceptance criterion
    - Be specific: "Unit tests for validation logic" not just "tests exist"
+   - Include test isolation: "Tests pass with `-count=3 -race -parallel=4`"
 
 2. **Create dedicated test tasks for complex features**
    - Test tasks should depend on their implementation task
@@ -87,6 +88,17 @@ When creating PRDs, you must ensure comprehensive test coverage:
    - If a PRD has implementation tasks without corresponding test coverage, it is incomplete
    - Integration tests for APIs, unit tests for logic, regression tests for bug fixes
 
+5. **Include a "constraints" section for language/framework-specific anti-patterns**
+   Example constraints:
+   ```json
+   "constraints": [
+     "Socket/file paths in tests must include test name or unique suffix",
+     "Never send real signals in tests - use graceful shutdown mechanisms",
+     "Async server tests must verify server is ready, not just that process started",
+     "Tests must be parallelizable - no shared global state"
+   ]
+   ```
+
 ## Review Criteria
 
 When reviewing completed work:
@@ -94,6 +106,13 @@ When reviewing completed work:
 2. Does it follow project patterns?
 3. Are there any obvious bugs or issues?
 4. Is the code clean and maintainable?
+5. **Do tests pass with strict flags?**
+   - Go: `go test -count=3 -race -parallel=4 ./...`
+   - Node: `npm test` with Jest's `--runInBand` removed
+   - Python: `pytest -n auto` (parallel)
+   - Rust: `cargo test -- --test-threads=4`
+
+   Tests that only pass in isolation are not acceptable. If tests fail with these flags, the review fails.
 
 ## Completion
 

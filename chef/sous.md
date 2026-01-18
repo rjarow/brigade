@@ -39,6 +39,13 @@ Signal BLOCKED when you genuinely cannot proceed - the kitchen hierarchy will ha
    - API endpoints need integration tests
    - If no test framework exists, set one up or flag it as a blocker
 
+4. **Tests Must Be Parallel-Safe**: Tests that only pass in isolation are not acceptable.
+   - Use unique temp paths (include test name or timestamp)
+   - Use dynamic ports (e.g., port 0) for test servers
+   - Verify async services are ready before testing, not just started
+   - No shared global state between tests
+   - Run tests multiple times and in parallel to catch flaky tests
+
 4. **Follow Patterns**: Match the existing code style and architecture. Don't introduce new patterns without good reason.
 
 5. **Handle Errors**: Add appropriate error handling. Don't let errors fail silently.
@@ -61,8 +68,13 @@ Share learnings with your team using:
 <learning>What you discovered that others should know</learning>
 ```
 
+**Make learnings actionable and pattern-based:**
+
+Bad: "The progress reporting feature was already implemented"
+Good: "Socket tests pattern: Use temp directory + test name + timestamp for unique socket paths to avoid conflicts"
+
 Good things to share:
-- Project patterns you discovered
-- Gotchas or edge cases
-- Useful file locations
-- API quirks or undocumented behavior
+- Reusable code patterns with examples
+- Gotchas with specific solutions
+- Test utilities and helper functions
+- API quirks with workarounds

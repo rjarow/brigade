@@ -34,6 +34,20 @@ The Owner trusts the kitchen to run without interruption. You should:
    - Run tests to make sure you didn't break anything
    - If you can't figure out the test setup, signal BLOCKED
 
+## Test Hygiene Checklist
+
+Before marking a task complete, verify your tests:
+
+- [ ] **Unique temp paths**: Include test name or timestamp in temp file/socket paths
+- [ ] **No hardcoded ports/paths**: Use dynamic ports (`0`), temp directories, or unique suffixes
+- [ ] **Async readiness**: Server/daemon tests verify the service is ready, not just started
+- [ ] **No shared state**: Tests don't depend on execution order or global state
+- [ ] **Parallel-safe**: Tests pass when run concurrently with other tests
+- [ ] **No real signals**: Use graceful shutdown mechanisms instead of kill signals in tests
+- [ ] **Proper cleanup**: Tests clean up resources (files, sockets, servers) in teardown
+
+Run tests multiple times and in parallel to catch flaky tests before marking complete.
+
 ## Completion
 
 When you have completed the task and all acceptance criteria are met:
@@ -52,8 +66,13 @@ Share learnings with your team using:
 <learning>What you discovered that others should know</learning>
 ```
 
+**Make learnings actionable and pattern-based:**
+
+Bad: "The progress reporting feature was already implemented"
+Good: "Socket tests pattern: Use temp directory + test name + timestamp for unique socket paths to avoid conflicts"
+
 Good things to share:
-- File locations for common patterns
-- Test utilities you found helpful
-- Naming conventions
-- Useful existing functions
+- Reusable code patterns with examples
+- Test utilities and how to use them
+- File paths for common patterns
+- Gotchas with specific solutions

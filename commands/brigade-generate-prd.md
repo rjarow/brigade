@@ -216,6 +216,12 @@ Generate a JSON PRD in this format:
   "branchName": "feature/kebab-case-name",
   "createdAt": "YYYY-MM-DD",
   "description": "Brief description of the feature",
+  "constraints": [
+    "Language/framework-specific anti-patterns to avoid",
+    "Example: Socket/file paths in tests must include test name or unique suffix",
+    "Example: Async server tests must verify server is ready before assertions"
+  ],
+  "testCommand": "command to run tests in parallel with race detection",
   "tasks": [
     {
       "id": "US-001",
@@ -223,7 +229,8 @@ Generate a JSON PRD in this format:
       "description": "As a [user], I want [feature] so that [benefit]",
       "acceptanceCriteria": [
         "Specific, verifiable criterion 1",
-        "Specific, verifiable criterion 2"
+        "Specific, verifiable criterion 2",
+        "Tests pass with parallel execution"
       ],
       "dependsOn": [],
       "complexity": "junior|senior|auto",
@@ -232,6 +239,32 @@ Generate a JSON PRD in this format:
   ]
 }
 ```
+
+### Constraints Section
+
+Include anti-patterns workers should avoid. Pick constraints relevant to the project's language:
+
+**General (all languages):**
+- Test file/socket paths must include test name or timestamp for uniqueness
+- Async server tests must verify readiness, not just that the process started
+- Tests must be parallelizable - no shared global state
+- Clean up resources (files, sockets, connections) in test teardown
+
+**Go:**
+- Never send real signals in tests - use context cancellation
+- Never pass nil context to functions that accept context.Context
+
+**Node.js:**
+- Use `port: 0` for dynamic port allocation in test servers
+- Clean up event listeners in test teardown
+
+**Python:**
+- Use `tmp_path` fixture for temp files
+- Use `unittest.mock` instead of modifying globals
+
+**Rust:**
+- Use `tempfile` crate for temp directories
+- Async tests need tokio test runtime
 
 ## Workflow
 
