@@ -893,7 +893,7 @@ executive_review() {
   echo ""
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
   log_event "REVIEW" "EXECUTIVE REVIEW: $task_id - $task_title"
-  echo -e "${GRAY}Completed by: $(get_worker_name "$completed_by")${NC}"
+  echo -e "${GRAY}Executive Chef reviewing $(get_worker_name "$completed_by")'s work${NC}"
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
   echo ""
 
