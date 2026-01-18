@@ -70,8 +70,8 @@ ESCALATION_TO_EXEC_AFTER=5    # Iterations before escalating
 
 ## State Files
 
-All Brigade working files are kept in `brigade/tasks/` to avoid polluting the project root:
-- `brigade/tasks/prd-*.json` - PRD files (ephemeral by default, gitignored)
+The entire `brigade/` directory is typically gitignored (it's a cloned tool, not part of your project). Working files are kept in `brigade/tasks/`:
+- `brigade/tasks/prd-*.json` - PRD files
 - `brigade/tasks/brigade-state.json` - Session state, task history, escalations
 - `brigade/tasks/brigade-learnings.md` - Knowledge shared between workers via `<learning>` tags
 

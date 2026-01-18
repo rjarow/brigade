@@ -78,20 +78,15 @@ Common OPENCODE_MODEL options to mention (run `opencode models` to see all):
 - `anthropic/claude-sonnet-4-5` - Claude Sonnet via OpenCode
 
 #### Gitignore Check (ALWAYS ASK):
-Ask: "Should I add Brigade's working files to .gitignore? By default, PRDs and state files are kept in `brigade/tasks/` and are ephemeral (not version controlled)."
+Ask: "Should I add the Brigade directory to .gitignore? Brigade is a tool you clone into your project - it doesn't need to be version controlled with your code."
 
 If yes (recommended), add this to .gitignore immediately before generating the PRD:
 ```
-# Brigade working files (PRDs, state, learnings)
-brigade/tasks/
+# Brigade (cloned tool, update with: cd brigade && git pull)
+brigade/
 ```
 
-If user wants to keep PRDs in version control but ignore state files:
-```
-# Brigade state files only
-brigade/tasks/brigade-state.json
-brigade/tasks/brigade-learnings.md
-```
+This ignores everything: the tool itself, PRDs, state files. Users update Brigade by pulling in the brigade subdirectory.
 
 Get enough information that you can execute autonomously afterward.
 
