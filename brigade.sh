@@ -124,7 +124,7 @@ print_usage() {
   echo ""
   echo "Commands:"
   echo "  plan <description>         Generate PRD from feature description (Director/Opus)"
-  echo "  service [prd.json]         Run full service (defaults to tasks/latest.json)"
+  echo "  service [prd.json]         Run full service (defaults to brigade/tasks/latest.json)"
   echo "  ticket <prd.json> <id>     Run single ticket"
   echo "  status [prd.json]          Show kitchen status (auto-detects active PRD)"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
@@ -137,8 +137,8 @@ print_usage() {
   echo ""
   echo "Examples:"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
-  echo "  ./brigade.sh service                                 # Uses tasks/latest.json"
-  echo "  ./brigade.sh service tasks/prd.json                  # Specific PRD"
+  echo "  ./brigade.sh service                                 # Uses brigade/tasks/latest.json"
+  echo "  ./brigade.sh service brigade/tasks/prd.json          # Specific PRD"
   echo "  ./brigade.sh status                                  # Auto-detect active PRD"
 }
 
@@ -294,8 +294,8 @@ get_state_path() {
 
 # Find active PRD - looks for state files with currentTask set, or most recent PRD
 find_active_prd() {
-  # Check current dir paths and parent paths (for running from inside brigade/)
-  local search_dirs=("tasks" "." "prd" "prds" "../tasks" ".." "../prd" "../prds")
+  # Check brigade/tasks first, then fallback paths (for running from inside brigade/)
+  local search_dirs=("brigade/tasks" "tasks" "." "../brigade/tasks" "../tasks" "..")
 
   # First, look for state files with an active currentTask
   for dir in "${search_dirs[@]}"; do
@@ -1115,7 +1115,7 @@ cmd_status() {
     prd_path=$(find_active_prd)
     if [ -z "$prd_path" ]; then
       echo -e "${YELLOW}No active PRD found.${NC}"
-      echo -e "${GRAY}Searched: tasks/, ., prd/, prds/, ../tasks/, .., ../prd/, ../prds/${NC}"
+      echo -e "${GRAY}Searched: brigade/tasks/, tasks/, ., ../brigade/tasks/, ../tasks/${NC}"
       echo ""
       echo "Usage: ./brigade.sh status [prd.json]"
       exit 1
@@ -1416,16 +1416,20 @@ cmd_ticket() {
 cmd_service() {
   local prd_path="$1"
 
-  # Default to tasks/latest.json if no PRD specified
+  # Default to brigade/tasks/latest.json if no PRD specified
   if [ -z "$prd_path" ]; then
-    if [ -L "tasks/latest.json" ] && [ -f "tasks/latest.json" ]; then
+    if [ -L "brigade/tasks/latest.json" ] && [ -f "brigade/tasks/latest.json" ]; then
+      prd_path="brigade/tasks/latest.json"
+      echo -e "${GRAY}Using $prd_path${NC}"
+    elif [ -L "tasks/latest.json" ] && [ -f "tasks/latest.json" ]; then
+      # Fallback for legacy location
       prd_path="tasks/latest.json"
       echo -e "${GRAY}Using $prd_path${NC}"
-    elif [ -L "../tasks/latest.json" ] && [ -f "../tasks/latest.json" ]; then
-      prd_path="../tasks/latest.json"
+    elif [ -L "../brigade/tasks/latest.json" ] && [ -f "../brigade/tasks/latest.json" ]; then
+      prd_path="../brigade/tasks/latest.json"
       echo -e "${GRAY}Using $prd_path${NC}"
     else
-      echo -e "${RED}Error: No PRD specified and tasks/latest.json not found${NC}"
+      echo -e "${RED}Error: No PRD specified and brigade/tasks/latest.json not found${NC}"
       echo "Usage: ./brigade.sh service [prd.json]"
       exit 1
     fi
@@ -1681,11 +1685,11 @@ cmd_plan() {
   fi
 
   # Create tasks directory if it doesn't exist
-  mkdir -p "tasks"
+  mkdir -p "brigade/tasks"
 
   # Generate filename from description
   local slug=$(echo "$description" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-40)
-  local prd_file="tasks/prd-${slug}.json"
+  local prd_file="brigade/tasks/prd-${slug}.json"
   local today=$(date +%Y-%m-%d)
 
   echo ""

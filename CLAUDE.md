@@ -13,19 +13,19 @@ Brigade is a multi-model AI orchestration framework that routes coding tasks to 
 ./brigade.sh plan "Add user authentication with JWT"
 
 # Execute all tasks in a PRD
-./brigade.sh service tasks/prd-feature-name.json
+./brigade.sh service brigade/tasks/prd-feature-name.json
 
 # Run a single task
-./brigade.sh ticket tasks/prd.json US-001
+./brigade.sh ticket brigade/tasks/prd.json US-001
 
 # Check progress (auto-detects active PRD)
 ./brigade.sh status
 
 # Validate PRD structure
-./brigade.sh validate tasks/prd.json
+./brigade.sh validate brigade/tasks/prd.json
 
 # Preview execution without running
-./brigade.sh --dry-run service tasks/prd.json
+./brigade.sh --dry-run service brigade/tasks/prd.json
 ```
 
 ## Architecture
@@ -70,9 +70,10 @@ ESCALATION_TO_EXEC_AFTER=5    # Iterations before escalating
 
 ## State Files
 
-These are generated during execution (per-PRD directory):
-- `brigade-state.json` - Session state, task history, escalations
-- `brigade-learnings.md` - Knowledge shared between workers via `<learning>` tags
+All Brigade working files are kept in `brigade/tasks/` to avoid polluting the project root:
+- `brigade/tasks/prd-*.json` - PRD files (ephemeral by default, gitignored)
+- `brigade/tasks/brigade-state.json` - Session state, task history, escalations
+- `brigade/tasks/brigade-learnings.md` - Knowledge shared between workers via `<learning>` tags
 
 ## PRD Format
 

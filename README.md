@@ -82,7 +82,7 @@ git clone https://github.com/yourusername/brigade.git
 # 4. Execute everything autonomously
 
 # Run it
-./brigade/brigade.sh service tasks/prd-*.json
+./brigade/brigade.sh service brigade/tasks/prd-*.json
 ```
 
 No config file needed. Brigade uses Claude for all workers by default.
@@ -114,10 +114,10 @@ vim brigade/brigade.config  # Set your test command, etc.
 ./brigade/brigade.sh plan "Add user authentication with JWT"
 
 # Review the generated PRD
-cat tasks/prd-add-user-authentication-with-jwt.json | jq
+cat brigade/tasks/prd-add-user-authentication-with-jwt.json | jq
 
 # Execute with your multi-model team
-./brigade/brigade.sh service tasks/prd-add-user-authentication-with-jwt.json
+./brigade/brigade.sh service brigade/tasks/prd-add-user-authentication-with-jwt.json
 ```
 
 ### Using Claude Code Skills
@@ -140,7 +140,7 @@ The skill will:
 1. Ask clarifying questions about your requirements
 2. Explore your codebase to understand patterns
 3. Generate a properly structured PRD
-4. Save it to `tasks/` for execution
+4. Save it to `brigade/tasks/` for execution
 
 ## Configuration (Optional)
 
@@ -199,20 +199,20 @@ MAX_PARALLEL=3
 ./brigade.sh plan "Add feature description here"
 
 # Run full service (all tasks)
-./brigade.sh service tasks/prd.json
+./brigade.sh service brigade/tasks/prd.json
 
 # Run single ticket
-./brigade.sh ticket tasks/prd.json US-001
+./brigade.sh ticket brigade/tasks/prd.json US-001
 
 # Check kitchen status
-./brigade.sh status tasks/prd.json
+./brigade.sh status brigade/tasks/prd.json
 
 # Analyze routing
-./brigade.sh analyze tasks/prd.json
+./brigade.sh analyze brigade/tasks/prd.json
 
 # Use OpenCode for junior tasks (cost savings)
 ./brigade.sh --opencode plan "Build X"
-./brigade.sh --opencode service tasks/prd.json
+./brigade.sh --opencode service brigade/tasks/prd.json
 ```
 
 ## The Flow
@@ -321,7 +321,7 @@ For each task:
 Brigade maintains state in `brigade-state.json`:
 
 ```bash
-./brigade.sh status tasks/prd.json
+./brigade.sh status brigade/tasks/prd.json
 ```
 
 Shows:

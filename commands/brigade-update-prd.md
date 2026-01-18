@@ -15,8 +15,8 @@ You are updating an existing Brigade PRD (Product Requirements Document). Parse 
 
 ### Step 1: Find the PRD
 
-1. Look for a PRD path in the user's request (e.g., `tasks/prd-auth.json`)
-2. If not specified, check for PRD files in `tasks/` directory
+1. Look for a PRD path in the user's request (e.g., `brigade/tasks/prd-auth.json`)
+2. If not specified, check for PRD files in `brigade/tasks/` directory
 3. If multiple PRDs exist and it's ambiguous, list them and ask which one to update
 4. Read and parse the PRD JSON
 
@@ -120,13 +120,13 @@ If validation fails, explain the issue and ask how to fix it.
 1. Write the updated PRD back to the same file
 2. Show a summary of changes made:
    ```
-   Updated tasks/prd-api.json:
+   Updated brigade/tasks/prd-api.json:
    - Added task US-006: "Add caching layer" (senior)
    - Updated US-003 dependencies: now depends on [US-001, US-002]
    ```
 3. If tasks were modified or re-opened, suggest the command to run:
    ```
-   To execute: ./brigade.sh service tasks/prd-api.json
+   To execute: ./brigade.sh service brigade/tasks/prd-api.json
    ```
 
 ## PRD JSON Structure Reference

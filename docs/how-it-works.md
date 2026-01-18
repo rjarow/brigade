@@ -282,7 +282,7 @@ Brigade tracks state in `brigade-state.json`:
 
 View with:
 ```bash
-./brigade.sh status tasks/prd.json
+./brigade.sh status brigade/tasks/prd.json
 ```
 
 ## Routing Logic

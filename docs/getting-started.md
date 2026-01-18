@@ -139,12 +139,12 @@ Feature: Add user authentication with JWT
 ║  PRD GENERATED                                            ║
 ╚═══════════════════════════════════════════════════════════╝
 
-File: tasks/prd-add-user-authentication-with-jwt.json
+File: brigade/tasks/prd-add-user-authentication-with-jwt.json
 Tasks: 7 total (4 senior, 3 junior)
 
 Next steps:
-  1. Review the PRD: cat tasks/prd-add-user-authentication-with-jwt.json | jq
-  2. Run service:    ./brigade.sh service tasks/prd-add-user-authentication-with-jwt.json
+  1. Review the PRD: cat brigade/tasks/prd-add-user-authentication-with-jwt.json | jq
+  2. Run service:    ./brigade.sh service brigade/tasks/prd-add-user-authentication-with-jwt.json
 ```
 
 ### Step 2: Review the PRD
@@ -152,7 +152,7 @@ Next steps:
 Check what was generated:
 
 ```bash
-cat tasks/prd-add-user-authentication-with-jwt.json | jq
+cat brigade/tasks/prd-add-user-authentication-with-jwt.json | jq
 ```
 
 You can edit the PRD if needed:
@@ -171,7 +171,7 @@ You can edit the PRD if needed:
 Run the full service:
 
 ```bash
-./brigade/brigade.sh service tasks/prd-add-user-authentication-with-jwt.json
+./brigade/brigade.sh service brigade/tasks/prd-add-user-authentication-with-jwt.json
 ```
 
 Brigade will:
@@ -186,7 +186,7 @@ Brigade will:
 Check status:
 
 ```bash
-./brigade/brigade.sh status tasks/prd-add-user-authentication-with-jwt.json
+./brigade/brigade.sh status brigade/tasks/prd-add-user-authentication-with-jwt.json
 ```
 
 Output:
@@ -247,16 +247,16 @@ The skill will:
 ./brigade.sh plan "Add feature description here"
 
 # Run full service
-./brigade.sh service tasks/prd.json
+./brigade.sh service brigade/tasks/prd.json
 
 # Run single ticket
-./brigade.sh ticket tasks/prd.json US-001
+./brigade.sh ticket brigade/tasks/prd.json US-001
 
 # Check kitchen status
-./brigade.sh status tasks/prd.json
+./brigade.sh status brigade/tasks/prd.json
 
 # Analyze task routing
-./brigade.sh analyze tasks/prd.json
+./brigade.sh analyze brigade/tasks/prd.json
 ```
 
 ## What Happens During Execution

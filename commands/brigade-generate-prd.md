@@ -78,20 +78,19 @@ Common OPENCODE_MODEL options to mention (run `opencode models` to see all):
 - `anthropic/claude-sonnet-4-5` - Claude Sonnet via OpenCode
 
 #### Gitignore Check (ALWAYS ASK):
-Ask: "Should I add Brigade's working files to .gitignore? This includes:
-- `brigade-state.json` (session state)
-- `brigade-learnings.md` (worker learnings)
-- `tasks/*.json` (PRD files) - or do you want to keep these in version control?"
+Ask: "Should I add Brigade's working files to .gitignore? By default, PRDs and state files are kept in `brigade/tasks/` and are ephemeral (not version controlled)."
 
-If yes, offer to add them as the first task or do it immediately before generating the PRD.
-
-Recommended .gitignore additions:
+If yes (recommended), add this to .gitignore immediately before generating the PRD:
 ```
-# Brigade working files
-brigade-state.json
-brigade-learnings.md
-# Uncomment to also ignore PRD files:
-# tasks/*.json
+# Brigade working files (PRDs, state, learnings)
+brigade/tasks/
+```
+
+If user wants to keep PRDs in version control but ignore state files:
+```
+# Brigade state files only
+brigade/tasks/brigade-state.json
+brigade/tasks/brigade-learnings.md
 ```
 
 Get enough information that you can execute autonomously afterward.
@@ -359,10 +358,10 @@ Create the PRD with:
 - Specific, verifiable acceptance criteria
 
 ### Step 6: Save and Report
-1. Save to `tasks/prd-{feature-name}.json`
+1. Save to `brigade/tasks/prd-{feature-name}.json`
 2. Show the user:
    - Summary of tasks (highlighting setup tasks for greenfield)
-   - Suggested command: `./brigade.sh service tasks/prd-{feature-name}.json`
+   - Suggested command: `./brigade.sh service brigade/tasks/prd-{feature-name}.json`
 
 ## Examples
 
