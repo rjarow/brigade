@@ -89,6 +89,15 @@ CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=true  # Auto-approve in non-interactive mode
 # OLLAMA_HOST="http://localhost:11434"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# GIT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Default branch for merging (leave empty to auto-detect from origin)
+# Auto-detection checks: git symbolic-ref refs/remotes/origin/HEAD
+# Common values: main, master, develop
+DEFAULT_BRANCH=""
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # TESTING
 # ═══════════════════════════════════════════════════════════════════════════════
 

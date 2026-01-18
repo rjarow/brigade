@@ -40,8 +40,14 @@ echo ""
 echo -e "${GREEN}Done!${NC} Commands symlinked to $COMMANDS_DIR"
 echo ""
 echo "Available commands in Claude Code:"
-echo "  /brigade-generate-prd       - Create a new PRD through interactive interview"
-echo "  /brigade-convert-prd-to-json - Convert markdown PRD to JSON for Brigade"
+for cmd in "$BRIGADE_COMMANDS_DIR"/*.md; do
+    if [ -f "$cmd" ]; then
+        filename=$(basename "$cmd" .md)
+        # Extract first line description from the file (# Title)
+        title=$(head -1 "$cmd" | sed 's/^# //')
+        echo "  /$filename"
+    fi
+done
 echo ""
 echo "To update commands later, just: cd brigade && git pull"
 echo "(Symlinks auto-update, no reinstall needed)"

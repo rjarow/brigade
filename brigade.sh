@@ -585,6 +585,31 @@ get_worker_name() {
   esac
 }
 
+get_default_branch() {
+  # Use configured value if set
+  if [ -n "${DEFAULT_BRANCH:-}" ]; then
+    echo "$DEFAULT_BRANCH"
+    return
+  fi
+
+  # Auto-detect from origin
+  local detected=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+  if [ -n "$detected" ]; then
+    echo "$detected"
+    return
+  fi
+
+  # Fallback: check if main or master exists
+  if git show-ref --verify --quiet refs/heads/main 2>/dev/null; then
+    echo "main"
+  elif git show-ref --verify --quiet refs/heads/master 2>/dev/null; then
+    echo "master"
+  else
+    # Last resort default
+    echo "main"
+  fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TASK EXECUTION
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1626,16 +1651,17 @@ cmd_service() {
   log_event "SUCCESS" "SERVICE COMPLETE: $completed tasks in ${hours}h ${minutes}m"
   echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
 
-  # Merge feature branch to main
+  # Merge feature branch to default branch
   local branch_name=$(jq -r '.branchName // empty' "$prd_path")
   if [ -n "$branch_name" ]; then
     local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
     if [ "$current_branch" == "$branch_name" ]; then
+      local default_branch=$(get_default_branch)
       echo ""
-      echo -e "${CYAN}Merging $branch_name to main...${NC}"
-      if git checkout main && git merge "$branch_name" --no-edit; then
-        echo -e "${GREEN}✓ Merged $branch_name to main${NC}"
-        git push origin main 2>/dev/null && echo -e "${GREEN}✓ Pushed to origin/main${NC}"
+      echo -e "${CYAN}Merging $branch_name to $default_branch...${NC}"
+      if git checkout "$default_branch" && git merge "$branch_name" --no-edit; then
+        echo -e "${GREEN}✓ Merged $branch_name to $default_branch${NC}"
+        git push origin "$default_branch" 2>/dev/null && echo -e "${GREEN}✓ Pushed to origin/$default_branch${NC}"
         git checkout "$branch_name"  # Return to feature branch
       else
         echo -e "${RED}Merge failed - resolve conflicts manually${NC}"
