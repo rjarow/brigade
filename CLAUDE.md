@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Brigade is a multi-model AI orchestration framework that routes coding tasks to the right AI based on complexity. It uses a kitchen metaphor: an Executive Chef (Opus) plans and reviews, a Sous Chef (Sonnet) handles complex work, and Line Cooks (GLM/cheaper models) handle routine tasks.
 
+## Roadmap
+
+See `ROADMAP.md` for planned features and recent changes. Check it before starting work.
+
 ## Key Commands
 
 ```bash
@@ -31,7 +35,7 @@ Brigade is a multi-model AI orchestration framework that routes coding tasks to 
 ## Architecture
 
 ### Core Script
-- `brigade.sh` - Main orchestrator (~2000 lines bash). Handles routing, escalation, review, state management, and parallel execution.
+- `brigade.sh` - Main orchestrator (~2100 lines bash). Handles routing, escalation, review, state management, and parallel execution.
 
 ### Worker Prompts (chef/)
 - `executive.md` - Executive Chef (Opus): Plans PRDs, reviews work, handles rare escalations
@@ -41,10 +45,24 @@ Brigade is a multi-model AI orchestration framework that routes coding tasks to 
 ### Claude Code Skills (commands/)
 - `brigade-generate-prd.md` - Interactive PRD generation skill
 - `brigade-convert-prd-to-json.md` - Convert markdown PRDs to JSON
+- `brigade-update-prd.md` - Update existing PRDs conversationally
 
 ### Configuration
 - `brigade.config` - User configuration (optional, works without it). Hot-reloaded between tasks.
 - `brigade.config.example` - Full configuration reference
+
+## Key Functions in brigade.sh
+
+When modifying brigade.sh, these are the important functions:
+
+| Function | Line ~  | Purpose |
+|----------|---------|---------|
+| `validate_prd_quick` | 165 | Quick PRD validation before service |
+| `get_ready_tasks` | 270 | Find tasks ready to execute (deps met) |
+| `fire_ticket` | 720 | Execute a single task with a worker |
+| `executive_review` | 880 | Run Executive Chef review on completed work |
+| `cmd_service` | 1500 | Main service loop - orchestrates everything |
+| `cmd_validate` | 1920 | Full PRD validation command |
 
 ## Task Routing
 
@@ -59,21 +77,12 @@ Tasks are routed based on `complexity` field in PRD:
 2. Sous Chef fails `ESCALATION_TO_EXEC_AFTER` times (default: 5) → Executive Chef takes over
 3. Task signals `<promise>BLOCKED</promise>` → Immediate escalation to next tier
 
-Configuration in `brigade.config`:
-```bash
-ESCALATION_ENABLED=true       # Enable Line Cook → Sous Chef
-ESCALATION_AFTER=3            # Iterations before escalating
-
-ESCALATION_TO_EXEC=true       # Enable Sous Chef → Executive Chef
-ESCALATION_TO_EXEC_AFTER=5    # Iterations before escalating
-```
-
 ## State Files
 
-The entire `brigade/` directory is typically gitignored (it's a cloned tool, not part of your project). Working files are kept in `brigade/tasks/`:
+The entire `brigade/` directory is typically gitignored. Working files are in `brigade/tasks/`:
 - `brigade/tasks/prd-*.json` - PRD files
 - `brigade/tasks/brigade-state.json` - Session state, task history, escalations
-- `brigade/tasks/brigade-learnings.md` - Knowledge shared between workers via `<learning>` tags
+- `brigade/tasks/brigade-learnings.md` - Knowledge shared between workers
 
 ## PRD Format
 
@@ -94,12 +103,43 @@ The entire `brigade/` directory is typically gitignored (it's a cloned tool, not
 }
 ```
 
-## Worker Communication
+## Worker Communication Signals
 
-Workers signal completion/blocking via XML tags:
-- `<promise>COMPLETE</promise>` - Task completed successfully
-- `<promise>BLOCKED</promise>` - Cannot proceed, needs escalation
-- `<learning>...</learning>` - Share knowledge with team
+Workers signal status via XML tags in their output:
+
+| Signal | Return Code | Meaning |
+|--------|-------------|---------|
+| `<promise>COMPLETE</promise>` | 0 | Task completed successfully |
+| `<promise>ALREADY_DONE</promise>` | 3 | Prior task already did this work |
+| `<promise>BLOCKED</promise>` | 2 | Cannot proceed, needs escalation |
+| `<learning>...</learning>` | - | Share knowledge with team |
+
+The `ALREADY_DONE` signal skips tests/review since no new code was written.
+
+## Adding New Signals
+
+To add a new worker signal (like `ABSORBED_BY`):
+
+1. Add grep check in `fire_ticket()` (~line 770):
+```bash
+elif grep -q "<promise>NEW_SIGNAL</promise>" "$output_file" 2>/dev/null; then
+  log_event "..." "..."
+  rm -f "$output_file"
+  return N  # New return code
+```
+
+2. Handle return code in task loop in `cmd_service()` (~line 1390):
+```bash
+elif [ $result -eq N ]; then
+  # Handle the new signal
+  update_state_task "$prd_path" "$task_id" "$worker" "new_status"
+  mark_task_complete "$prd_path" "$task_id"
+  return 0
+```
+
+3. Update worker prompts in `chef/*.md` to document new signal
+
+4. Update `build_prompt()` instructions (~line 690)
 
 ## Philosophy
 
