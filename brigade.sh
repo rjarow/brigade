@@ -50,6 +50,7 @@ REVIEW_JUNIOR_ONLY=true
 # Phase review defaults (Executive Chef checks overall progress)
 PHASE_REVIEW_ENABLED=false   # Off by default, enable for larger projects
 PHASE_REVIEW_AFTER=5         # Review every N completed tasks
+PHASE_REVIEW_ACTION=continue # continue | pause | remediate
 
 # Context isolation defaults
 CONTEXT_ISOLATION=true
@@ -884,7 +885,51 @@ phase_review() {
   local pending_tasks=$(jq -r '.tasks[] | select(.passes == false) | "- \(.id): \(.title) [\(.complexity // "auto")]"' "$prd_path")
   local prd_description=$(jq -r '.description // "No description"' "$prd_path")
 
-  local phase_prompt="You are the Executive Chef doing a phase review.
+  # Different prompts based on action mode
+  local phase_prompt=""
+
+  if [ "$PHASE_REVIEW_ACTION" == "remediate" ]; then
+    phase_prompt="You are the Executive Chef doing a phase review with REMEDIATION authority.
+
+FEATURE: $feature_name
+DESCRIPTION: $prd_description
+
+PROGRESS: $completed of $total tasks complete ($pending remaining)
+
+COMPLETED TASKS:
+$completed_tasks
+
+REMAINING TASKS:
+$pending_tasks
+
+Please review:
+1. Are completed tasks aligned with the PRD spec and acceptance criteria?
+2. Is there any drift from the original requirements?
+3. Are we on track to deliver the feature as specified?
+
+If you identify issues that need correction, you can add remediation tasks.
+
+Output your assessment AND any remediation tasks:
+<phase_review>
+STATUS: on_track | minor_concerns | needs_attention
+ASSESSMENT: <your analysis>
+</phase_review>
+
+If STATUS is needs_attention, also output remediation tasks (or omit if none needed):
+<remediation_tasks>
+[
+  {
+    \"id\": \"FIX-001\",
+    \"title\": \"Fix: <description of correction>\",
+    \"description\": \"Correct the drift by...\",
+    \"acceptanceCriteria\": [\"Specific fix criterion\"],
+    \"complexity\": \"senior\",
+    \"dependsOn\": []
+  }
+]
+</remediation_tasks>"
+  else
+    phase_prompt="You are the Executive Chef doing a phase review.
 
 FEATURE: $feature_name
 DESCRIPTION: $prd_description
@@ -909,6 +954,7 @@ STATUS: on_track | minor_concerns | needs_attention
 ASSESSMENT: <your analysis>
 RECOMMENDATIONS: <any suggestions, or 'none'>
 </phase_review>"
+  fi
 
   local output_file=$(mktemp)
   local start_time=$(date +%s)
@@ -922,29 +968,97 @@ RECOMMENDATIONS: <any suggestions, or 'none'>
   local end_time=$(date +%s)
   local duration=$((end_time - start_time))
 
-  # Extract status
-  local status=$(grep -oP '(?<=STATUS: )\w+' "$output_file" 2>/dev/null | head -1)
+  # Extract status (macOS compatible - no -P flag)
+  local status=$(sed -n 's/.*STATUS: *\([a-z_]*\).*/\1/p' "$output_file" 2>/dev/null | head -1)
   [ -z "$status" ] && status="unknown"
-
-  rm -f "$output_file"
 
   case "$status" in
     "on_track")
       log_event "SUCCESS" "Phase Review: ON TRACK (${duration}s)"
+      rm -f "$output_file"
+      return 0
       ;;
     "minor_concerns")
       log_event "WARN" "Phase Review: MINOR CONCERNS (${duration}s)"
+      rm -f "$output_file"
+      return 0
       ;;
     "needs_attention")
       log_event "ERROR" "Phase Review: NEEDS ATTENTION (${duration}s)"
-      echo -e "${YELLOW}Executive Chef flagged concerns - review output above${NC}"
+
+      # Handle based on action mode
+      case "$PHASE_REVIEW_ACTION" in
+        "pause")
+          echo ""
+          echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
+          echo -e "${RED}║  EXECUTION PAUSED - Phase review requires attention       ║${NC}"
+          echo -e "${RED}║  Review the concerns above and restart when ready         ║${NC}"
+          echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
+          rm -f "$output_file"
+          exit 2  # Special exit code for paused
+          ;;
+        "remediate")
+          # Extract and apply remediation tasks
+          apply_remediation "$prd_path" "$output_file"
+          ;;
+        *)
+          # continue - just log
+          echo -e "${YELLOW}Executive Chef flagged concerns - review output above${NC}"
+          ;;
+      esac
+      rm -f "$output_file"
+      return 0
       ;;
     *)
       log_event "INFO" "Phase Review completed (${duration}s)"
+      rm -f "$output_file"
+      return 0
       ;;
   esac
+}
+
+# Apply remediation tasks from Executive Chef
+apply_remediation() {
+  local prd_path="$1"
+  local output_file="$2"
+
+  # Extract remediation tasks JSON
+  local remediation_json=$(sed -n '/<remediation_tasks>/,/<\/remediation_tasks>/p' "$output_file" | \
+    sed '1d;$d' | tr -d '\n')
+
+  if [ -z "$remediation_json" ] || [ "$remediation_json" == "[]" ]; then
+    echo -e "${GRAY}No remediation tasks added${NC}"
+    return 0
+  fi
+
+  # Validate JSON
+  if ! echo "$remediation_json" | jq empty 2>/dev/null; then
+    echo -e "${YELLOW}Warning: Could not parse remediation tasks JSON${NC}"
+    return 0
+  fi
+
+  local task_count=$(echo "$remediation_json" | jq 'length')
 
   echo ""
+  echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
+  log_event "INFO" "REMEDIATION: Adding $task_count corrective tasks"
+  echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
+
+  # Add remediation tasks to PRD
+  local tmp_prd=$(mktemp)
+  jq --argjson new_tasks "$remediation_json" '.tasks += $new_tasks' "$prd_path" > "$tmp_prd"
+
+  if [ -s "$tmp_prd" ]; then
+    mv "$tmp_prd" "$prd_path"
+
+    # List added tasks
+    echo "$remediation_json" | jq -r '.[] | "  + \(.id): \(.title) [\(.complexity)]"'
+    echo ""
+    log_event "SUCCESS" "Remediation tasks added to PRD"
+  else
+    echo -e "${RED}Failed to add remediation tasks${NC}"
+    rm -f "$tmp_prd"
+  fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

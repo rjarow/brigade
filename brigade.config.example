@@ -139,6 +139,12 @@ PHASE_REVIEW_ENABLED=false
 # Review every N completed tasks (e.g., 5 = review after task 5, 10, 15...)
 PHASE_REVIEW_AFTER=5
 
+# Action to take when phase review finds issues:
+#   continue  - Log concerns and continue (default)
+#   pause     - Stop execution, require manual restart
+#   remediate - Let Executive Chef add corrective tasks to PRD
+PHASE_REVIEW_ACTION=continue
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT ISOLATION
 # ═══════════════════════════════════════════════════════════════════════════════
