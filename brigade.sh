@@ -1652,11 +1652,23 @@ cmd_status() {
 
   # Session stats
   if [ -f "$state_path" ]; then
-    local review_count=$(jq '.reviews | length' "$state_path")
-    local review_pass=$(jq '[.reviews[] | select(.result == "PASS")] | length' "$state_path")
-    local review_fail=$(jq '[.reviews[] | select(.result == "FAIL")] | length' "$state_path")
     local session_start=$(jq -r '.startedAt // empty' "$state_path")
     local last_start=$(jq -r '.lastStartTime // empty' "$state_path")
+
+    # Get task IDs from current PRD for filtering
+    local prd_task_ids=$(jq -r '[.tasks[].id] | @json' "$prd_path")
+
+    # Filter reviews by current PRD task IDs
+    local review_count=$(jq --argjson ids "$prd_task_ids" \
+      '[.reviews[] | select(.taskId as $tid | $ids | index($tid))] | length' "$state_path")
+    local review_pass=$(jq --argjson ids "$prd_task_ids" \
+      '[.reviews[] | select(.taskId as $tid | $ids | index($tid)) | select(.result == "PASS")] | length' "$state_path")
+    local review_fail=$(jq --argjson ids "$prd_task_ids" \
+      '[.reviews[] | select(.taskId as $tid | $ids | index($tid)) | select(.result == "FAIL")] | length' "$state_path")
+
+    # Filter absorptions by current PRD task IDs
+    local absorption_count=$(jq --argjson ids "$prd_task_ids" \
+      '[.absorptions[] | select(.taskId as $tid | $ids | index($tid))] | length' "$state_path")
 
     echo ""
     echo -e "${BOLD}Session Stats:${NC}"
@@ -1689,11 +1701,6 @@ cmd_status() {
         fi
       fi
     fi
-
-    local absorption_count=$(jq '.absorptions | length' "$state_path")
-
-    # Get task IDs from current PRD for filtering
-    local prd_task_ids=$(jq -r '[.tasks[].id] | @json' "$prd_path")
 
     # Count escalations - filter by current PRD unless --all
     local escalation_count
@@ -1731,7 +1738,8 @@ cmd_status() {
     if [ "$absorption_count" -gt 0 ]; then
       echo ""
       echo -e "${BOLD}Absorbed Tasks:${NC}"
-      jq -r '.absorptions[] | "  \(.taskId) ← absorbed by \(.absorbedBy)"' "$state_path"
+      jq -r --argjson ids "$prd_task_ids" \
+        '.absorptions[] | select(.taskId as $tid | $ids | index($tid)) | "  \(.taskId) ← absorbed by \(.absorbedBy)"' "$state_path"
     fi
   fi
 
