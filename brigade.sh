@@ -95,6 +95,9 @@ LEARNINGS_FILE="brigade-learnings.md"
 # Parallel execution defaults
 MAX_PARALLEL=3
 
+# Runtime state (set during execution)
+LAST_REVIEW_FEEDBACK=""  # Feedback from failed executive review, passed to worker on retry
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # LOGGING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1078,9 +1081,22 @@ $relevant_learnings
 "
   fi
 
+  # Include review feedback if previous attempt failed review
+  local review_feedback_section=""
+  if [ -n "$LAST_REVIEW_FEEDBACK" ]; then
+    review_feedback_section="
+---
+⚠️ PREVIOUS ATTEMPT FAILED EXECUTIVE REVIEW:
+$LAST_REVIEW_FEEDBACK
+
+Please address this feedback in your implementation.
+---
+"
+  fi
+
   cat <<EOF
 $chef_prompt
-$learnings_section
+$learnings_section$review_feedback_section
 ---
 FEATURE: $feature_name
 PRD_FILE: $prd_path
@@ -1386,10 +1402,13 @@ executive_review() {
   if [ "$review_result" == "PASS" ]; then
     log_event "SUCCESS" "Executive Review PASSED: $task_id (${duration}s)"
     echo -e "${GRAY}Reason: $review_reason${NC}"
+    LAST_REVIEW_FEEDBACK=""  # Clear any previous feedback
     return 0
   else
     log_event "ERROR" "Executive Review FAILED: $task_id (${duration}s)"
     echo -e "${GRAY}Reason: $review_reason${NC}"
+    # Store feedback so it can be passed to worker on retry
+    LAST_REVIEW_FEEDBACK="$review_reason"
     return 1
   fi
 }
@@ -2153,6 +2172,9 @@ cmd_ticket() {
   local iteration_in_tier=0
 
   update_state_task "$prd_path" "$task_id" "$worker" "started"
+
+  # Clear any previous review feedback (fresh start)
+  LAST_REVIEW_FEEDBACK=""
 
   # Track task start time for timeout checking
   local task_start_epoch=$(date +%s)
