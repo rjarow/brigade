@@ -2897,9 +2897,16 @@ cmd_plan() {
   # Build planning prompt
   local planning_prompt=""
 
-  # Read the skill prompt if it exists
-  if [ -f "$SCRIPT_DIR/.claude/skills/generate-prd.md" ]; then
-    planning_prompt=$(cat "$SCRIPT_DIR/.claude/skills/generate-prd.md")
+  # Read the skill prompt - check multiple locations
+  local skill_file=""
+  if [ -f "$SCRIPT_DIR/commands/brigade-generate-prd.md" ]; then
+    skill_file="$SCRIPT_DIR/commands/brigade-generate-prd.md"
+  elif [ -f "$SCRIPT_DIR/.claude/skills/generate-prd.md" ]; then
+    skill_file="$SCRIPT_DIR/.claude/skills/generate-prd.md"
+  fi
+
+  if [ -n "$skill_file" ]; then
+    planning_prompt=$(cat "$skill_file")
     planning_prompt="$planning_prompt
 
 ---
