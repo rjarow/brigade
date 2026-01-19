@@ -3347,11 +3347,15 @@ $task_id"
           local pid=$(echo "$mapping" | cut -d: -f2)
           local parallel_display_id=$(format_task_id "$prd_path" "$task_id")
 
-          if wait "$pid"; then
+          wait "$pid"
+          local exit_code=$?
+
+          # Exit codes: 0=COMPLETE, 3=ALREADY_DONE, 4=ABSORBED_BY - all are success
+          if [ $exit_code -eq 0 ] || [ $exit_code -eq 3 ] || [ $exit_code -eq 4 ]; then
             log_event "SUCCESS" "$parallel_display_id completed (parallel)"
             completed=$((completed + 1))
           else
-            log_event "ERROR" "$parallel_display_id failed (parallel)"
+            log_event "ERROR" "$parallel_display_id failed (parallel, exit=$exit_code)"
             all_success=false
           fi
         done
