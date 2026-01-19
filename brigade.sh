@@ -91,6 +91,7 @@ STATE_FILE="brigade-state.json"
 # Knowledge sharing defaults
 KNOWLEDGE_SHARING=true
 LEARNINGS_FILE="brigade-learnings.md"
+BACKLOG_FILE="brigade-backlog.md"
 
 # Parallel execution defaults
 MAX_PARALLEL=3
@@ -941,6 +942,67 @@ ${line}"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# BACKLOG CAPTURE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+get_backlog_path() {
+  local prd_path="$1"
+  local prd_dir=$(dirname "$prd_path")
+  echo "$prd_dir/$BACKLOG_FILE"
+}
+
+add_backlog_item() {
+  local prd_path="$1"
+  local task_id="$2"
+  local worker="$3"
+  local item="$4"
+
+  local backlog_path=$(get_backlog_path "$prd_path")
+  local feature_name=$(jq -r '.featureName' "$prd_path")
+  local timestamp=$(date "+%Y-%m-%d %H:%M")
+
+  # Initialize file if needed
+  if [ ! -f "$backlog_path" ]; then
+    cat > "$backlog_path" <<EOF
+# Brigade Backlog: $feature_name
+
+Out-of-scope items discovered during execution. Review after PRD completion
+to inform future planning.
+
+---
+
+EOF
+  fi
+
+  # Append the backlog item
+  cat >> "$backlog_path" <<EOF
+## [$task_id] $timestamp
+**Reported by:** $(get_worker_name "$worker")
+
+$item
+
+---
+
+EOF
+}
+
+extract_backlog_from_output() {
+  local output_file="$1"
+  local prd_path="$2"
+  local task_id="$3"
+  local worker="$4"
+
+  # Extract any <backlog>...</backlog> tags from worker output
+  if grep -q "<backlog>" "$output_file" 2>/dev/null; then
+    local item=$(sed -n 's/.*<backlog>\(.*\)<\/backlog>.*/\1/p' "$output_file" | head -5)
+    if [ -n "$item" ]; then
+      add_backlog_item "$prd_path" "$task_id" "$worker" "$item"
+      echo -e "${YELLOW}📋 Backlog item captured${NC}"
+    fi
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ROUTING LOGIC
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1113,6 +1175,7 @@ INSTRUCTIONS:
 6. If already done by a prior task, output: <promise>ALREADY_DONE</promise>
 7. If absorbed by a prior task (prior task completed this work), output: <promise>ABSORBED_BY:US-XXX</promise> (replace US-XXX with the task ID)
 8. Share useful learnings with: <learning>What you learned</learning>
+9. Log out-of-scope discoveries with: <backlog>Description of issue or enhancement</backlog>
 
 BEGIN WORK:
 EOF
@@ -1244,6 +1307,9 @@ fire_ticket() {
 
   # Extract any learnings shared by the worker
   extract_learnings_from_output "$output_file" "$prd_path" "$task_id" "$worker"
+
+  # Extract any backlog items (out-of-scope discoveries)
+  extract_backlog_from_output "$output_file" "$prd_path" "$task_id" "$worker"
 
   # Check for completion signal
   if grep -q "<promise>COMPLETE</promise>" "$output_file" 2>/dev/null; then

@@ -203,6 +203,10 @@ KNOWLEDGE_SHARING=true
 # Learnings file (relative to PRD directory)
 LEARNINGS_FILE="brigade-learnings.md"
 
+# Backlog file for out-of-scope discoveries (relative to PRD directory)
+# Workers can log items with: <backlog>Description</backlog>
+BACKLOG_FILE="brigade-backlog.md"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PARALLEL EXECUTION
 # ═══════════════════════════════════════════════════════════════════════════════

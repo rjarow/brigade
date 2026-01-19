@@ -144,8 +144,10 @@ Workers signal status via XML tags in their output:
 | `<promise>ABSORBED_BY:US-XXX</promise>` | 4 | Work absorbed by specific prior task |
 | `<promise>BLOCKED</promise>` | 2 | Cannot proceed, needs escalation |
 | `<learning>...</learning>` | - | Share knowledge with team |
+| `<backlog>...</backlog>` | - | Log out-of-scope discovery for future planning |
 
 The `ALREADY_DONE` and `ABSORBED_BY` signals skip tests/review since no new code was written.
+The `<backlog>` tag captures items outside current scope without blocking - appended to `brigade-backlog.md`.
 
 ## Adding New Signals
 
