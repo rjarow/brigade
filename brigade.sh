@@ -2833,8 +2833,14 @@ $task_id"
         if git push origin "$default_branch" 2>/dev/null; then
           echo -e "${GREEN}✓ Pushed to origin/$default_branch${NC}"
           merge_status="pushed"
+          # Clean up feature branch (local and remote)
+          if git branch -d "$branch_name" 2>/dev/null; then
+            echo -e "${GREEN}✓ Deleted local branch $branch_name${NC}"
+          fi
+          if git push origin --delete "$branch_name" 2>/dev/null; then
+            echo -e "${GREEN}✓ Deleted remote branch origin/$branch_name${NC}"
+          fi
         fi
-        git checkout "$branch_name"  # Return to feature branch
       else
         echo -e "${RED}Merge failed - resolve conflicts manually${NC}"
         merge_status="failed"
@@ -2851,11 +2857,11 @@ $task_id"
 
   case "$merge_status" in
     "pushed")
-      echo -e "  • ${GREEN}✓ Already merged and pushed to $default_branch${NC}"
-      echo -e "  • Delete feature branch if no longer needed: ${CYAN}git branch -d $branch_name${NC}"
+      echo -e "  • ${GREEN}✓ Merged, pushed, and cleaned up $branch_name${NC}"
       ;;
     "success")
       echo -e "  • ${GREEN}✓ Merged to $default_branch${NC} - push when ready: ${CYAN}git push origin $default_branch${NC}"
+      echo -e "  • After push, delete branch: ${CYAN}git branch -d $branch_name && git push origin --delete $branch_name${NC}"
       ;;
     "failed")
       echo -e "  • ${RED}⚠ Merge had conflicts${NC} - resolve and retry: ${CYAN}git checkout $default_branch && git merge $branch_name${NC}"
