@@ -1605,24 +1605,45 @@ cmd_status() {
   # Task list with status indicators
   echo -e "${BOLD}Tasks:${NC}"
   local current_task_id=""
+  local current_worker=""
   local absorptions_json="[]"
+  local escalations_json="[]"
   if [ -f "$state_path" ]; then
     current_task_id=$(jq -r '.currentTask // empty' "$state_path")
     absorptions_json=$(jq -c '.absorptions // []' "$state_path")
+    escalations_json=$(jq -c '.escalations // []' "$state_path")
+    # Get current worker from last history entry
+    if [ -n "$current_task_id" ]; then
+      current_worker=$(jq -r --arg task "$current_task_id" \
+        '[.taskHistory[] | select(.taskId == $task)] | last | .worker // "line"' "$state_path")
+    fi
   fi
 
-  jq -r --arg current "$current_task_id" --argjson absorptions "$absorptions_json" '.tasks[] |
-    # Check if this task was absorbed
+  jq -r --arg current "$current_task_id" --arg current_worker "$current_worker" \
+      --argjson absorptions "$absorptions_json" --argjson escalations "$escalations_json" '.tasks[] |
     .id as $id |
+    .complexity as $complexity |
+    # Check if this task was absorbed
     ($absorptions | map(select(.taskId == $id)) | first // null) as $absorption |
+    # Check escalation status - get the highest tier this task reached
+    ($escalations | map(select(.taskId == $id)) | last // null) as $last_esc |
+    # Determine worker: escalated tasks show current tier, others show complexity
+    (if $last_esc != null then $last_esc.to
+     elif $complexity == "senior" then "sous"
+     elif $complexity == "junior" then "line"
+     else "line" end) as $worker |
+    # Worker display names
+    ({"line": "Line Cook", "sous": "Sous Chef", "executive": "Exec Chef"}[$worker] // $worker) as $worker_name |
+    # Escalation indicator
+    (if $last_esc != null then " ⬆" else "" end) as $esc_indicator |
     if .passes == true and $absorption != null then
       "  \u001b[32m✓\u001b[0m \(.id): \(.title) \u001b[90m(absorbed by \($absorption.absorbedBy))\u001b[0m"
     elif .passes == true then
       "  \u001b[32m✓\u001b[0m \(.id): \(.title)"
     elif .id == $current then
-      "  \u001b[33m→\u001b[0m \(.id): \(.title) \u001b[33m(in progress)\u001b[0m"
+      "  \u001b[33m→\u001b[0m \(.id): \(.title) \u001b[33m[\($current_worker | if . == "line" then "Line Cook" elif . == "sous" then "Sous Chef" elif . == "executive" then "Exec Chef" else . end)]\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
     else
-      "  ○ \(.id): \(.title) \u001b[90m[\(.complexity // "auto")]\u001b[0m"
+      "  ○ \(.id): \(.title) \u001b[90m[\($worker_name)]\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
     end' "$prd_path"
 
   # Session stats
@@ -1691,11 +1712,15 @@ cmd_status() {
       echo ""
       if [ "$show_all_escalations" = "true" ]; then
         echo -e "${BOLD}Escalation History (all):${NC}"
-        jq -r '.escalations[] | "  \(.taskId): \(.from) → \(.to) (\(.reason))"' "$state_path"
+        jq -r '.escalations[] |
+          (.timestamp | split("T") | .[0] + " " + (.[1] | split("+")[0] | split("-")[0] | .[0:5])) as $time |
+          "  \($time) \(.taskId): \(.from) → \(.to)"' "$state_path"
       else
         echo -e "${BOLD}Escalation History:${NC}"
         jq -r --argjson ids "$prd_task_ids" \
-          '.escalations[] | select(.taskId as $tid | $ids | index($tid)) | "  \(.taskId): \(.from) → \(.to) (\(.reason))"' "$state_path"
+          '.escalations[] | select(.taskId as $tid | $ids | index($tid)) |
+          (.timestamp | split("T") | .[0] + " " + (.[1] | split("+")[0] | split("-")[0] | .[0:5])) as $time |
+          "  \($time) \(.taskId): \(.from) → \(.to)"' "$state_path"
       fi
     fi
 
