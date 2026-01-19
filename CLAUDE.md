@@ -25,6 +25,7 @@ See `ROADMAP.md` for planned features and recent changes. Check it before starti
 # Check progress (auto-detects active PRD)
 ./brigade.sh status
 ./brigade.sh status --watch  # Auto-refresh every 30s
+./brigade.sh status --json   # Machine-readable JSON for AI supervisors
 
 # Resume after interruption (retry or skip the failed task)
 ./brigade.sh resume
@@ -244,7 +245,12 @@ Key config options (in `brigade.config`):
 }
 ```
 
-**Note:** The `verification` field is optional. When present, commands are run after worker signals COMPLETE - all must pass (exit 0) for task to be marked done. See ROADMAP.md for implementation status.
+**Note:** The `verification` field is optional but recommended. When present, commands are run after worker signals COMPLETE - all must pass (exit 0) for task to be marked done.
+
+**Verification quality:**
+- Brigade warns at service start if all verification commands are grep-only (no execution tests)
+- Include at least one command that actually runs the feature (e.g., `./binary --help`, `npm test -- --grep 'specific'`)
+- Changed files are scanned for TODO/FIXME markers - task won't complete until addressed
 
 ## Debugging
 

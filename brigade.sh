@@ -213,6 +213,8 @@ MAX_PARALLEL=3
 # Verification defaults
 VERIFICATION_ENABLED=true          # Run verification commands after COMPLETE signal
 VERIFICATION_TIMEOUT=60            # Timeout per verification command in seconds
+TODO_SCAN_ENABLED=true             # Scan changed files for TODO/FIXME before marking complete
+VERIFICATION_WARN_GREP_ONLY=true   # Warn if PRD only has grep-based verification (no execution)
 
 # Visibility defaults
 ACTIVITY_LOG=""                    # Path to activity heartbeat log (empty = disabled)
@@ -225,6 +227,7 @@ STATUS_WATCH_INTERVAL=30           # Seconds between status refreshes in watch m
 # Runtime state (set during execution)
 LAST_REVIEW_FEEDBACK=""       # Feedback from failed executive review, passed to worker on retry
 LAST_VERIFICATION_FEEDBACK="" # Feedback from failed verification commands, passed to worker on retry
+LAST_TODO_WARNINGS=""         # Warnings from TODO scan, passed to worker on retry
 CURRENT_TASK_START_TIME=0          # Epoch timestamp when current task started
 CURRENT_TASK_WARNING_SHOWN=false   # Whether timeout warning was shown for current task
 CURRENT_PRD_PATH=""                # Current PRD being processed (for visibility features)
@@ -475,60 +478,63 @@ run_with_spinner() {
 }
 
 load_config() {
+  local quiet="${1:-false}"
+
   if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
-    echo -e "${GRAY}Loaded config from $CONFIG_FILE${NC}"
+    [ "$quiet" != "true" ] && echo -e "${GRAY}Loaded config from $CONFIG_FILE${NC}"
   else
-    echo -e "${YELLOW}Warning: No brigade.config found, using defaults${NC}"
+    [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: No brigade.config found, using defaults${NC}"
   fi
 
   # Apply USE_OPENCODE if set in config
   if [ "$USE_OPENCODE" = true ]; then
     LINE_CMD="opencode run"
     LINE_AGENT="opencode"
-    echo -e "${CYAN}Using OpenCode for junior tasks (USE_OPENCODE=true)${NC}"
+    [ "$quiet" != "true" ] && echo -e "${CYAN}Using OpenCode for junior tasks (USE_OPENCODE=true)${NC}"
   fi
 
   # Validate config values
-  validate_config
+  validate_config "$quiet"
 }
 
 validate_config() {
+  local quiet="${1:-false}"
   local warnings=0
 
   # Numeric validations
   if [ "$MAX_PARALLEL" -lt 0 ] 2>/dev/null; then
-    echo -e "${YELLOW}Warning: MAX_PARALLEL=$MAX_PARALLEL invalid, using 0${NC}"
+    [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: MAX_PARALLEL=$MAX_PARALLEL invalid, using 0${NC}" >&2
     MAX_PARALLEL=0
     ((warnings++))
   fi
 
   if [ "$MAX_ITERATIONS" -lt 1 ] 2>/dev/null; then
-    echo -e "${YELLOW}Warning: MAX_ITERATIONS=$MAX_ITERATIONS invalid, using 50${NC}"
+    [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: MAX_ITERATIONS=$MAX_ITERATIONS invalid, using 50${NC}" >&2
     MAX_ITERATIONS=50
     ((warnings++))
   fi
 
   if [ "$ESCALATION_AFTER" -lt 1 ] 2>/dev/null; then
-    echo -e "${YELLOW}Warning: ESCALATION_AFTER=$ESCALATION_AFTER invalid, using 3${NC}"
+    [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: ESCALATION_AFTER=$ESCALATION_AFTER invalid, using 3${NC}" >&2
     ESCALATION_AFTER=3
     ((warnings++))
   fi
 
   if [ "$ESCALATION_TO_EXEC_AFTER" -lt 1 ] 2>/dev/null; then
-    echo -e "${YELLOW}Warning: ESCALATION_TO_EXEC_AFTER=$ESCALATION_TO_EXEC_AFTER invalid, using 5${NC}"
+    [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: ESCALATION_TO_EXEC_AFTER=$ESCALATION_TO_EXEC_AFTER invalid, using 5${NC}" >&2
     ESCALATION_TO_EXEC_AFTER=5
     ((warnings++))
   fi
 
   if [ "$TEST_TIMEOUT" -lt 1 ] 2>/dev/null; then
-    echo -e "${YELLOW}Warning: TEST_TIMEOUT=$TEST_TIMEOUT invalid, using 120${NC}"
+    [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: TEST_TIMEOUT=$TEST_TIMEOUT invalid, using 120${NC}" >&2
     TEST_TIMEOUT=120
     ((warnings++))
   fi
 
   if [ "$PHASE_REVIEW_AFTER" -lt 1 ] 2>/dev/null; then
-    echo -e "${YELLOW}Warning: PHASE_REVIEW_AFTER=$PHASE_REVIEW_AFTER invalid, using 5${NC}"
+    [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: PHASE_REVIEW_AFTER=$PHASE_REVIEW_AFTER invalid, using 5${NC}" >&2
     PHASE_REVIEW_AFTER=5
     ((warnings++))
   fi
@@ -537,7 +543,7 @@ validate_config() {
   case "$PHASE_REVIEW_ACTION" in
     continue|pause|remediate) ;;
     *)
-      echo -e "${YELLOW}Warning: PHASE_REVIEW_ACTION=$PHASE_REVIEW_ACTION invalid, using continue${NC}"
+      [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: PHASE_REVIEW_ACTION=$PHASE_REVIEW_ACTION invalid, using continue${NC}" >&2
       PHASE_REVIEW_ACTION=continue
       ((warnings++))
       ;;
@@ -546,7 +552,7 @@ validate_config() {
   case "$PHASE_GATE" in
     continue|pause|review) ;;
     *)
-      echo -e "${YELLOW}Warning: PHASE_GATE=$PHASE_GATE invalid, using continue${NC}"
+      [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: PHASE_GATE=$PHASE_GATE invalid, using continue${NC}" >&2
       PHASE_GATE=continue
       ((warnings++))
       ;;
@@ -1546,6 +1552,17 @@ $LAST_VERIFICATION_FEEDBACK
 "
   fi
 
+  # Include TODO warnings if previous attempt had incomplete markers
+  local todo_feedback_section=""
+  if [ -n "$LAST_TODO_WARNINGS" ]; then
+    todo_feedback_section="
+---
+⚠️ PREVIOUS ATTEMPT HAD INCOMPLETE TODO/FIXME MARKERS:
+$LAST_TODO_WARNINGS
+---
+"
+  fi
+
   # Include verification commands if present (so worker knows what will be checked)
   local verification_section=""
   if [ "$VERIFICATION_ENABLED" == "true" ]; then
@@ -1564,7 +1581,7 @@ Tip: Run these yourself before signaling COMPLETE to ensure they pass.
 
   cat <<EOF
 $chef_prompt
-$learnings_section$review_feedback_section$verification_feedback_section$verification_section
+$learnings_section$review_feedback_section$verification_feedback_section$todo_feedback_section$verification_section
 ---
 FEATURE: $feature_name
 PRD_FILE: $prd_path
@@ -1788,8 +1805,10 @@ fire_ticket() {
     echo "[DEBUG] $display_id: output_file=$output_file" >&2
     echo "[DEBUG] $display_id: file exists=$(test -f "$output_file" && echo yes || echo no)" >&2
     echo "[DEBUG] $display_id: file size=$(wc -c < "$output_file" 2>/dev/null || echo 0)" >&2
-    echo "[DEBUG] $display_id: has COMPLETE=$(grep -c '<promise>COMPLETE</promise>' "$output_file" 2>/dev/null || echo 0)" >&2
-    echo "[DEBUG] $display_id: has ALREADY_DONE=$(grep -c '<promise>ALREADY_DONE</promise>' "$output_file" 2>/dev/null || echo 0)" >&2
+    # Note: grep -c outputs "0" and exits 1 when no matches. Use || true to suppress
+    # exit code without adding duplicate output (|| echo 0 would print twice)
+    echo "[DEBUG] $display_id: has COMPLETE=$(grep -c '<promise>COMPLETE</promise>' "$output_file" 2>/dev/null || true)" >&2
+    echo "[DEBUG] $display_id: has ALREADY_DONE=$(grep -c '<promise>ALREADY_DONE</promise>' "$output_file" 2>/dev/null || true)" >&2
   fi
 
   # Worker signal exit codes (30-39 range to avoid collision with tool exit codes like jq)
@@ -1935,6 +1954,129 @@ get_verification_commands() {
   echo "$verification_json" | jq -r '.[]'
 }
 
+# Scan git-changed files for TODO/FIXME/HACK comments that may indicate incomplete work
+# Returns 0 if no concerning TODOs found, 1 if found (sets LAST_TODO_WARNINGS)
+scan_todos_in_changes() {
+  local prd_path="$1"
+  local task_id="$2"
+
+  if [ "$TODO_SCAN_ENABLED" != "true" ]; then
+    return 0
+  fi
+
+  local display_id=$(format_task_id "$prd_path" "$task_id")
+
+  # Get list of files changed (staged and unstaged)
+  local changed_files=$(git diff --name-only HEAD 2>/dev/null; git diff --cached --name-only 2>/dev/null)
+  changed_files=$(echo "$changed_files" | sort -u | grep -v "^$")
+
+  if [ -z "$changed_files" ]; then
+    return 0
+  fi
+
+  # Scan for TODO/FIXME/HACK/XXX patterns in changed files
+  local todo_findings=""
+  local todo_count=0
+
+  while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    [ ! -f "$file" ] && continue
+
+    # Skip binary files, test files, and documentation
+    case "$file" in
+      *.md|*.txt|*.json|*.yaml|*.yml|*_test.go|*_test.py|*.test.js|*.test.ts|*.spec.js|*.spec.ts)
+        continue
+        ;;
+    esac
+
+    # Search for concerning patterns (case insensitive)
+    local findings=$(grep -n -i -E '\b(TODO|FIXME|HACK|XXX):\s*\S' "$file" 2>/dev/null | head -5)
+
+    if [ -n "$findings" ]; then
+      while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local linenum=$(echo "$line" | cut -d: -f1)
+        local content=$(echo "$line" | cut -d: -f2- | sed 's/^[[:space:]]*//' | cut -c1-80)
+        todo_findings="${todo_findings}\n  - $file:$linenum: $content"
+        todo_count=$((todo_count + 1))
+      done <<< "$findings"
+    fi
+  done <<< "$changed_files"
+
+  if [ "$todo_count" -gt 0 ]; then
+    echo ""
+    echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
+    log_event "WARN" "TODO SCAN: Found $todo_count incomplete marker(s) in changed files"
+    echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${YELLOW}⚠ Found TODO/FIXME comments that may indicate incomplete implementation:${NC}"
+    echo -e "$todo_findings"
+    echo ""
+    echo -e "${GRAY}These markers often indicate unfinished work. Consider:${NC}"
+    echo -e "${GRAY}  1. Completing the TODO before marking task done${NC}"
+    echo -e "${GRAY}  2. Creating a backlog item if it's out of scope${NC}"
+    echo ""
+
+    # Store for feedback to worker on retry
+    LAST_TODO_WARNINGS="Found incomplete markers in changed files:$todo_findings
+
+These TODO/FIXME comments may indicate the implementation is not complete. Please either:
+1. Complete the TODO items before signaling COMPLETE
+2. Use <backlog>description</backlog> to log them as future work if truly out of scope"
+    return 1
+  fi
+
+  LAST_TODO_WARNINGS=""
+  return 0
+}
+
+# Check if PRD has any execution-based verification (not just grep/file existence checks)
+# Returns 0 if OK, 1 if warning (grep-only)
+check_verification_quality() {
+  local prd_path="$1"
+
+  if [ "$VERIFICATION_WARN_GREP_ONLY" != "true" ]; then
+    return 0
+  fi
+
+  # Count tasks with verification commands
+  local tasks_with_verification=$(jq '[.tasks[] | select(.verification != null and (.verification | length) > 0)] | length' "$prd_path")
+
+  if [ "$tasks_with_verification" -eq 0 ]; then
+    # No verification at all - that's a separate concern
+    return 0
+  fi
+
+  # Check if ALL verification commands are grep/test/stat-based (no execution)
+  local all_cmds=$(jq -r '.tasks[].verification[]? // empty' "$prd_path" 2>/dev/null)
+  local has_execution=false
+
+  while IFS= read -r cmd; do
+    [ -z "$cmd" ] && continue
+    # Check if command is NOT a pattern-matching command
+    # Pattern-based: grep, test, stat, [, ls, cat (when checking existence)
+    # Execution-based: anything that runs the actual binary/feature
+    if ! echo "$cmd" | grep -qE '^[[:space:]]*(grep|egrep|fgrep|test|stat|\[|ls[[:space:]]|cat[[:space:]].*\|.*grep|head[[:space:]]|tail[[:space:]])'; then
+      # Check it's not just checking file existence
+      if ! echo "$cmd" | grep -qE '^\[.*-[fedrwx]'; then
+        has_execution=true
+        break
+      fi
+    fi
+  done <<< "$all_cmds"
+
+  if [ "$has_execution" != "true" ] && [ -n "$all_cmds" ]; then
+    echo -e "${YELLOW}⚠ PRD verification uses only pattern-matching (grep/test), no execution tests${NC}"
+    echo -e "${GRAY}  Consider adding at least one command that runs the actual feature:${NC}"
+    echo -e "${GRAY}  - ./binary --help                    (smoke test)${NC}"
+    echo -e "${GRAY}  - ./binary command --dry-run         (feature test)${NC}"
+    echo -e "${GRAY}  - curl http://localhost:8080/health  (API test)${NC}"
+    echo ""
+    return 1
+  fi
+
+  return 0
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXECUTIVE REVIEW
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2069,6 +2211,7 @@ executive_review() {
     echo -e "${GRAY}Reason: $review_reason${NC}"
     LAST_REVIEW_FEEDBACK=""  # Clear any previous feedback
     LAST_VERIFICATION_FEEDBACK=""
+    LAST_TODO_WARNINGS=""
     return 0
   else
     log_event "ERROR" "Executive Review FAILED: $display_id (${duration}s)"
@@ -2399,9 +2542,113 @@ apply_remediation() {
 # COMMANDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Output machine-readable JSON status for AI supervisors
+# Includes needs_attention flag to reduce polling overhead
+output_status_json() {
+  local prd_path="$1"
+  local state_path=$(get_state_path "$prd_path")
+
+  local feature_name=$(jq -r '.featureName // "Unknown"' "$prd_path")
+  local total=$(get_task_count "$prd_path")
+  local completed=$(jq '[.tasks[] | select(.passes == true)] | length' "$prd_path")
+  local pending=$((total - completed))
+
+  # Determine if attention is needed
+  local needs_attention=false
+  local attention_reason=""
+
+  # Check state file for attention-worthy conditions
+  local current_task=""
+  local current_worker=""
+  local current_status=""
+  local escalation_count=0
+  local max_tier_failures=0
+
+  if [ -f "$state_path" ]; then
+    current_task=$(jq -r '.currentTask // empty' "$state_path")
+
+    if [ -n "$current_task" ]; then
+      # Get current task info from history
+      local last_entry=$(jq -r --arg task "$current_task" \
+        '[.taskHistory[] | select(.taskId == $task)] | last // {}' "$state_path")
+      current_worker=$(echo "$last_entry" | jq -r '.worker // "unknown"')
+      current_status=$(echo "$last_entry" | jq -r '.status // "unknown"')
+    fi
+
+    # Count escalations for current PRD
+    local prd_task_ids=$(jq -r '[.tasks[].id] | @json' "$prd_path")
+    escalation_count=$(jq --argjson ids "$prd_task_ids" \
+      '[(.escalations // [])[] | select(.taskId as $tid | $ids | index($tid))] | length' "$state_path" 2>/dev/null || echo 0)
+
+    # Check for max-tier failures (escalated to executive and still failing)
+    max_tier_failures=$(jq --argjson ids "$prd_task_ids" \
+      '[(.escalations // [])[] | select(.taskId as $tid | $ids | index($tid)) | select(.to == "executive")] | length' "$state_path" 2>/dev/null || echo 0)
+
+    # Determine if attention is needed
+    if [ "$current_status" = "blocked" ]; then
+      needs_attention=true
+      attention_reason="Task $current_task is blocked"
+    elif [ "$max_tier_failures" -gt 0 ]; then
+      needs_attention=true
+      attention_reason="Task escalated to Executive Chef tier"
+    elif [ "$current_status" = "verification_failed" ]; then
+      needs_attention=true
+      attention_reason="Task $current_task failed verification"
+    elif [ "$current_status" = "review_failed" ]; then
+      needs_attention=true
+      attention_reason="Task $current_task failed executive review"
+    elif [ "$current_status" = "skipped" ]; then
+      needs_attention=true
+      attention_reason="Task $current_task was skipped"
+    fi
+  fi
+
+  # Build tasks array
+  local tasks_json=$(jq -c --arg current "$current_task" '
+    [.tasks[] | {
+      id: .id,
+      title: .title,
+      complexity: (.complexity // "auto"),
+      completed: .passes,
+      is_current: (.id == $current)
+    }]' "$prd_path")
+
+  # Output JSON
+  jq -n \
+    --arg feature "$feature_name" \
+    --arg prd "$prd_path" \
+    --argjson total "$total" \
+    --argjson completed "$completed" \
+    --argjson pending "$pending" \
+    --arg current_task "$current_task" \
+    --arg current_worker "$current_worker" \
+    --arg current_status "$current_status" \
+    --argjson escalations "$escalation_count" \
+    --argjson needs_attention "$needs_attention" \
+    --arg attention_reason "$attention_reason" \
+    --argjson tasks "$tasks_json" \
+    '{
+      feature_name: $feature,
+      prd_path: $prd,
+      total_tasks: $total,
+      completed_tasks: $completed,
+      pending_tasks: $pending,
+      current_task: (if $current_task == "" then null else {
+        id: $current_task,
+        worker: $current_worker,
+        status: $current_status
+      } end),
+      escalations: $escalations,
+      needs_attention: $needs_attention,
+      attention_reason: (if $attention_reason == "" then null else $attention_reason end),
+      tasks: $tasks
+    }'
+}
+
 cmd_status() {
   local show_all_escalations=false
   local watch_mode=false
+  local json_mode=false
   local prd_path=""
 
   # Parse arguments
@@ -2413,6 +2660,10 @@ cmd_status() {
         ;;
       --watch|-w)
         watch_mode=true
+        shift
+        ;;
+      --json|-j)
+        json_mode=true
         shift
         ;;
       *)
@@ -2437,8 +2688,18 @@ cmd_status() {
   fi
 
   if [ ! -f "$prd_path" ]; then
+    if [ "$json_mode" = "true" ]; then
+      echo '{"error": "PRD file not found", "needs_attention": true}'
+      exit 1
+    fi
     echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
     exit 1
+  fi
+
+  # JSON mode: output machine-readable status and exit
+  if [ "$json_mode" = "true" ]; then
+    output_status_json "$prd_path"
+    return 0
   fi
 
   # Watch mode setup
@@ -2871,6 +3132,7 @@ cmd_ticket() {
   # Clear any previous feedback (fresh start)
   LAST_REVIEW_FEEDBACK=""
   LAST_VERIFICATION_FEEDBACK=""
+  LAST_TODO_WARNINGS=""
 
   # Track task start time for timeout checking
   local task_start_epoch=$(date +%s)
@@ -2984,8 +3246,12 @@ cmd_ticket() {
     # Get timeout for current worker tier
     local worker_timeout=$(get_worker_timeout "$worker")
 
+    # Capture exit code explicitly - set -e would otherwise exit on non-zero
+    # return codes like 33 (ALREADY_DONE) before we can handle them
+    set +e
     fire_ticket "$prd_path" "$task_id" "$worker" "$worker_timeout"
     local result=$?
+    set -e
 
     if [ $result -eq 0 ]; then
       # Task signaled complete - check if worker actually changed anything
@@ -3016,6 +3282,14 @@ cmd_ticket() {
         echo -e "${YELLOW}Verification failed, continuing iterations...${NC}"
         update_state_task "$prd_path" "$task_id" "$worker" "verification_failed"
         # Continue to next iteration - LAST_VERIFICATION_FEEDBACK is set
+        continue
+      fi
+
+      # Scan changed files for TODO/FIXME that may indicate incomplete work
+      if ! scan_todos_in_changes "$prd_path" "$task_id"; then
+        echo -e "${YELLOW}TODO scan found incomplete markers, continuing iterations...${NC}"
+        update_state_task "$prd_path" "$task_id" "$worker" "todo_warnings"
+        # Continue to next iteration - LAST_TODO_WARNINGS is set
         continue
       fi
 
@@ -3259,6 +3533,9 @@ cmd_service() {
     exit 1
   fi
   echo -e "${GREEN}✓${NC} PRD valid"
+
+  # Check verification quality (warn if only grep-based, no execution tests)
+  check_verification_quality "$prd_path"
 
   # Update latest symlink
   update_latest_symlink "$prd_path"
@@ -4303,8 +4580,14 @@ cmd_opencode_models() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 main() {
-  print_banner
-  load_config
+  # Check for quiet modes that suppress banner (status --json)
+  local quiet_mode=false
+  if [[ "$*" == *"status"*"--json"* ]] || [[ "$*" == *"status"*"-j"* ]]; then
+    quiet_mode=true
+  fi
+
+  [ "$quiet_mode" != "true" ] && print_banner
+  load_config "$quiet_mode"
 
   # Parse global options
   while [[ "${1:-}" == --* ]]; do

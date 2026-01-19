@@ -160,6 +160,14 @@ VERIFICATION_ENABLED=true
 # Timeout per verification command in seconds
 VERIFICATION_TIMEOUT=60
 
+# Scan changed files for TODO/FIXME/HACK markers before marking complete
+# When enabled, tasks with incomplete markers must address them before completion
+TODO_SCAN_ENABLED=true
+
+# Warn at service start if PRD only has grep-based verification (no execution tests)
+# Grep-only verification lets broken implementations pass
+VERIFICATION_WARN_GREP_ONLY=true
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ESCALATION
 # ═══════════════════════════════════════════════════════════════════════════════

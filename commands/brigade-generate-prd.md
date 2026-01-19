@@ -266,30 +266,77 @@ Generate a JSON PRD in this format:
 }
 ```
 
-### Verification Commands (Optional but Recommended)
+### Verification Commands (REQUIRED for each task)
 
-The `verification` array contains shell commands that Brigade runs after a worker signals COMPLETE. All must pass (exit 0) for the task to be marked done. This catches issues that acceptance criteria alone might miss.
+The `verification` array contains shell commands that Brigade runs after a worker signals COMPLETE. All must pass (exit 0) for the task to be marked done. **This is your primary defense against broken features shipping.**
 
-**Guidelines for verification commands:**
-- Keep them simple, fast, and deterministic
-- Use grep/test to check for expected code patterns
-- Run targeted tests for the specific feature
-- Check for expected file structure
-- Verify configuration was updated correctly
+#### CRITICAL: Include Execution-Based Verification
 
-**Good verification commands:**
+**Every task MUST have at least one command that actually runs the code**, not just checks that code exists. Grep-only verification lets broken implementations pass.
+
+**Bad (grep-only - code exists but may be broken):**
 ```json
 "verification": [
-  "grep -q 'class User' src/models/user.ts",
-  "grep -q 'validateEmail' src/models/user.ts",
-  "npm test -- --grep 'User model'"
+  "grep -q 'func FetchTrack' internal/spotify/client.go",
+  "grep -q 'download' internal/cli/download.go"
 ]
 ```
+This passes even if FetchTrack has a `// TODO: implement` inside!
+
+**Good (includes execution test):**
+```json
+"verification": [
+  "grep -q 'func FetchTrack' internal/spotify/client.go",
+  "go test ./internal/spotify/... -run TestFetchTrack",
+  "./bin/myapp download --dry-run https://example.com/track/123"
+]
+```
+This actually runs the feature and catches broken implementations.
+
+**Verification command types to include:**
+1. **Pattern check** (grep): Code/structure exists
+2. **Unit test**: Specific tests pass (`go test -run`, `npm test --grep`)
+3. **Smoke test**: Feature actually works (`./binary --help`, `./binary command --dry-run`)
+
+**For each task type:**
+- **API endpoints**: `curl -f http://localhost:8080/health` or integration test
+- **CLI commands**: `./binary command --help` and `./binary command --dry-run [args]`
+- **Libraries**: Unit tests that call the public API
+- **Services**: Health check or basic operation test
+
+**Guidelines:**
+- Keep them fast (use `--dry-run`, mock data, or test fixtures)
+- At least ONE must execute the actual feature, not just grep for patterns
+- Run targeted tests, not full test suites
+- Avoid network-dependent checks for external services (mock them)
 
 **Bad verification commands:**
-- Long-running full test suites (use targeted tests)
-- Commands that modify files (verification should be read-only)
-- Flaky network-dependent checks
+- Grep-only (no execution)
+- Long-running full test suites
+- Commands that modify files
+- External network dependencies (use mocks)
+
+### TODO/FIXME Policy
+
+Brigade automatically scans files changed by workers for TODO, FIXME, HACK, and XXX markers. If found, the task is **not marked complete** and the worker must either:
+1. Complete the TODO before signaling COMPLETE
+2. Use `<backlog>description</backlog>` to log it as future work
+
+This prevents incomplete implementations from shipping. When writing acceptance criteria, be explicit so workers don't leave TODOs:
+
+**Bad (vague, invites TODOs):**
+```json
+"acceptanceCriteria": ["Implement track fetching"]
+```
+
+**Good (explicit, no room for half-done work):**
+```json
+"acceptanceCriteria": [
+  "FetchTrack returns track metadata for valid IDs",
+  "FetchTrack returns specific error for invalid IDs",
+  "FetchTrack includes retry logic for rate limiting"
+]
+```
 
 ### Constraints Section
 
