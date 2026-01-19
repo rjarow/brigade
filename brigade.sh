@@ -1704,6 +1704,18 @@ cmd_resume() {
     exit 0
   fi
 
+  # Check if the current task exists in the PRD
+  local task_exists=$(jq -r --arg id "$current_task" '.tasks[] | select(.id == $id) | .id' "$prd_path")
+  if [ -z "$task_exists" ]; then
+    echo -e "${YELLOW}Task $current_task not found in PRD (stale state).${NC}"
+    # Clear currentTask from state
+    local tmp_file=$(mktemp)
+    jq '.currentTask = null' "$state_path" > "$tmp_file"
+    mv "$tmp_file" "$state_path"
+    echo -e "${GRAY}Cleared stale state. Run './brigade.sh service $prd_path' to continue.${NC}"
+    exit 0
+  fi
+
   # Check if the current task is already completed
   local task_passes=$(jq -r --arg id "$current_task" '.tasks[] | select(.id == $id) | .passes' "$prd_path")
   if [ "$task_passes" == "true" ]; then
