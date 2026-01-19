@@ -380,13 +380,32 @@ find_active_prd() {
     fi
   done
 
-  # No active task found, look for most recent PRD with pending tasks
+  # No active task found, look for PRDs with pending tasks that HAVE state files (already started)
   for dir in "${search_dirs[@]}"; do
     if [ -d "$dir" ]; then
       for prd in "$dir"/prd*.json "$dir"/*.json; do
         # Skip state files
         [[ "$prd" == *.state.json ]] && continue
-        if [ -f "$prd" ] 2>/dev/null && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
+        local state_file="${prd%.json}.state.json"
+        if [ -f "$prd" ] && [ -f "$state_file" ] && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
+          local pending=$(jq '[.tasks[] | select(.passes == false)] | length' "$prd" 2>/dev/null)
+          if [ "$pending" -gt 0 ]; then
+            echo "$prd"
+            return 0
+          fi
+        fi
+      done
+    fi
+  done
+
+  # Then look for orphan PRDs (pending tasks but no state file)
+  for dir in "${search_dirs[@]}"; do
+    if [ -d "$dir" ]; then
+      for prd in "$dir"/prd*.json "$dir"/*.json; do
+        # Skip state files
+        [[ "$prd" == *.state.json ]] && continue
+        local state_file="${prd%.json}.state.json"
+        if [ -f "$prd" ] 2>/dev/null && [ ! -f "$state_file" ] && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
           local pending=$(jq '[.tasks[] | select(.passes == false)] | length' "$prd" 2>/dev/null)
           if [ "$pending" -gt 0 ]; then
             echo "$prd"
@@ -1532,6 +1551,14 @@ cmd_status() {
   if [ ! -f "$prd_path" ]; then
     echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
     exit 1
+  fi
+
+  # Warn if PRD has no state file (never started)
+  local state_path="${prd_path%.json}.state.json"
+  if [ ! -f "$state_path" ]; then
+    echo -e "${YELLOW}Note: No state file for this PRD (never started)${NC}"
+    echo -e "${GRAY}Run: ./brigade.sh service $prd_path${NC}"
+    echo ""
   fi
 
   local feature_name=$(jq -r '.featureName' "$prd_path")
