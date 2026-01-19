@@ -411,12 +411,47 @@ find_active_prd() {
   return 1
 }
 
+validate_state() {
+  local state_path="$1"
+
+  if [ ! -f "$state_path" ]; then
+    return 0  # No state file is valid (will be created)
+  fi
+
+  # Check for valid JSON
+  if ! jq empty "$state_path" 2>/dev/null; then
+    echo -e "${RED}Error: State file has invalid JSON: $state_path${NC}"
+    echo -e "${YELLOW}Backing up corrupted file to ${state_path}.corrupted${NC}"
+    cp "$state_path" "${state_path}.corrupted"
+    rm "$state_path"
+    echo -e "${GRAY}State file removed. Run service again to start fresh.${NC}"
+    return 1
+  fi
+
+  # Check for required fields (be lenient - just warn if missing)
+  local has_history=$(jq 'has("taskHistory")' "$state_path" 2>/dev/null)
+  if [ "$has_history" != "true" ]; then
+    echo -e "${YELLOW}Warning: State file missing taskHistory, may be from older version${NC}"
+  fi
+
+  return 0
+}
+
 init_state() {
   local prd_path="$1"
   local state_path=$(get_state_path "$prd_path")
 
-  if [ ! -f "$state_path" ]; then
-    cat > "$state_path" <<EOF
+  # Validate existing state file
+  if [ -f "$state_path" ]; then
+    if ! validate_state "$state_path"; then
+      # State was corrupted and removed, create fresh
+      :
+    else
+      return 0  # Valid state exists
+    fi
+  fi
+
+  cat > "$state_path" <<EOF
 {
   "sessionId": "$(date +%s)-$$",
   "startedAt": "$(date -Iseconds)",
@@ -428,8 +463,7 @@ init_state() {
   "absorptions": []
 }
 EOF
-    echo -e "${GRAY}Initialized state: $state_path${NC}"
-  fi
+  echo -e "${GRAY}Initialized state: $state_path${NC}"
 }
 
 update_last_start_time() {
@@ -1509,6 +1543,12 @@ cmd_status() {
   # Show currently cooking task if service is running
   local state_path=$(get_state_path "$prd_path")
   if [ -f "$state_path" ]; then
+    # Validate state file JSON
+    if ! validate_state "$state_path"; then
+      echo -e "${YELLOW}State file was corrupted and has been reset.${NC}"
+    fi
+  fi
+  if [ -f "$state_path" ]; then
     local current_task=$(jq -r '.currentTask // empty' "$state_path")
 
     if [ -n "$current_task" ]; then
@@ -1694,6 +1734,11 @@ cmd_resume() {
     echo -e "${YELLOW}No state file found - nothing to resume.${NC}"
     echo -e "${GRAY}Run './brigade.sh service $prd_path' to start fresh.${NC}"
     exit 0
+  fi
+
+  # Validate state file JSON
+  if ! validate_state "$state_path"; then
+    exit 1
   fi
 
   # Check for interrupted task
