@@ -131,6 +131,7 @@ Key config options (in `brigade.config`):
       "id": "US-001",
       "title": "Task title",
       "acceptanceCriteria": ["Criterion 1", "Criterion 2"],
+      "verification": ["grep -q 'pattern' file.ts", "npm test -- --grep 'test'"],
       "dependsOn": [],
       "complexity": "junior|senior|auto",
       "passes": false
@@ -138,6 +139,8 @@ Key config options (in `brigade.config`):
   ]
 }
 ```
+
+**Note:** The `verification` field is optional. When present, commands are run after worker signals COMPLETE - all must pass (exit 0) for task to be marked done. See ROADMAP.md for implementation status.
 
 ## Worker Communication Signals
 
