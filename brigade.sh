@@ -853,16 +853,28 @@ init_state() {
   local prd_path="$1"
   local state_path=$(get_state_path "$prd_path")
 
-  # Validate existing state file
+  # Fast path: if valid state exists, skip locking
   if [ -f "$state_path" ]; then
-    if ! validate_state "$state_path"; then
-      # State was corrupted and removed, create fresh
-      :
-    else
+    if validate_state "$state_path" 2>/dev/null; then
       return 0  # Valid state exists
     fi
   fi
 
+  # Lock for initialization (parallel tasks may race here)
+  acquire_lock "$state_path"
+
+  # Re-check after acquiring lock (another task may have created it)
+  if [ -f "$state_path" ]; then
+    if validate_state "$state_path" 2>/dev/null; then
+      release_lock "$state_path"
+      return 0  # Another task created valid state while we waited
+    fi
+    # State was corrupted, remove it
+    cp "$state_path" "${state_path}.corrupted" 2>/dev/null || true
+    rm -f "$state_path"
+  fi
+
+  # Create fresh state file
   cat > "$state_path" <<EOF
 {
   "sessionId": "$(date +%s)-$$",
@@ -875,6 +887,8 @@ init_state() {
   "absorptions": []
 }
 EOF
+
+  release_lock "$state_path"
   echo -e "${GRAY}Initialized state: $state_path${NC}"
 }
 
