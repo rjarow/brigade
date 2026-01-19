@@ -325,6 +325,25 @@ validate_config() {
 # PRD HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Get short PRD prefix for task ID display (e.g., "auth" from "prd-add-auth.json")
+# Used to disambiguate tasks across multiple PRDs
+get_prd_prefix() {
+  local prd_path="$1"
+  # Extract from filename: prd-add-user-auth.json → add-user-auth
+  local basename=$(basename "$prd_path" .json)
+  local prefix="${basename#prd-}"  # Remove "prd-" prefix
+  # Truncate to reasonable length
+  echo "${prefix:0:20}"
+}
+
+# Format task ID with PRD prefix for display (e.g., "auth/US-001")
+format_task_id() {
+  local prd_path="$1"
+  local task_id="$2"
+  local prefix=$(get_prd_prefix "$prd_path")
+  echo "${prefix}/${task_id}"
+}
+
 # Quick validation for essential PRD structure (called before service)
 validate_prd_quick() {
   local prd_path="$1"
@@ -1199,10 +1218,11 @@ fire_ticket() {
   fi
 
   local task_title=$(jq -r ".tasks[] | select(.id == \"$task_id\") | .title" "$prd_path")
+  local display_id=$(format_task_id "$prd_path" "$task_id")
 
   echo ""
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
-  log_event "START" "TASK: $task_id - $task_title"
+  log_event "START" "TASK: $display_id - $task_title"
   echo -e "${GRAY}Worker: $worker_name (agent: $worker_agent)${NC}"
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
   echo ""
@@ -1315,25 +1335,26 @@ fire_ticket() {
 
   # Check for completion signal
   if grep -q "<promise>COMPLETE</promise>" "$output_file" 2>/dev/null; then
-    log_event "SUCCESS" "Task $task_id signaled COMPLETE (${duration}s)"
+    log_event "SUCCESS" "Task $display_id signaled COMPLETE (${duration}s)"
     rm -f "$output_file"
     return 0
   elif grep -q "<promise>ALREADY_DONE</promise>" "$output_file" 2>/dev/null; then
-    log_event "SUCCESS" "Task $task_id signaled ALREADY_DONE - completed by prior task (${duration}s)"
+    log_event "SUCCESS" "Task $display_id signaled ALREADY_DONE - completed by prior task (${duration}s)"
     rm -f "$output_file"
     return 3  # Special return code for already done
   elif grep -oq "<promise>ABSORBED_BY:" "$output_file" 2>/dev/null; then
     # Extract the absorbing task ID (e.g., ABSORBED_BY:US-001 -> US-001)
     LAST_ABSORBED_BY=$(grep -o "<promise>ABSORBED_BY:[^<]*</promise>" "$output_file" | sed 's/<promise>ABSORBED_BY://;s/<\/promise>//')
-    log_event "SUCCESS" "Task $task_id ABSORBED BY $LAST_ABSORBED_BY (${duration}s)"
+    local absorbed_display=$(format_task_id "$prd_path" "$LAST_ABSORBED_BY")
+    log_event "SUCCESS" "Task $display_id ABSORBED BY $absorbed_display (${duration}s)"
     rm -f "$output_file"
     return 4  # Special return code for absorbed
   elif grep -q "<promise>BLOCKED</promise>" "$output_file" 2>/dev/null; then
-    log_event "ERROR" "Task $task_id is BLOCKED (${duration}s)"
+    log_event "ERROR" "Task $display_id is BLOCKED (${duration}s)"
     rm -f "$output_file"
     return 2
   else
-    log_event "WARN" "Task $task_id - no completion signal, may need another iteration (${duration}s)"
+    log_event "WARN" "Task $display_id - no completion signal, may need another iteration (${duration}s)"
     rm -f "$output_file"
     return 1
   fi
@@ -1400,10 +1421,11 @@ executive_review() {
   fi
 
   local task_title=$(jq -r ".tasks[] | select(.id == \"$task_id\") | .title" "$prd_path")
+  local display_id=$(format_task_id "$prd_path" "$task_id")
 
   echo ""
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
-  log_event "REVIEW" "EXECUTIVE REVIEW: $task_id - $task_title"
+  log_event "REVIEW" "EXECUTIVE REVIEW: $display_id - $task_title"
   echo -e "${GRAY}Executive Chef reviewing $(get_worker_name "$completed_by")'s work${NC}"
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
   echo ""
@@ -1468,12 +1490,12 @@ executive_review() {
   record_review "$prd_path" "$task_id" "$review_result" "$review_reason"
 
   if [ "$review_result" == "PASS" ]; then
-    log_event "SUCCESS" "Executive Review PASSED: $task_id (${duration}s)"
+    log_event "SUCCESS" "Executive Review PASSED: $display_id (${duration}s)"
     echo -e "${GRAY}Reason: $review_reason${NC}"
     LAST_REVIEW_FEEDBACK=""  # Clear any previous feedback
     return 0
   else
-    log_event "ERROR" "Executive Review FAILED: $task_id (${duration}s)"
+    log_event "ERROR" "Executive Review FAILED: $display_id (${duration}s)"
     echo -e "${GRAY}Reason: $review_reason${NC}"
     # Store feedback so it can be passed to worker on retry
     LAST_REVIEW_FEEDBACK="$review_reason"
@@ -2238,6 +2260,7 @@ cmd_ticket() {
   local worker="$initial_worker"
   local escalation_tier=0  # 0=none, 1=line→sous, 2=sous→exec
   local iteration_in_tier=0
+  local display_id=$(format_task_id "$prd_path" "$task_id")
 
   update_state_task "$prd_path" "$task_id" "$worker" "started"
 
@@ -2252,7 +2275,7 @@ cmd_ticket() {
     echo -e "${GRAY}Pre-flight check: running tests to see if task is already complete...${NC}"
     if timeout 30 bash -c "$TEST_CMD" >/dev/null 2>&1; then
       echo -e "${GREEN}✓ Tests already pass - task appears complete${NC}"
-      log_event "SUCCESS" "Task $task_id: pre-flight tests pass → ALREADY_DONE"
+      log_event "SUCCESS" "Task $display_id: pre-flight tests pass → ALREADY_DONE"
       update_state_task "$prd_path" "$task_id" "$worker" "preflight_already_done"
       mark_task_complete "$prd_path" "$task_id"
       return 0
@@ -2272,7 +2295,7 @@ cmd_ticket() {
 
       echo ""
       echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
-      log_event "ESCALATE" "ESCALATING $task_id: Line Cook → Sous Chef"
+      log_event "ESCALATE" "ESCALATING $display_id: Line Cook → Sous Chef"
       echo -e "${YELLOW}║  Reason: $ESCALATION_AFTER iterations without completion            ║${NC}"
       echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
       echo ""
@@ -2291,7 +2314,7 @@ cmd_ticket() {
 
       echo ""
       echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
-      log_event "ESCALATE" "ESCALATING $task_id: Sous Chef → Executive Chef (rare)"
+      log_event "ESCALATE" "ESCALATING $display_id: Sous Chef → Executive Chef (rare)"
       echo -e "${RED}║  Reason: $ESCALATION_TO_EXEC_AFTER iterations without completion            ║${NC}"
       echo -e "${RED}║  This is unusual - Executive Chef stepping in             ║${NC}"
       echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
@@ -2317,7 +2340,7 @@ cmd_ticket() {
         if [ "$worker" == "line" ] && [ "$escalation_tier" -eq 0 ]; then
           echo ""
           echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
-          log_event "ESCALATE" "ESCALATING $task_id: Line Cook → Sous Chef (timeout)"
+          log_event "ESCALATE" "ESCALATING $display_id: Line Cook → Sous Chef (timeout)"
           echo -e "${YELLOW}║  Reason: Task timeout (${elapsed_mins}m > ${timeout_mins}m limit)          ║${NC}"
           echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
           echo ""
@@ -2330,7 +2353,7 @@ cmd_ticket() {
         elif [ "$worker" == "sous" ] && [ "$ESCALATION_TO_EXEC" == "true" ] && [ "$escalation_tier" -lt 2 ]; then
           echo ""
           echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
-          log_event "ESCALATE" "ESCALATING $task_id: Sous Chef → Executive Chef (timeout)"
+          log_event "ESCALATE" "ESCALATING $display_id: Sous Chef → Executive Chef (timeout)"
           echo -e "${RED}║  Reason: Task timeout (${elapsed_mins}m > ${timeout_mins}m limit)          ║${NC}"
           echo -e "${RED}║  This is unusual - Executive Chef stepping in             ║${NC}"
           echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
@@ -2343,7 +2366,7 @@ cmd_ticket() {
           task_start_epoch=$(date +%s)  # Reset timer for new worker tier
         elif [ "$worker" == "executive" ]; then
           echo -e "${RED}⚠ Executive Chef timeout (${elapsed_mins}m > ${timeout_mins}m) - no higher tier to escalate to${NC}"
-          log_event "WARN" "Task $task_id: Executive Chef timeout but no higher tier available"
+          log_event "WARN" "Task $display_id: Executive Chef timeout but no higher tier available"
         fi
       fi
     fi
@@ -2369,7 +2392,7 @@ cmd_ticket() {
       if [ "$git_diff_empty" == "true" ]; then
         echo -e "${YELLOW}⚠ Worker signaled COMPLETE but git diff is empty${NC}"
         echo -e "${YELLOW}  Task was likely already done - converting to ALREADY_DONE${NC}"
-        log_event "WARN" "Task $task_id: COMPLETE with empty diff → treating as ALREADY_DONE"
+        log_event "WARN" "Task $display_id: COMPLETE with empty diff → treating as ALREADY_DONE"
         add_learning "$prd_path" "$task_id" "$worker" "workflow" \
           "Task $task_id was already complete but worker didn't signal ALREADY_DONE. Check acceptance criteria before writing code."
         # Skip tests/review since nothing changed
@@ -2454,7 +2477,7 @@ cmd_ticket() {
 
         echo ""
         echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
-        log_event "ESCALATE" "ESCALATING $task_id: Line Cook → Sous Chef (blocked)"
+        log_event "ESCALATE" "ESCALATING $display_id: Line Cook → Sous Chef (blocked)"
         echo -e "${YELLOW}║  Reason: Task blocked                                     ║${NC}"
         echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
         echo ""
@@ -2473,7 +2496,7 @@ cmd_ticket() {
 
         echo ""
         echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
-        log_event "ESCALATE" "ESCALATING $task_id: Sous Chef → Executive Chef (blocked)"
+        log_event "ESCALATE" "ESCALATING $display_id: Sous Chef → Executive Chef (blocked)"
         echo -e "${RED}║  Reason: Sous Chef blocked - calling in Executive         ║${NC}"
         echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
         echo ""
@@ -2825,7 +2848,8 @@ $task_id"
           local pid=$!
           pids="$pids $pid"
           task_pid_map="$task_pid_map $task_id:$pid"
-          log_event "INFO" "Started $task_id (PID: $pid)"
+          local parallel_display_id=$(format_task_id "$prd_path" "$task_id")
+          log_event "INFO" "Started $parallel_display_id (PID: $pid)"
         done
 
         # Wait for all parallel tasks
@@ -2833,12 +2857,13 @@ $task_id"
         for mapping in $task_pid_map; do
           local task_id=$(echo "$mapping" | cut -d: -f1)
           local pid=$(echo "$mapping" | cut -d: -f2)
+          local parallel_display_id=$(format_task_id "$prd_path" "$task_id")
 
           if wait "$pid"; then
-            log_event "SUCCESS" "$task_id completed (parallel)"
+            log_event "SUCCESS" "$parallel_display_id completed (parallel)"
             completed=$((completed + 1))
           else
-            log_event "ERROR" "$task_id failed (parallel)"
+            log_event "ERROR" "$parallel_display_id failed (parallel)"
             all_success=false
           fi
         done
