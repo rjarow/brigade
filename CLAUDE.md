@@ -100,6 +100,29 @@ Tasks are routed based on `complexity` field in PRD:
 - `"senior"` → Sous Chef (architecture, security, integration)
 - `"auto"` → Heuristics decide
 
+**The tiers are model-agnostic.** Users configure which tool and model to use for each tier:
+
+```bash
+# In brigade.config - example configurations:
+
+# All Claude (default)
+EXECUTIVE_CMD="claude --model opus"
+SOUS_CMD="claude --model sonnet"
+LINE_CMD="claude --model sonnet"
+
+# Mixed providers (cost optimized)
+EXECUTIVE_CMD="claude --model opus"
+SOUS_CMD="opencode --model anthropic/claude-sonnet-4-5"
+LINE_CMD="opencode --model openai/gpt-4o-mini"
+
+# All local (via Ollama through OpenCode)
+EXECUTIVE_CMD="opencode --model ollama/llama3"
+SOUS_CMD="opencode --model ollama/llama3"
+LINE_CMD="opencode --model ollama/llama3"
+```
+
+See `brigade.config.example` for full configuration reference.
+
 ## Escalation Flow
 
 1. Line Cook fails `ESCALATION_AFTER` times (default: 3) → Sous Chef takes over
