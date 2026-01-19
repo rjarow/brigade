@@ -3377,15 +3377,34 @@ $task_id"
     local tasks_array=($ready_tasks)
     local num_ready=${#tasks_array[@]}
 
-    # Check for parallel execution of junior tasks
+    # Check for parallel execution
     if [ "$MAX_PARALLEL" -gt 1 ] && [ "$num_ready" -gt 1 ]; then
-      # Find junior tasks that can run in parallel
+      # Build parallel batch: include ONE senior task (if ready) + junior tasks
+      # This prevents senior tasks from starving when many juniors are ready
       local parallel_tasks=""
       local parallel_count=0
+      local senior_task=""
+      local junior_tasks=""
 
+      # First pass: separate senior and junior tasks
       for task_id in "${tasks_array[@]}"; do
         local complexity=$(get_task_complexity "$prd_path" "$task_id")
-        if [ "$complexity" == "junior" ] && [ "$parallel_count" -lt "$MAX_PARALLEL" ]; then
+        if [ "$complexity" == "senior" ] && [ -z "$senior_task" ]; then
+          senior_task="$task_id"
+        elif [ "$complexity" == "junior" ]; then
+          junior_tasks="$junior_tasks $task_id"
+        fi
+      done
+
+      # Add senior task first (if any) - gets priority slot
+      if [ -n "$senior_task" ]; then
+        parallel_tasks="$senior_task"
+        parallel_count=1
+      fi
+
+      # Fill remaining slots with junior tasks
+      for task_id in $junior_tasks; do
+        if [ "$parallel_count" -lt "$MAX_PARALLEL" ]; then
           parallel_tasks="$parallel_tasks $task_id"
           parallel_count=$((parallel_count + 1))
         fi
@@ -3396,7 +3415,9 @@ $task_id"
       if [ "$parallel_count" -gt 1 ]; then
         echo ""
         echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
-        log_event "START" "PARALLEL EXECUTION: $parallel_count junior tasks"
+        local senior_note=""
+        [ -n "$senior_task" ] && senior_note=" (includes 1 senior)"
+        log_event "START" "PARALLEL EXECUTION: $parallel_count tasks${senior_note}"
         echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
         echo ""
 
