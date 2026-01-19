@@ -2437,18 +2437,47 @@ $task_id"
   local hours=$((duration / 3600))
   local minutes=$(((duration % 3600) / 60))
 
+  # Get PRD info for summary
+  local feature_name=$(jq -r '.featureName // "Unknown"' "$prd_path")
+  local branch_name=$(jq -r '.branchName // empty' "$prd_path")
+  local total_tasks=$(jq '.tasks | length' "$prd_path")
+
+  # Get stats from state file
+  local state_path=$(get_state_path "$prd_path")
+  local escalation_count=0
+  local absorption_count=0
+  local review_count=0
+  local review_pass=0
+  if [ -f "$state_path" ]; then
+    escalation_count=$(jq '.escalations | length' "$state_path" 2>/dev/null || echo 0)
+    absorption_count=$(jq '.absorptions | length' "$state_path" 2>/dev/null || echo 0)
+    review_count=$(jq '.reviews | length' "$state_path" 2>/dev/null || echo 0)
+    review_pass=$(jq '[.reviews[] | select(.result == "PASS")] | length' "$state_path" 2>/dev/null || echo 0)
+  fi
+
   echo ""
   echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
-  log_event "SUCCESS" "SERVICE COMPLETE: $completed tasks in ${hours}h ${minutes}m"
+  echo -e "${GREEN}║                    🎉 PRD COMPLETE 🎉                     ║${NC}"
   echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "${BOLD}Feature:${NC}     $feature_name"
+  [ -n "$branch_name" ] && echo -e "${BOLD}Branch:${NC}      $branch_name"
+  echo ""
+  echo -e "${BOLD}Summary:${NC}"
+  echo -e "  Tasks completed:   $completed/$total_tasks"
+  echo -e "  Time taken:        ${hours}h ${minutes}m"
+  echo -e "  Escalations:       $escalation_count"
+  echo -e "  Absorptions:       $absorption_count"
+  [ "$review_count" -gt 0 ] && echo -e "  Reviews:           $review_pass/$review_count passed"
+  echo ""
+
+  log_event "SUCCESS" "SERVICE COMPLETE: $feature_name - $completed tasks in ${hours}h ${minutes}m"
 
   # Merge feature branch to default branch
-  local branch_name=$(jq -r '.branchName // empty' "$prd_path")
   if [ -n "$branch_name" ]; then
     local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
     if [ "$current_branch" == "$branch_name" ]; then
       local default_branch=$(get_default_branch)
-      echo ""
       echo -e "${CYAN}Merging $branch_name to $default_branch...${NC}"
       if git checkout "$default_branch" && git merge "$branch_name" --no-edit; then
         echo -e "${GREEN}✓ Merged $branch_name to $default_branch${NC}"
@@ -2458,8 +2487,19 @@ $task_id"
         echo -e "${RED}Merge failed - resolve conflicts manually${NC}"
         git checkout "$branch_name"
       fi
+      echo ""
     fi
   fi
+
+  # Show next steps
+  echo -e "${BOLD}Next Steps:${NC}"
+  echo -e "  • Run ${CYAN}./brigade.sh status${NC} to review detailed stats"
+  echo -e "  • Check ${CYAN}git log --oneline -10${NC} to review commits"
+  if [ -n "$branch_name" ]; then
+    echo -e "  • Create PR or merge to main when ready"
+  fi
+  echo -e "  • For chained PRDs, use ${CYAN}./brigade.sh --auto-continue service prd-*.json${NC}"
+  echo ""
 }
 
 cmd_plan() {
