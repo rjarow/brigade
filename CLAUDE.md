@@ -91,8 +91,10 @@ Tasks are routed based on `complexity` field in PRD:
 
 The entire `brigade/` directory is typically gitignored. Working files are in `brigade/tasks/`:
 - `brigade/tasks/prd-*.json` - PRD files
-- `brigade/tasks/brigade-state.json` - Session state, task history, escalations
+- `brigade/tasks/prd-*.state.json` - Per-PRD state files (session state, task history, escalations)
 - `brigade/tasks/brigade-learnings.md` - Knowledge shared between workers
+
+Each PRD gets its own state file: `prd-feature.json` → `prd-feature.state.json`. This isolates state per-PRD and avoids confusion when multiple PRDs exist in the same directory.
 
 ## PRD Format
 

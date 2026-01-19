@@ -284,7 +284,10 @@ REVIEW_JUNIOR_ONLY=true  # Only review Line Cook work
 
 ## State Management
 
-Brigade tracks state in `brigade-state.json`:
+Brigade tracks state in per-PRD state files. Each PRD gets its own state file:
+- `prd-feature.json` → `prd-feature.state.json`
+
+Example state file:
 
 ```json
 {
@@ -316,10 +319,10 @@ Brigade tracks state in `brigade-state.json`:
 View with:
 ```bash
 ./brigade.sh status brigade/tasks/prd.json      # Current PRD stats
-./brigade.sh status --all                       # Include escalations from other PRDs
+./brigade.sh status --all                       # Show all PRD state files
 ```
 
-The state file is validated on load - corrupted JSON is backed up and reset.
+Each state file is validated on load - corrupted JSON is backed up and reset.
 
 ## Routing Logic
 
