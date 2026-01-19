@@ -64,14 +64,23 @@ Brigade uses kitchen terminology because the workflow mirrors a professional kit
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │ For each task (in dependency order):                      │  │
 │  │                                                           │  │
-│  │  ┌─────────────┐                    ┌─────────────┐      │  │
-│  │  │ LINE COOK   │──── escalate ────► │ SOUS CHEF   │      │  │
-│  │  │ (junior)    │  after 3 fails     │ (senior)    │      │  │
-│  │  │             │  or if blocked     │             │      │  │
-│  │  └──────┬──────┘                    └──────┬──────┘      │  │
-│  │         │                                  │              │  │
-│  │         └────────────┬─────────────────────┘              │  │
+│  │              ┌───────────────┐                            │  │
+│  │              │ Pre-flight    │ Run tests first - skip if  │  │
+│  │              │ Check         │ already passing            │  │
+│  │              └───────┬───────┘                            │  │
 │  │                      ▼                                    │  │
+│  │  ┌─────────────┐  escalate   ┌─────────────┐  escalate   │  │
+│  │  │ LINE COOK   │───────────► │ SOUS CHEF   │───────────► │  │
+│  │  │ (junior)    │ 3 fails or  │ (senior)    │ 5 fails or  │  │
+│  │  │             │ 15m timeout │             │ 30m timeout │  │
+│  │  └──────┬──────┘ or blocked  └──────┬──────┘ or blocked  │  │
+│  │         │                           │                     │  │
+│  │         │    ┌─────────────┐        │                     │  │
+│  │         │    │ EXEC CHEF   │◄───────┘                     │  │
+│  │         │    │ (rare)      │                              │  │
+│  │         │    └──────┬──────┘                              │  │
+│  │         └───────────┼───────────────────────────┘         │  │
+│  │                     ▼                                     │  │
 │  │              ┌───────────────┐                            │  │
 │  │              │ Run Tests     │ (if TEST_CMD configured)   │  │
 │  │              └───────┬───────┘                            │  │
@@ -182,33 +191,48 @@ When a task is fired:
 
 ### 2.3 Automatic Escalation
 
-If a Line Cook (junior) fails:
+Brigade has a three-tier escalation system:
 
+**Tier 1: Line Cook → Sous Chef**
 ```
-Iteration 1: Line Cook fails
-Iteration 2: Line Cook fails
-Iteration 3: Line Cook fails
-         ↓
+Iteration 1-3: Line Cook attempts
+         ↓ (after 3 fails OR 15m timeout OR BLOCKED signal)
     ESCALATION
          ↓
-Iteration 4: Sous Chef takes over
+Iteration 4+: Sous Chef takes over
 ```
 
-Escalation also triggers immediately if blocked:
-
+**Tier 2: Sous Chef → Executive Chef** (rare)
 ```
-Line Cook: <promise>BLOCKED</promise>
-         ↓
+Iteration 4-8: Sous Chef attempts
+         ↓ (after 5 fails OR 30m timeout OR BLOCKED signal)
     ESCALATION
          ↓
-Sous Chef takes over
+Iteration 9+: Executive Chef takes over
+```
+
+Escalation also triggers immediately on BLOCKED signal:
+```
+Worker: <promise>BLOCKED</promise>
+         ↓
+    IMMEDIATE ESCALATION to next tier
 ```
 
 Configuration:
 ```bash
+# Iteration-based escalation
 ESCALATION_ENABLED=true
-ESCALATION_AFTER=3
+ESCALATION_AFTER=3                 # Line Cook → Sous Chef after N fails
+ESCALATION_TO_EXEC=true            # Enable Sous Chef → Executive Chef
+ESCALATION_TO_EXEC_AFTER=5         # Sous Chef → Exec Chef after N fails
+
+# Time-based escalation (independent of iterations)
+TASK_TIMEOUT_JUNIOR=900            # 15 minutes for Line Cook
+TASK_TIMEOUT_SENIOR=1800           # 30 minutes for Sous Chef
+TASK_TIMEOUT_EXECUTIVE=3600        # 60 minutes for Executive Chef
 ```
+
+Timer resets when a task escalates to a new tier.
 
 ### 2.4 Test Verification
 
@@ -266,24 +290,36 @@ Brigade tracks state in `brigade-state.json`:
 {
   "sessionId": "1705512345-1234",
   "startedAt": "2025-01-17T10:00:00Z",
-  "currentTask": "US-003",
+  "lastStartTime": "2025-01-18T14:30:00Z",
+  "currentTask": null,
   "taskHistory": [
-    {"taskId": "US-001", "worker": "sous", "status": "completed"},
-    {"taskId": "US-002", "worker": "line", "status": "completed"}
+    {"taskId": "US-001", "worker": "sous", "status": "completed", "timestamp": "..."},
+    {"taskId": "US-002", "worker": "line", "status": "completed", "timestamp": "..."}
   ],
   "escalations": [
-    {"taskId": "US-002", "from": "line", "to": "sous", "reason": "3 iterations failed"}
+    {"taskId": "US-002", "from": "line", "to": "sous", "reason": "...", "timestamp": "..."}
   ],
   "reviews": [
     {"taskId": "US-002", "result": "PASS", "reason": "All criteria met"}
+  ],
+  "absorptions": [
+    {"taskId": "US-005", "absorbedBy": "US-003", "timestamp": "..."}
   ]
 }
 ```
 
+- **startedAt**: When the state file was first created (total time)
+- **lastStartTime**: When the current run started (current run time)
+- **currentTask**: Set during execution, cleared on completion (used by `resume`)
+- **absorptions**: Tasks that were absorbed by other tasks
+
 View with:
 ```bash
-./brigade.sh status brigade/tasks/prd.json
+./brigade.sh status brigade/tasks/prd.json      # Current PRD stats
+./brigade.sh status --all                       # Include escalations from other PRDs
 ```
+
+The state file is validated on load - corrupted JSON is backed up and reset.
 
 ## Routing Logic
 
@@ -324,11 +360,24 @@ These prompts are prepended to the task details when firing a ticket.
 Workers signal completion status via special tags:
 
 ```
-<promise>COMPLETE</promise>  - Task finished successfully
-<promise>BLOCKED</promise>   - Task cannot proceed (with explanation)
+<promise>COMPLETE</promise>           - Task finished successfully
+<promise>BLOCKED</promise>            - Task cannot proceed (triggers escalation)
+<promise>ALREADY_DONE</promise>       - Task was already completed (skips tests/review)
+<promise>ABSORBED_BY:US-XXX</promise> - Work was done by another task (credits that task)
 ```
 
-If neither signal is found, Brigade iterates again (up to MAX_ITERATIONS).
+**ALREADY_DONE** is used when:
+- A prior task already implemented this functionality
+- The acceptance criteria are already satisfied
+- No new code changes are needed
+
+**ABSORBED_BY** is used when:
+- Another specific task did this work as part of its implementation
+- Credits the absorbing task for tracking purposes
+
+Brigade also detects **empty git diffs** - if a worker signals COMPLETE but made no changes, it's automatically treated as ALREADY_DONE.
+
+If no signal is found, Brigade iterates again (up to MAX_ITERATIONS).
 
 ## Dependency Management
 

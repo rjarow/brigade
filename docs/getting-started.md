@@ -192,23 +192,31 @@ Check status:
 Output:
 ```
 Kitchen Status: User Authentication with JWT
+═══════════════════════════════════════════════════════════
 
-  Total tickets:    7
-  Complete:         4
-  Pending:          3
+📊 Progress: [████████░░░░░░░░░░░░] 57% (4/7)
 
-Pending Tickets:
-  US-005: Add auth middleware [senior]
-  US-006: Add logout endpoint [junior]
-  US-007: Add endpoint tests [junior]
+Tasks:
+  ✓ US-001: Add User model
+  ✓ US-002: Add User model tests
+  ✓ US-003: Add JWT utilities [Sous Chef] ⬆
+  ✓ US-004: Add login endpoint
+  → US-005: Add auth middleware [Sous Chef]
+  ○ US-006: Add logout endpoint [Line Cook]
+  ○ US-007: Add endpoint tests [Line Cook]
 
 Session Stats:
+  Total time:       2h 15m
+  Current run:      0h 45m
   Escalations:      1
-  Reviews:          3 (3 passed, 0 failed)
+  Absorptions:      0
+  Reviews:          4 (4 passed, 0 failed)
 
 Escalation History:
-  US-003: line → sous (3 iterations failed)
+  2025-01-17 14:23 US-003: line → sous
 ```
+
+The ⬆ indicator shows tasks that were escalated. Worker assignments show who will handle each pending task.
 
 ## Using Claude Code Skills
 
@@ -249,11 +257,26 @@ The skill will:
 # Run full service
 ./brigade.sh service brigade/tasks/prd.json
 
+# Chain multiple PRDs for overnight/unattended execution
+./brigade.sh --auto-continue service brigade/tasks/prd-*.json
+
+# Resume after interruption
+./brigade.sh resume                    # Auto-detect, prompt for retry/skip
+./brigade.sh resume prd.json retry     # Retry the failed task
+./brigade.sh resume prd.json skip      # Skip and continue
+
 # Run single ticket
 ./brigade.sh ticket brigade/tasks/prd.json US-001
 
 # Check kitchen status
 ./brigade.sh status brigade/tasks/prd.json
+./brigade.sh status --all              # Include escalations from other PRDs
+
+# Validate PRD structure
+./brigade.sh validate brigade/tasks/prd.json
+
+# Preview execution without running
+./brigade.sh --dry-run service brigade/tasks/prd.json
 
 # Analyze task routing
 ./brigade.sh analyze brigade/tasks/prd.json
@@ -264,7 +287,7 @@ The skill will:
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │ 1. Load PRD                                                   │
-│    Read tasks, build dependency graph                         │
+│    Read tasks, build dependency graph, validate structure     │
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
@@ -273,43 +296,61 @@ The skill will:
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 3. Route task                                                 │
+│ 3. Pre-flight check                                           │
+│    Run tests first - if passing, task may already be done     │
+└─────────────────────────┬─────────────────────────────────────┘
+                          ▼
+┌───────────────────────────────────────────────────────────────┐
+│ 4. Route task                                                 │
 │    junior → Line Cook,  senior → Sous Chef                    │
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 4. Fire ticket                                                │
+│ 5. Fire ticket                                                │
 │    Send task + chef prompt to worker                          │
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 5. Check for escalation                                       │
-│    Line Cook fails 3x? → Escalate to Sous Chef                │
+│ 6. Check for escalation                                       │
+│    Line Cook fails 3x or times out (15m)? → Sous Chef         │
+│    Sous Chef fails 5x or times out (30m)? → Executive Chef    │
+│    Worker signals BLOCKED? → Immediate escalation             │
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 6. Run tests (if configured)                                  │
+│ 7. Check completion signals                                   │
+│    COMPLETE → run tests, ALREADY_DONE → skip to next task     │
+│    ABSORBED_BY:US-XXX → mark done, credit other task          │
+└─────────────────────────┬─────────────────────────────────────┘
+                          ▼
+┌───────────────────────────────────────────────────────────────┐
+│ 8. Run tests (if configured)                                  │
 │    Tests fail? → Iterate again                                │
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 7. Executive review (if enabled)                              │
+│ 9. Executive review (if enabled)                              │
 │    Review fails? → Iterate again                              │
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 8. Mark complete, move to next task                           │
-│    Repeat until all tasks done                                │
+│ 10. Mark complete, show summary, move to next task            │
+│     Repeat until all tasks done                               │
 └───────────────────────────────────────────────────────────────┘
 ```
 
 ## Stop and Resume
 
-Brigade saves progress to the PRD file. You can:
+Brigade saves progress to the PRD file and state file. You can:
 
 - **Stop anytime**: Ctrl+C
-- **Resume later**: Run the same service command
+- **Resume with options**: `./brigade.sh resume` to retry or skip the interrupted task
+- **Continue service**: Run the same service command (skips completed tasks)
 - **Manual override**: Edit `"passes": true/false` in the PRD
+
+The `resume` command detects interrupted tasks and lets you choose:
+- `retry` - Start the task fresh with the same worker
+- `skip` - Mark as skipped and continue to next task
 
 ## Next Steps
 
