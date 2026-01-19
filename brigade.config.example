@@ -122,6 +122,22 @@ WORKER_LOG_DIR=""  # e.g., "brigade/logs/"
 STATUS_WATCH_INTERVAL=30  # Seconds between refreshes in `status --watch` mode
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SUPERVISOR INTEGRATION
+# ═══════════════════════════════════════════════════════════════════════════════
+# For AI supervisors (Claude, TUI tools, etc.) to monitor Brigade with minimal overhead.
+# All file-based - no webhooks or network connections required.
+
+# Compact status JSON written on every state change
+# Supervisor reads this file instead of polling `./brigade.sh status --brief`
+# Format: {"done":3,"total":13,"current":"US-004","worker":"sous","elapsed":125,"attention":false}
+SUPERVISOR_STATUS_FILE=""  # e.g., "brigade/tasks/status.json"
+
+# Append-only JSONL event stream for real-time monitoring
+# Supervisor tails this file to receive events as they happen
+# Events: service_start, task_start, task_complete, escalation, review, attention, service_complete
+SUPERVISOR_EVENTS_FILE=""  # e.g., "brigade/tasks/events.jsonl"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT
 # ═══════════════════════════════════════════════════════════════════════════════
 

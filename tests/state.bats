@@ -178,3 +178,131 @@ teardown() {
   [ "$result" = "FAIL" ]
   [ "$reason" = "Tests not passing" ]
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Supervisor integration tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@test "write_supervisor_status creates status file when configured" {
+  SUPERVISOR_STATUS_FILE="$TEST_TMPDIR/status.json"
+
+  # Set up a current task
+  update_state_task "$PRD_FILE" "US-001" "line" "started"
+
+  write_supervisor_status "$PRD_FILE"
+
+  [ -f "$SUPERVISOR_STATUS_FILE" ]
+
+  # Verify it's valid JSON
+  jq '.' "$SUPERVISOR_STATUS_FILE" > /dev/null
+}
+
+@test "write_supervisor_status includes done and total counts" {
+  SUPERVISOR_STATUS_FILE="$TEST_TMPDIR/status.json"
+
+  write_supervisor_status "$PRD_FILE"
+
+  done=$(jq -r '.done' "$SUPERVISOR_STATUS_FILE")
+  total=$(jq -r '.total' "$SUPERVISOR_STATUS_FILE")
+
+  [ "$done" = "0" ]
+  [ "$total" = "3" ]
+}
+
+@test "write_supervisor_status includes current task info" {
+  SUPERVISOR_STATUS_FILE="$TEST_TMPDIR/status.json"
+
+  update_state_task "$PRD_FILE" "US-001" "sous" "started"
+  write_supervisor_status "$PRD_FILE"
+
+  current=$(jq -r '.current' "$SUPERVISOR_STATUS_FILE")
+  worker=$(jq -r '.worker' "$SUPERVISOR_STATUS_FILE")
+
+  [ "$current" = "US-001" ]
+  [ "$worker" = "sous" ]
+}
+
+@test "write_supervisor_status sets attention true when blocked" {
+  SUPERVISOR_STATUS_FILE="$TEST_TMPDIR/status.json"
+
+  update_state_task "$PRD_FILE" "US-001" "line" "blocked"
+  write_supervisor_status "$PRD_FILE"
+
+  attention=$(jq -r '.attention' "$SUPERVISOR_STATUS_FILE")
+  reason=$(jq -r '.reason' "$SUPERVISOR_STATUS_FILE")
+
+  [ "$attention" = "true" ]
+  [ "$reason" = "blocked" ]
+}
+
+@test "write_supervisor_status skipped when not configured" {
+  SUPERVISOR_STATUS_FILE=""
+
+  # Should not create any file
+  write_supervisor_status "$PRD_FILE"
+
+  # No status.json should exist
+  [ ! -f "$TEST_TMPDIR/status.json" ]
+}
+
+@test "emit_supervisor_event appends to events file" {
+  SUPERVISOR_EVENTS_FILE="$TEST_TMPDIR/events.jsonl"
+
+  emit_supervisor_event "task_start" "US-001" "line"
+  emit_supervisor_event "task_complete" "US-001" "line" "120"
+
+  [ -f "$SUPERVISOR_EVENTS_FILE" ]
+
+  # Should have 2 lines
+  line_count=$(wc -l < "$SUPERVISOR_EVENTS_FILE")
+  [ "$line_count" -eq 2 ]
+}
+
+@test "emit_supervisor_event includes timestamp" {
+  SUPERVISOR_EVENTS_FILE="$TEST_TMPDIR/events.jsonl"
+
+  emit_supervisor_event "task_start" "US-001" "sous"
+
+  ts=$(jq -r '.ts' "$SUPERVISOR_EVENTS_FILE")
+  [ -n "$ts" ]
+  [ "$ts" != "null" ]
+}
+
+@test "emit_supervisor_event formats service_start correctly" {
+  SUPERVISOR_EVENTS_FILE="$TEST_TMPDIR/events.jsonl"
+
+  emit_supervisor_event "service_start" "prd-test.json" "5"
+
+  event=$(jq -r '.event' "$SUPERVISOR_EVENTS_FILE")
+  prd=$(jq -r '.prd' "$SUPERVISOR_EVENTS_FILE")
+  total=$(jq -r '.total' "$SUPERVISOR_EVENTS_FILE")
+
+  [ "$event" = "service_start" ]
+  [ "$prd" = "prd-test.json" ]
+  [ "$total" = "5" ]
+}
+
+@test "emit_supervisor_event formats escalation correctly" {
+  SUPERVISOR_EVENTS_FILE="$TEST_TMPDIR/events.jsonl"
+
+  emit_supervisor_event "escalation" "US-001" "line" "sous"
+
+  event=$(jq -r '.event' "$SUPERVISOR_EVENTS_FILE")
+  task=$(jq -r '.task' "$SUPERVISOR_EVENTS_FILE")
+  from=$(jq -r '.from' "$SUPERVISOR_EVENTS_FILE")
+  to=$(jq -r '.to' "$SUPERVISOR_EVENTS_FILE")
+
+  [ "$event" = "escalation" ]
+  [ "$task" = "US-001" ]
+  [ "$from" = "line" ]
+  [ "$to" = "sous" ]
+}
+
+@test "emit_supervisor_event skipped when not configured" {
+  SUPERVISOR_EVENTS_FILE=""
+
+  emit_supervisor_event "task_start" "US-001" "line"
+
+  # No events file should exist
+  [ ! -f "$TEST_TMPDIR/events.jsonl" ]
+}

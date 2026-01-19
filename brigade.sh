@@ -223,6 +223,8 @@ TASK_TIMEOUT_WARNING_JUNIOR=10     # Minutes before warning for junior tasks (0 
 TASK_TIMEOUT_WARNING_SENIOR=20     # Minutes before warning for senior tasks
 WORKER_LOG_DIR=""                  # Directory for per-task worker logs (empty = disabled)
 STATUS_WATCH_INTERVAL=30           # Seconds between status refreshes in watch mode
+SUPERVISOR_STATUS_FILE=""          # Write compact status JSON on state changes (empty = disabled)
+SUPERVISOR_EVENTS_FILE=""          # Append-only JSONL event stream (empty = disabled)
 
 # Runtime state (set during execution)
 LAST_REVIEW_FEEDBACK=""       # Feedback from failed executive review, passed to worker on retry
@@ -782,6 +784,9 @@ mark_task_complete() {
     echo "[DEBUG] mark_task_complete: done for $task_id" >&2
   fi
 
+  # Update supervisor status file
+  write_supervisor_status "$prd_path"
+
   echo -e "${GREEN}✓ Marked $task_id as complete${NC}"
 }
 
@@ -1039,6 +1044,10 @@ update_state_task() {
   fi
 
   release_lock "$state_path"
+
+  # Update supervisor status file
+  write_supervisor_status "$prd_path"
+
   return 0
 }
 
@@ -1063,6 +1072,10 @@ record_escalation() {
     "$state_path" > "$tmp_file"
   mv "$tmp_file" "$state_path"
   release_lock "$state_path"
+
+  # Emit supervisor event and update status
+  emit_supervisor_event "escalation" "$task_id" "$from_worker" "$to_worker"
+  write_supervisor_status "$prd_path"
 }
 
 record_review() {
@@ -1085,6 +1098,10 @@ record_review() {
     "$state_path" > "$tmp_file"
   mv "$tmp_file" "$state_path"
   release_lock "$state_path"
+
+  # Emit supervisor event and update status
+  emit_supervisor_event "review" "$task_id" "$result"
+  write_supervisor_status "$prd_path"
 }
 
 record_absorption() {
@@ -1136,6 +1153,151 @@ record_phase_review() {
     "$state_path" > "$tmp_file"
   mv "$tmp_file" "$state_path"
   release_lock "$state_path"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SUPERVISOR INTEGRATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Write compact status JSON to SUPERVISOR_STATUS_FILE
+# Called after state changes so supervisors can poll the file instead of running commands
+write_supervisor_status() {
+  local prd_path="$1"
+
+  # Skip if not configured
+  [ -z "$SUPERVISOR_STATUS_FILE" ] && return 0
+
+  local state_path=$(get_state_path "$prd_path")
+  local total=$(get_task_count "$prd_path")
+  local done=$(jq '[.tasks[] | select(.passes == true)] | length' "$prd_path")
+
+  # Get current task info
+  local current=""
+  local worker=""
+  local elapsed=0
+  local attention=false
+  local reason=""
+
+  if [ -f "$state_path" ]; then
+    current=$(jq -r '.currentTask // empty' "$state_path")
+
+    if [ -n "$current" ]; then
+      local last_entry=$(jq -r --arg task "$current" \
+        '[.taskHistory[] | select(.taskId == $task)] | last // {}' "$state_path")
+      worker=$(echo "$last_entry" | jq -r '.worker // empty')
+      local status=$(echo "$last_entry" | jq -r '.status // empty')
+
+      # Calculate elapsed time
+      local start_ts=$(echo "$last_entry" | jq -r '.timestamp // empty')
+      if [ -n "$start_ts" ]; then
+        local start_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${start_ts%.*}" "+%s" 2>/dev/null || \
+                           date -d "${start_ts}" "+%s" 2>/dev/null || echo 0)
+        local now_epoch=$(date "+%s")
+        elapsed=$((now_epoch - start_epoch))
+        [ $elapsed -lt 0 ] && elapsed=0
+      fi
+
+      # Check attention conditions
+      case "$status" in
+        blocked) attention=true; reason="blocked" ;;
+        verification_failed) attention=true; reason="verification_failed" ;;
+        review_failed) attention=true; reason="review_failed" ;;
+        skipped) attention=true; reason="skipped" ;;
+      esac
+    fi
+
+    # Check for executive escalation
+    if [ "$attention" = "false" ]; then
+      local prd_task_ids=$(jq -r '[.tasks[].id] | @json' "$prd_path")
+      local exec_escalations=$(jq --argjson ids "$prd_task_ids" \
+        '[(.escalations // [])[] | select(.taskId as $tid | $ids | index($tid)) | select(.to == "executive")] | length' \
+        "$state_path" 2>/dev/null || echo 0)
+      if [ "$exec_escalations" -gt 0 ]; then
+        attention=true
+        reason="escalated_to_executive"
+      fi
+    fi
+  fi
+
+  # Write atomically (tmp file + mv)
+  local tmp_file=$(brigade_mktemp)
+  if [ "$attention" = "true" ]; then
+    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"attention":true,"reason":"%s"}\n' \
+      "$done" "$total" \
+      "$([ -n "$current" ] && echo "\"$current\"" || echo "null")" \
+      "$([ -n "$worker" ] && echo "\"$worker\"" || echo "null")" \
+      "$elapsed" "$reason" > "$tmp_file"
+  else
+    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"attention":false}\n' \
+      "$done" "$total" \
+      "$([ -n "$current" ] && echo "\"$current\"" || echo "null")" \
+      "$([ -n "$worker" ] && echo "\"$worker\"" || echo "null")" \
+      "$elapsed" > "$tmp_file"
+  fi
+  mv "$tmp_file" "$SUPERVISOR_STATUS_FILE"
+}
+
+# Emit event to SUPERVISOR_EVENTS_FILE (append-only JSONL)
+# Events: service_start, task_start, task_complete, escalation, review, attention, service_complete
+emit_supervisor_event() {
+  local event_type="$1"
+  shift
+
+  # Skip if not configured
+  [ -z "$SUPERVISOR_EVENTS_FILE" ] && return 0
+
+  local ts=$(date -Iseconds)
+
+  # Build event JSON based on type
+  case "$event_type" in
+    service_start)
+      local prd="$1" total="$2"
+      printf '{"ts":"%s","event":"service_start","prd":"%s","total":%d}\n' "$ts" "$prd" "$total"
+      ;;
+    task_start)
+      local task="$1" worker="$2"
+      printf '{"ts":"%s","event":"task_start","task":"%s","worker":"%s"}\n' "$ts" "$task" "$worker"
+      ;;
+    task_complete)
+      local task="$1" worker="$2" duration="$3"
+      printf '{"ts":"%s","event":"task_complete","task":"%s","worker":"%s","duration":%d}\n' "$ts" "$task" "$worker" "$duration"
+      ;;
+    task_blocked)
+      local task="$1" worker="$2"
+      printf '{"ts":"%s","event":"task_blocked","task":"%s","worker":"%s"}\n' "$ts" "$task" "$worker"
+      ;;
+    task_absorbed)
+      local task="$1" absorbed_by="$2"
+      printf '{"ts":"%s","event":"task_absorbed","task":"%s","absorbed_by":"%s"}\n' "$ts" "$task" "$absorbed_by"
+      ;;
+    task_already_done)
+      local task="$1"
+      printf '{"ts":"%s","event":"task_already_done","task":"%s"}\n' "$ts" "$task"
+      ;;
+    escalation)
+      local task="$1" from="$2" to="$3"
+      printf '{"ts":"%s","event":"escalation","task":"%s","from":"%s","to":"%s"}\n' "$ts" "$task" "$from" "$to"
+      ;;
+    review)
+      local task="$1" result="$2"
+      printf '{"ts":"%s","event":"review","task":"%s","result":"%s"}\n' "$ts" "$task" "$result"
+      ;;
+    verification)
+      local task="$1" result="$2"
+      printf '{"ts":"%s","event":"verification","task":"%s","result":"%s"}\n' "$ts" "$task" "$result"
+      ;;
+    attention)
+      local task="$1" reason="$2"
+      printf '{"ts":"%s","event":"attention","task":"%s","reason":"%s"}\n' "$ts" "$task" "$reason"
+      ;;
+    service_complete)
+      local completed="$1" failed="$2" duration="$3"
+      printf '{"ts":"%s","event":"service_complete","completed":%d,"failed":%d,"duration":%d}\n' "$ts" "$completed" "$failed" "$duration"
+      ;;
+    *)
+      printf '{"ts":"%s","event":"%s"}\n' "$ts" "$event_type"
+      ;;
+  esac >> "$SUPERVISOR_EVENTS_FILE"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1637,6 +1799,9 @@ fire_ticket() {
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
   echo ""
 
+  # Emit supervisor event for task start
+  emit_supervisor_event "task_start" "$task_id" "$worker"
+
   local full_prompt=$(build_prompt "$prd_path" "$task_id" "$chef_prompt")
   local output_file=$(brigade_mktemp)
 
@@ -1819,10 +1984,12 @@ fire_ticket() {
   # 34 = ABSORBED_BY
   if grep -q "<promise>COMPLETE</promise>" "$output_file" 2>/dev/null; then
     log_event "SUCCESS" "Task $display_id signaled COMPLETE (${duration}s)"
+    emit_supervisor_event "task_complete" "$task_id" "$worker" "$duration"
     rm -f "$output_file"
     return 0
   elif grep -q "<promise>ALREADY_DONE</promise>" "$output_file" 2>/dev/null; then
     log_event "SUCCESS" "Task $display_id signaled ALREADY_DONE - completed by prior task (${duration}s)"
+    emit_supervisor_event "task_already_done" "$task_id"
     rm -f "$output_file"
     return 33  # ALREADY_DONE (distinct from jq exit code 3)
   elif grep -oq "<promise>ABSORBED_BY:" "$output_file" 2>/dev/null; then
@@ -1830,10 +1997,13 @@ fire_ticket() {
     LAST_ABSORBED_BY=$(grep -o "<promise>ABSORBED_BY:[^<]*</promise>" "$output_file" | sed 's/<promise>ABSORBED_BY://;s/<\/promise>//')
     local absorbed_display=$(format_task_id "$prd_path" "$LAST_ABSORBED_BY")
     log_event "SUCCESS" "Task $display_id ABSORBED BY $absorbed_display (${duration}s)"
+    emit_supervisor_event "task_absorbed" "$task_id" "$LAST_ABSORBED_BY"
     rm -f "$output_file"
     return 34  # ABSORBED_BY
   elif grep -q "<promise>BLOCKED</promise>" "$output_file" 2>/dev/null; then
     log_event "ERROR" "Task $display_id is BLOCKED (${duration}s)"
+    emit_supervisor_event "task_blocked" "$task_id" "$worker"
+    emit_supervisor_event "attention" "$task_id" "blocked"
     rm -f "$output_file"
     return 32  # BLOCKED
   else
@@ -2542,6 +2712,92 @@ apply_remediation() {
 # COMMANDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Output ultra-compact JSON status for AI supervisors
+# Minimal tokens: {"done":3,"total":13,"current":"US-004","worker":"sous","elapsed":125,"attention":false}
+output_status_brief() {
+  local prd_path="$1"
+  local state_path=$(get_state_path "$prd_path")
+
+  local total=$(get_task_count "$prd_path")
+  local done=$(jq '[.tasks[] | select(.passes == true)] | length' "$prd_path")
+
+  # Get current task info
+  local current=""
+  local worker=""
+  local elapsed=0
+  local attention=false
+  local reason=""
+
+  if [ -f "$state_path" ]; then
+    current=$(jq -r '.currentTask // empty' "$state_path")
+
+    if [ -n "$current" ]; then
+      # Get worker from last history entry for this task
+      local last_entry=$(jq -r --arg task "$current" \
+        '[.taskHistory[] | select(.taskId == $task)] | last // {}' "$state_path")
+      worker=$(echo "$last_entry" | jq -r '.worker // empty')
+      local status=$(echo "$last_entry" | jq -r '.status // empty')
+
+      # Calculate elapsed time
+      local start_ts=$(echo "$last_entry" | jq -r '.timestamp // empty')
+      if [ -n "$start_ts" ]; then
+        local start_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${start_ts%.*}" "+%s" 2>/dev/null || \
+                           date -d "${start_ts}" "+%s" 2>/dev/null || echo 0)
+        local now_epoch=$(date "+%s")
+        elapsed=$((now_epoch - start_epoch))
+        [ $elapsed -lt 0 ] && elapsed=0
+      fi
+
+      # Check attention conditions
+      case "$status" in
+        blocked)
+          attention=true
+          reason="blocked"
+          ;;
+        verification_failed)
+          attention=true
+          reason="verification_failed"
+          ;;
+        review_failed)
+          attention=true
+          reason="review_failed"
+          ;;
+        skipped)
+          attention=true
+          reason="skipped"
+          ;;
+      esac
+    fi
+
+    # Check for executive escalation (highest tier failure)
+    if [ "$attention" = "false" ]; then
+      local prd_task_ids=$(jq -r '[.tasks[].id] | @json' "$prd_path")
+      local exec_escalations=$(jq --argjson ids "$prd_task_ids" \
+        '[(.escalations // [])[] | select(.taskId as $tid | $ids | index($tid)) | select(.to == "executive")] | length' \
+        "$state_path" 2>/dev/null || echo 0)
+      if [ "$exec_escalations" -gt 0 ]; then
+        attention=true
+        reason="escalated_to_executive"
+      fi
+    fi
+  fi
+
+  # Build compact JSON (single line, no pretty-printing)
+  if [ "$attention" = "true" ]; then
+    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"attention":true,"reason":"%s"}\n' \
+      "$done" "$total" \
+      "$([ -n "$current" ] && echo "\"$current\"" || echo "null")" \
+      "$([ -n "$worker" ] && echo "\"$worker\"" || echo "null")" \
+      "$elapsed" "$reason"
+  else
+    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"attention":false}\n' \
+      "$done" "$total" \
+      "$([ -n "$current" ] && echo "\"$current\"" || echo "null")" \
+      "$([ -n "$worker" ] && echo "\"$worker\"" || echo "null")" \
+      "$elapsed"
+  fi
+}
+
 # Output machine-readable JSON status for AI supervisors
 # Includes needs_attention flag to reduce polling overhead
 output_status_json() {
@@ -2649,6 +2905,7 @@ cmd_status() {
   local show_all_escalations=false
   local watch_mode=false
   local json_mode=false
+  local brief_mode=false
   local prd_path=""
 
   # Parse arguments
@@ -2664,6 +2921,10 @@ cmd_status() {
         ;;
       --json|-j)
         json_mode=true
+        shift
+        ;;
+      --brief|-b)
+        brief_mode=true
         shift
         ;;
       *)
@@ -2684,16 +2945,25 @@ cmd_status() {
       echo -e "Or specify one:   ${CYAN}./brigade.sh status path/to/prd.json${NC}"
       exit 1
     fi
-    echo -e "${GRAY}Found: $prd_path${NC}"
+    # Only show "Found" message in human-readable mode
+    if [ "$json_mode" = "false" ] && [ "$brief_mode" = "false" ]; then
+      echo -e "${GRAY}Found: $prd_path${NC}"
+    fi
   fi
 
   if [ ! -f "$prd_path" ]; then
-    if [ "$json_mode" = "true" ]; then
-      echo '{"error": "PRD file not found", "needs_attention": true}'
+    if [ "$json_mode" = "true" ] || [ "$brief_mode" = "true" ]; then
+      echo '{"error": "PRD file not found", "attention": true}'
       exit 1
     fi
     echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
     exit 1
+  fi
+
+  # Brief mode: output ultra-compact JSON and exit
+  if [ "$brief_mode" = "true" ]; then
+    output_status_brief "$prd_path"
+    return 0
   fi
 
   # JSON mode: output machine-readable status and exit
@@ -3689,6 +3959,7 @@ $task_id"
   fi
 
   log_event "START" "SERVICE STARTED: $feature_name"
+  emit_supervisor_event "service_start" "$(basename "$prd_path")" "$total"
   echo -e "Total tickets: $total"
   echo -e "${GRAY}Escalation: $([ "$ESCALATION_ENABLED" == "true" ] && echo "ON (after $ESCALATION_AFTER iterations)" || echo "OFF")${NC}"
   echo -e "${GRAY}Executive Review: $([ "$REVIEW_ENABLED" == "true" ] && echo "ON" || echo "OFF")${NC}"
@@ -3863,6 +4134,8 @@ $task_id"
   echo ""
 
   log_event "SUCCESS" "SERVICE COMPLETE: $feature_name - $completed tasks in ${hours}h ${minutes}m"
+  local failed_tasks=$((total_tasks - completed))
+  emit_supervisor_event "service_complete" "$completed" "$failed_tasks" "$duration"
 
   # Merge feature branch to default branch
   local merge_status="none"  # none, success, failed, pushed
@@ -4580,9 +4853,10 @@ cmd_opencode_models() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 main() {
-  # Check for quiet modes that suppress banner (status --json)
+  # Check for quiet modes that suppress banner (status --json, status --brief)
   local quiet_mode=false
-  if [[ "$*" == *"status"*"--json"* ]] || [[ "$*" == *"status"*"-j"* ]]; then
+  if [[ "$*" == *"status"*"--json"* ]] || [[ "$*" == *"status"*"-j"* ]] || \
+     [[ "$*" == *"status"*"--brief"* ]] || [[ "$*" == *"status"*"-b"* ]]; then
     quiet_mode=true
   fi
 

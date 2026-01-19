@@ -26,6 +26,7 @@ See `ROADMAP.md` for planned features and recent changes. Check it before starti
 ./brigade.sh status
 ./brigade.sh status --watch  # Auto-refresh every 30s
 ./brigade.sh status --json   # Machine-readable JSON for AI supervisors
+./brigade.sh status --brief  # Ultra-compact JSON for low-token polling
 
 # Resume after interruption (retry or skip the failed task)
 ./brigade.sh resume
@@ -217,6 +218,24 @@ Persistent logs of all worker conversations for debugging:
 WORKER_LOG_DIR="brigade/logs/"
 ```
 Creates: `add-auth-US-005-sous-2026-01-19-143022.log`
+
+### Supervisor Integration
+For AI supervisors or TUI tools to monitor Brigade with minimal token overhead:
+
+```bash
+# Compact status JSON written on every state change
+SUPERVISOR_STATUS_FILE="brigade/tasks/status.json"
+
+# Append-only JSONL event stream (tail -f friendly)
+SUPERVISOR_EVENTS_FILE="brigade/tasks/events.jsonl"
+```
+
+**Status file format:**
+```json
+{"done":3,"total":13,"current":"US-004","worker":"sous","elapsed":125,"attention":false}
+```
+
+**Event types:** `service_start`, `task_start`, `task_complete`, `escalation`, `review`, `attention`, `service_complete`
 
 ## Configuration
 
