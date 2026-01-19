@@ -32,6 +32,12 @@ See `ROADMAP.md` for planned features and recent changes. Check it before starti
 # Validate PRD structure
 ./brigade.sh validate brigade/tasks/prd.json
 
+# Generate summary report from state
+./brigade.sh summary brigade/tasks/prd.json
+
+# Generate codebase map (auto-included in future planning)
+./brigade.sh map
+
 # Preview execution without running
 ./brigade.sh --dry-run service brigade/tasks/prd.json
 
