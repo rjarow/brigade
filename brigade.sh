@@ -4,6 +4,27 @@
 
 set -e
 
+# Temp file tracking for cleanup (only when running as main script)
+BRIGADE_TEMP_FILES=()
+
+cleanup_temp_files() {
+  for f in "${BRIGADE_TEMP_FILES[@]}"; do
+    rm -f "$f" 2>/dev/null
+  done
+}
+
+# Only set trap when running as main script (not when sourced for testing)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  trap cleanup_temp_files EXIT
+fi
+
+# Wrapper for mktemp that tracks files for cleanup
+brigade_mktemp() {
+  local tmp=$(mktemp)
+  BRIGADE_TEMP_FILES+=("$tmp")
+  echo "$tmp"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/brigade.config"
 KITCHEN_DIR="$SCRIPT_DIR/kitchen"
@@ -170,6 +191,71 @@ load_config() {
     LINE_AGENT="opencode"
     echo -e "${CYAN}Using OpenCode for junior tasks (USE_OPENCODE=true)${NC}"
   fi
+
+  # Validate config values
+  validate_config
+}
+
+validate_config() {
+  local warnings=0
+
+  # Numeric validations
+  if [ "$MAX_PARALLEL" -lt 0 ] 2>/dev/null; then
+    echo -e "${YELLOW}Warning: MAX_PARALLEL=$MAX_PARALLEL invalid, using 0${NC}"
+    MAX_PARALLEL=0
+    ((warnings++))
+  fi
+
+  if [ "$MAX_ITERATIONS" -lt 1 ] 2>/dev/null; then
+    echo -e "${YELLOW}Warning: MAX_ITERATIONS=$MAX_ITERATIONS invalid, using 50${NC}"
+    MAX_ITERATIONS=50
+    ((warnings++))
+  fi
+
+  if [ "$ESCALATION_AFTER" -lt 1 ] 2>/dev/null; then
+    echo -e "${YELLOW}Warning: ESCALATION_AFTER=$ESCALATION_AFTER invalid, using 3${NC}"
+    ESCALATION_AFTER=3
+    ((warnings++))
+  fi
+
+  if [ "$ESCALATION_TO_EXEC_AFTER" -lt 1 ] 2>/dev/null; then
+    echo -e "${YELLOW}Warning: ESCALATION_TO_EXEC_AFTER=$ESCALATION_TO_EXEC_AFTER invalid, using 5${NC}"
+    ESCALATION_TO_EXEC_AFTER=5
+    ((warnings++))
+  fi
+
+  if [ "$TEST_TIMEOUT" -lt 1 ] 2>/dev/null; then
+    echo -e "${YELLOW}Warning: TEST_TIMEOUT=$TEST_TIMEOUT invalid, using 120${NC}"
+    TEST_TIMEOUT=120
+    ((warnings++))
+  fi
+
+  if [ "$PHASE_REVIEW_AFTER" -lt 1 ] 2>/dev/null; then
+    echo -e "${YELLOW}Warning: PHASE_REVIEW_AFTER=$PHASE_REVIEW_AFTER invalid, using 5${NC}"
+    PHASE_REVIEW_AFTER=5
+    ((warnings++))
+  fi
+
+  # Enum validations
+  case "$PHASE_REVIEW_ACTION" in
+    continue|pause|remediate) ;;
+    *)
+      echo -e "${YELLOW}Warning: PHASE_REVIEW_ACTION=$PHASE_REVIEW_ACTION invalid, using continue${NC}"
+      PHASE_REVIEW_ACTION=continue
+      ((warnings++))
+      ;;
+  esac
+
+  case "$PHASE_GATE" in
+    continue|pause|review) ;;
+    *)
+      echo -e "${YELLOW}Warning: PHASE_GATE=$PHASE_GATE invalid, using continue${NC}"
+      PHASE_GATE=continue
+      ((warnings++))
+      ;;
+  esac
+
+  return 0
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -316,14 +402,14 @@ mark_task_complete() {
   local task_id="$2"
 
   # Update PRD
-  local tmp_file=$(mktemp)
+  local tmp_file=$(brigade_mktemp)
   jq "(.tasks[] | select(.id == \"$task_id\") | .passes) = true" "$prd_path" > "$tmp_file"
   mv "$tmp_file" "$prd_path"
 
   # Clear currentTask from state file
   local state_path=$(get_state_path "$prd_path")
   if [ -f "$state_path" ]; then
-    tmp_file=$(mktemp)
+    tmp_file=$(brigade_mktemp)
     jq '.currentTask = null' "$state_path" > "$tmp_file"
     mv "$tmp_file" "$state_path"
   fi
@@ -497,7 +583,7 @@ update_last_start_time() {
 
   local state_path=$(get_state_path "$prd_path")
   if [ -f "$state_path" ]; then
-    local tmp_file=$(mktemp)
+    local tmp_file=$(brigade_mktemp)
     jq --arg ts "$(date -Iseconds)" '.lastStartTime = $ts' "$state_path" > "$tmp_file"
     mv "$tmp_file" "$state_path"
   fi
@@ -514,7 +600,7 @@ update_state_task() {
   fi
 
   local state_path=$(get_state_path "$prd_path")
-  local tmp_file=$(mktemp)
+  local tmp_file=$(brigade_mktemp)
 
   jq --arg task "$task_id" --arg worker "$worker" --arg status "$status" --arg ts "$(date -Iseconds)" \
     '.currentTask = $task | .taskHistory += [{"taskId": $task, "worker": $worker, "status": $status, "timestamp": $ts}]' \
@@ -534,7 +620,7 @@ record_escalation() {
   fi
 
   local state_path=$(get_state_path "$prd_path")
-  local tmp_file=$(mktemp)
+  local tmp_file=$(brigade_mktemp)
 
   jq --arg task "$task_id" --arg from "$from_worker" --arg to "$to_worker" --arg reason "$reason" --arg ts "$(date -Iseconds)" \
     '.escalations += [{"taskId": $task, "from": $from, "to": $to, "reason": $reason, "timestamp": $ts}]' \
@@ -553,7 +639,7 @@ record_review() {
   fi
 
   local state_path=$(get_state_path "$prd_path")
-  local tmp_file=$(mktemp)
+  local tmp_file=$(brigade_mktemp)
 
   jq --arg task "$task_id" --arg result "$result" --arg reason "$reason" --arg ts "$(date -Iseconds)" \
     '.reviews += [{"taskId": $task, "result": $result, "reason": $reason, "timestamp": $ts}]' \
@@ -571,7 +657,7 @@ record_absorption() {
   fi
 
   local state_path=$(get_state_path "$prd_path")
-  local tmp_file=$(mktemp)
+  local tmp_file=$(brigade_mktemp)
 
   jq --arg task "$task_id" --arg absorbed_by "$absorbed_by" --arg ts "$(date -Iseconds)" \
     '.absorptions += [{"taskId": $task, "absorbedBy": $absorbed_by, "timestamp": $ts}]' \
@@ -591,7 +677,7 @@ record_phase_review() {
   fi
 
   local state_path=$(get_state_path "$prd_path")
-  local tmp_file=$(mktemp)
+  local tmp_file=$(brigade_mktemp)
 
   # Extract the phase_review content from output
   local review_content=""
@@ -984,7 +1070,7 @@ fire_ticket() {
   echo ""
 
   local full_prompt=$(build_prompt "$prd_path" "$task_id" "$chef_prompt")
-  local output_file=$(mktemp)
+  local output_file=$(brigade_mktemp)
 
   # Execute worker based on agent type
   local start_time=$(date +%s)
@@ -1182,7 +1268,7 @@ executive_review() {
   echo ""
 
   local review_prompt=$(build_review_prompt "$prd_path" "$task_id" "$completed_by")
-  local output_file=$(mktemp)
+  local output_file=$(brigade_mktemp)
 
   # Execute executive review
   local start_time=$(date +%s)
@@ -1356,7 +1442,7 @@ RECOMMENDATIONS: <any suggestions, or 'none'>
 </phase_review>"
   fi
 
-  local output_file=$(mktemp)
+  local output_file=$(brigade_mktemp)
   local start_time=$(date +%s)
 
   if $EXECUTIVE_CMD --dangerously-skip-permissions -p "$phase_prompt" 2>&1 | tee "$output_file"; then
@@ -1479,7 +1565,7 @@ STATUS: proceed | pause | stop
 ASSESSMENT: <your analysis>
 </phase_gate>"
 
-      local output_file=$(mktemp)
+      local output_file=$(brigade_mktemp)
       local start_time=$(date +%s)
 
       if $EXECUTIVE_CMD --dangerously-skip-permissions -p "$review_prompt" 2>&1 | tee "$output_file"; then
@@ -1551,7 +1637,7 @@ apply_remediation() {
   echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
 
   # Add remediation tasks to PRD
-  local tmp_prd=$(mktemp)
+  local tmp_prd=$(brigade_mktemp)
   jq --argjson new_tasks "$remediation_json" '.tasks += $new_tasks' "$prd_path" > "$tmp_prd"
 
   if [ -s "$tmp_prd" ]; then
@@ -1596,7 +1682,8 @@ cmd_status() {
       echo -e "${YELLOW}No active PRD found.${NC}"
       echo -e "${GRAY}Searched: brigade/tasks/, tasks/, ., ../brigade/tasks/, ../tasks/${NC}"
       echo ""
-      echo "Usage: ./brigade.sh status [prd.json]"
+      echo -e "To create a PRD:  ${CYAN}./brigade.sh plan \"your feature description\"${NC}"
+      echo -e "Or specify one:   ${CYAN}./brigade.sh status path/to/prd.json${NC}"
       exit 1
     fi
     echo -e "${GRAY}Found: $prd_path${NC}"
@@ -1846,7 +1933,9 @@ cmd_resume() {
     prd_path=$(find_active_prd)
     if [ -z "$prd_path" ]; then
       echo -e "${YELLOW}No active PRD found.${NC}"
-      echo "Usage: ./brigade.sh resume [prd.json] [retry|skip]"
+      echo ""
+      echo -e "To create a PRD:  ${CYAN}./brigade.sh plan \"your feature description\"${NC}"
+      echo -e "Or specify one:   ${CYAN}./brigade.sh resume path/to/prd.json${NC}"
       exit 1
     fi
     echo -e "${GRAY}Found: $prd_path${NC}"
@@ -1854,13 +1943,14 @@ cmd_resume() {
 
   if [ ! -f "$prd_path" ]; then
     echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
+    echo -e "${GRAY}Check the path or run: ./brigade.sh plan \"your feature\"${NC}"
     exit 1
   fi
 
   local state_path=$(get_state_path "$prd_path")
   if [ ! -f "$state_path" ]; then
     echo -e "${YELLOW}No state file found - nothing to resume.${NC}"
-    echo -e "${GRAY}Run './brigade.sh service $prd_path' to start fresh.${NC}"
+    echo -e "${GRAY}Start fresh: ./brigade.sh service $prd_path${NC}"
     exit 0
   fi
 
@@ -1882,7 +1972,7 @@ cmd_resume() {
   if [ -z "$task_exists" ]; then
     echo -e "${YELLOW}Task $current_task not found in PRD (stale state).${NC}"
     # Clear currentTask from state
-    local tmp_file=$(mktemp)
+    local tmp_file=$(brigade_mktemp)
     jq '.currentTask = null' "$state_path" > "$tmp_file"
     mv "$tmp_file" "$state_path"
     echo -e "${GRAY}Cleared stale state. Run './brigade.sh service $prd_path' to continue.${NC}"
@@ -1894,7 +1984,7 @@ cmd_resume() {
   if [ "$task_passes" == "true" ]; then
     echo -e "${GREEN}Task $current_task is already completed.${NC}"
     # Clear currentTask from state
-    local tmp_file=$(mktemp)
+    local tmp_file=$(brigade_mktemp)
     jq '.currentTask = null' "$state_path" > "$tmp_file"
     mv "$tmp_file" "$state_path"
     echo -e "${GRAY}Run './brigade.sh service $prd_path' to continue.${NC}"
@@ -1933,7 +2023,7 @@ cmd_resume() {
       echo ""
       log_event "RESUME" "Retrying interrupted task: $current_task"
       # Clear currentTask to allow fresh start
-      local tmp_file=$(mktemp)
+      local tmp_file=$(brigade_mktemp)
       jq '.currentTask = null' "$state_path" > "$tmp_file"
       mv "$tmp_file" "$state_path"
       # Run the service - it will pick up from where we left off
@@ -1945,7 +2035,7 @@ cmd_resume() {
       # Mark task as blocked/skipped in state
       update_state_task "$prd_path" "$current_task" "$last_worker" "skipped"
       # Clear currentTask
-      local tmp_file=$(mktemp)
+      local tmp_file=$(brigade_mktemp)
       jq '.currentTask = null' "$state_path" > "$tmp_file"
       mv "$tmp_file" "$state_path"
       echo -e "${YELLOW}Task $current_task skipped.${NC}"
@@ -1969,12 +2059,14 @@ cmd_ticket() {
 
   if [ ! -f "$prd_path" ]; then
     echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
+    echo -e "${GRAY}Check the path or run: ./brigade.sh plan \"your feature\"${NC}"
     exit 1
   fi
 
   local task=$(get_task_by_id "$prd_path" "$task_id")
   if [ -z "$task" ] || [ "$task" == "null" ]; then
     echo -e "${RED}Error: Task not found: $task_id${NC}"
+    echo -e "${GRAY}Available tasks: $(jq -r '.tasks[].id' "$prd_path" | tr '\n' ' ')${NC}"
     exit 1
   fi
 
@@ -2144,7 +2236,7 @@ cmd_ticket() {
 
       if [ -n "$TEST_CMD" ]; then
         echo -e "${CYAN}Running tests (timeout: ${TEST_TIMEOUT}s)...${NC}"
-        local test_output=$(mktemp)
+        local test_output=$(brigade_mktemp)
         local test_start=$(date +%s)
 
         # Use timeout if available (GNU coreutils), otherwise run directly
@@ -2349,13 +2441,16 @@ cmd_service() {
       echo -e "${GRAY}Using $prd_path${NC}"
     else
       echo -e "${RED}Error: No PRD specified and brigade/tasks/latest.json not found${NC}"
-      echo "Usage: ./brigade.sh service [prd.json]"
+      echo ""
+      echo -e "To create a PRD:  ${CYAN}./brigade.sh plan \"your feature description\"${NC}"
+      echo -e "Or specify one:   ${CYAN}./brigade.sh service path/to/prd.json${NC}"
       exit 1
     fi
   fi
 
   if [ ! -f "$prd_path" ]; then
     echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
+    echo -e "${GRAY}Check the path or run: ./brigade.sh plan \"your feature\"${NC}"
     exit 1
   fi
 
@@ -2775,7 +2870,7 @@ After generating, output:
 
 BEGIN PLANNING:"
 
-  local output_file=$(mktemp)
+  local output_file=$(brigade_mktemp)
   local start_time=$(date +%s)
 
   echo -e "${GRAY}Invoking Executive Chef (Director)...${NC}"
