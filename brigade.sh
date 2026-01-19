@@ -13,9 +13,42 @@ cleanup_temp_files() {
   done
 }
 
+# Track worker process PIDs for cleanup on interrupt
+BRIGADE_WORKER_PIDS=()
+
+cleanup_on_interrupt() {
+  echo ""
+  echo -e "${YELLOW}Interrupted - cleaning up...${NC}"
+
+  # Kill any tracked worker processes
+  for pid in "${BRIGADE_WORKER_PIDS[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      echo -e "${GRAY}Killing worker process $pid${NC}"
+      # Try graceful kill first, then force
+      kill "$pid" 2>/dev/null
+      sleep 0.5
+      kill -9 "$pid" 2>/dev/null
+    fi
+  done
+
+  # Also kill any child processes of this script
+  local children=$(jobs -p 2>/dev/null)
+  if [ -n "$children" ]; then
+    echo -e "${GRAY}Killing background jobs${NC}"
+    kill $children 2>/dev/null
+    sleep 0.5
+    kill -9 $children 2>/dev/null
+  fi
+
+  cleanup_temp_files
+  echo -e "${YELLOW}Cleanup complete. Run './brigade.sh resume' to continue.${NC}"
+  exit 130  # Standard exit code for Ctrl+C
+}
+
 # Only set trap when running as main script (not when sourced for testing)
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   trap cleanup_temp_files EXIT
+  trap cleanup_on_interrupt INT TERM
 fi
 
 # Wrapper for mktemp that tracks files for cleanup
@@ -200,6 +233,9 @@ run_with_spinner() {
   "$@" > "$output_file" 2>&1 &
   local pid=$!
 
+  # Track PID for cleanup on interrupt
+  BRIGADE_WORKER_PIDS+=("$pid")
+
   local start_time=$(date +%s)
 
   # Hide cursor
@@ -230,6 +266,9 @@ run_with_spinner() {
   # Get exit code
   wait $pid
   local exit_code=$?
+
+  # Remove PID from tracking (process completed)
+  BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
 
   # Show cursor
   tput cnorm 2>/dev/null || true
