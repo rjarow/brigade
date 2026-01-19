@@ -352,7 +352,8 @@ update_latest_symlink() {
 get_state_path() {
   local prd_path="$1"
   local prd_dir=$(dirname "$prd_path")
-  echo "$prd_dir/$STATE_FILE"
+  local prd_name=$(basename "$prd_path" .json)
+  echo "$prd_dir/${prd_name}.state.json"
 }
 
 # Find active PRD - looks for state files with currentTask set, or most recent PRD
@@ -360,25 +361,19 @@ find_active_prd() {
   # Check brigade/tasks first, then fallback paths (for running from inside brigade/)
   local search_dirs=("brigade/tasks" "tasks" "." "../brigade/tasks" "../tasks" "..")
 
-  # First, look for state files with an active currentTask
+  # First, look for per-PRD state files (*.state.json) with an active currentTask
   for dir in "${search_dirs[@]}"; do
     if [ -d "$dir" ]; then
-      for state_file in "$dir"/$STATE_FILE "$dir"/*/$STATE_FILE; do
+      for state_file in "$dir"/*.state.json; do
         if [ -f "$state_file" ] 2>/dev/null; then
           local current=$(jq -r '.currentTask // empty' "$state_file" 2>/dev/null)
           if [ -n "$current" ]; then
-            # Found active state, find PRD that contains this task ID
-            local state_dir=$(dirname "$state_file")
-            for prd in "$state_dir"/*.json; do
-              if [ -f "$prd" ] && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
-                # Check if this PRD contains the currentTask
-                local has_task=$(jq -r --arg id "$current" '.tasks[] | select(.id == $id) | .id' "$prd" 2>/dev/null)
-                if [ -n "$has_task" ]; then
-                  echo "$prd"
-                  return 0
-                fi
-              fi
-            done
+            # Derive PRD path from state file name (foo.state.json → foo.json)
+            local prd="${state_file%.state.json}.json"
+            if [ -f "$prd" ] && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
+              echo "$prd"
+              return 0
+            fi
           fi
         fi
       done
@@ -389,6 +384,8 @@ find_active_prd() {
   for dir in "${search_dirs[@]}"; do
     if [ -d "$dir" ]; then
       for prd in "$dir"/prd*.json "$dir"/*.json; do
+        # Skip state files
+        [[ "$prd" == *.state.json ]] && continue
         if [ -f "$prd" ] 2>/dev/null && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
           local pending=$(jq '[.tasks[] | select(.passes == false)] | length' "$prd" 2>/dev/null)
           if [ "$pending" -gt 0 ]; then
@@ -400,10 +397,12 @@ find_active_prd() {
     fi
   done
 
-  # Last resort: any PRD file
+  # Last resort: any PRD file (not state file)
   for dir in "${search_dirs[@]}"; do
     if [ -d "$dir" ]; then
       for prd in "$dir"/prd*.json "$dir"/*.json; do
+        # Skip state files
+        [[ "$prd" == *.state.json ]] && continue
         if [ -f "$prd" ] 2>/dev/null && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
           echo "$prd"
           return 0
