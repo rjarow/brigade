@@ -2883,10 +2883,14 @@ cmd_plan() {
   # Create tasks directory if it doesn't exist
   mkdir -p "brigade/tasks"
 
-  # Generate filename from description
-  local slug=$(echo "$description" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-40)
+  # Generate filename from description (truncate at word boundary, no trailing dash)
+  local slug=$(echo "$description" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-50 | sed 's/-$//')
   local prd_file="brigade/tasks/prd-${slug}.json"
   local today=$(date +%Y-%m-%d)
+
+  # Count existing PRDs for context
+  local existing_prds=$(ls brigade/tasks/prd-*.json 2>/dev/null | grep -v '\.state\.json' | wc -l | tr -d ' ')
+  local prd_number=$((existing_prds + 1))
 
   echo ""
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
@@ -2938,8 +2942,10 @@ BEGIN PLANNING:"
   local start_time=$(date +%s)
 
   echo -e "${GRAY}Invoking Executive Chef (Director)...${NC}"
+  echo -e "${GRAY}Running in quick mode (no interview). For full interview, use /brigade-generate-prd in Claude Code.${NC}"
   echo ""
 
+  # Run with -p for non-interactive quick planning
   if $EXECUTIVE_CMD --dangerously-skip-permissions -p "$planning_prompt" 2>&1 | tee "$output_file"; then
     echo ""
     echo -e "${GREEN}Planning completed${NC}"
@@ -2952,40 +2958,45 @@ BEGIN PLANNING:"
   local duration=$((end_time - start_time))
   echo -e "${GRAY}Duration: ${duration}s${NC}"
 
-  # Check if PRD was generated
+  # Check if PRD was generated - first try signal, then check file exists
+  local generated_file=""
   if grep -q "<prd_generated>" "$output_file" 2>/dev/null; then
-    local generated_file=$(sed -n 's/.*<prd_generated>\(.*\)<\/prd_generated>.*/\1/p' "$output_file" | head -1)
-
-    if [ -f "$generated_file" ]; then
-      # Update latest symlink
-      update_latest_symlink "$generated_file"
-
-      echo ""
-      echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
-      log_event "SUCCESS" "PRD GENERATED: $generated_file (${duration}s)"
-      echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
-      echo ""
-
-      # Show summary
-      local task_count=$(jq '.tasks | length' "$generated_file" 2>/dev/null || echo "?")
-      local junior_count=$(jq '[.tasks[] | select(.complexity == "junior")] | length' "$generated_file" 2>/dev/null || echo "?")
-      local senior_count=$(jq '[.tasks[] | select(.complexity == "senior")] | length' "$generated_file" 2>/dev/null || echo "?")
-
-      echo -e "Tasks: $task_count total (${CYAN}$senior_count senior${NC}, ${GREEN}$junior_count junior${NC})"
-      echo ""
-      echo -e "${BOLD}Next steps:${NC}"
-      echo -e "  1. Review the PRD: ${CYAN}cat $generated_file | jq${NC}"
-      echo -e "  2. Run service:    ${CYAN}./brigade.sh service${NC}"
-      echo ""
-    else
-      echo -e "${YELLOW}PRD file not found at expected location: $generated_file${NC}"
-    fi
+    generated_file=$(sed -n 's/.*<prd_generated>\(.*\)<\/prd_generated>.*/\1/p' "$output_file" | head -1)
   elif [ -f "$prd_file" ]; then
-    # PRD might have been created without the signal
-    update_latest_symlink "$prd_file"
+    generated_file="$prd_file"
+  fi
+
+  if [ -n "$generated_file" ] && [ -f "$generated_file" ]; then
+    # Update latest symlink
+    update_latest_symlink "$generated_file"
+
     echo ""
-    echo -e "${GREEN}PRD may have been generated: $prd_file${NC}"
-    echo -e "Run: ${CYAN}./brigade.sh service${NC}"
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+    log_event "SUCCESS" "PRD GENERATED: $generated_file (${duration}s)"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    # Show summary
+    local task_count=$(jq '.tasks | length' "$generated_file" 2>/dev/null || echo "?")
+    local junior_count=$(jq '[.tasks[] | select(.complexity == "junior")] | length' "$generated_file" 2>/dev/null || echo "?")
+    local senior_count=$(jq '[.tasks[] | select(.complexity == "senior")] | length' "$generated_file" 2>/dev/null || echo "?")
+
+    echo -e "Tasks: $task_count total (${CYAN}$senior_count senior${NC}, ${GREEN}$junior_count junior${NC})"
+    echo ""
+
+    # Show PRD count context
+    local total_prds=$(ls brigade/tasks/prd-*.json 2>/dev/null | grep -v '\.state\.json' | wc -l | tr -d ' ')
+
+    echo -e "${BOLD}Next steps:${NC}"
+    echo -e "  1. Review the PRD: ${CYAN}cat $generated_file | jq${NC}"
+    if [ "$total_prds" -gt 1 ]; then
+      echo -e "  2. Run this PRD:   ${CYAN}./brigade.sh service $generated_file${NC}"
+      echo -e "  3. Run all PRDs:   ${CYAN}./brigade.sh --auto-continue service brigade/tasks/prd-*.json${NC}"
+      echo ""
+      echo -e "${GRAY}This is PRD $total_prds of $total_prds in brigade/tasks/${NC}"
+    else
+      echo -e "  2. Run service:    ${CYAN}./brigade.sh service $generated_file${NC}"
+    fi
   else
     echo ""
     echo -e "${YELLOW}PRD generation may have failed. Check output above.${NC}"
