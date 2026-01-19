@@ -1611,10 +1611,13 @@ cmd_status() {
   local current_worker=""
   local absorptions_json="[]"
   local escalations_json="[]"
+  local worked_tasks_json="[]"
   if [ -f "$state_path" ]; then
     current_task_id=$(jq -r '.currentTask // empty' "$state_path")
     absorptions_json=$(jq -c '.absorptions // []' "$state_path")
     escalations_json=$(jq -c '.escalations // []' "$state_path")
+    # Get unique task IDs that have been worked on
+    worked_tasks_json=$(jq -c '[.taskHistory[].taskId] | unique' "$state_path")
     # Get current worker from last history entry
     if [ -n "$current_task_id" ]; then
       current_worker=$(jq -r --arg task "$current_task_id" \
@@ -1623,7 +1626,8 @@ cmd_status() {
   fi
 
   jq -r --arg current "$current_task_id" --arg current_worker "$current_worker" \
-      --argjson absorptions "$absorptions_json" --argjson escalations "$escalations_json" '.tasks[] |
+      --argjson absorptions "$absorptions_json" --argjson escalations "$escalations_json" \
+      --argjson worked "$worked_tasks_json" '.tasks[] |
     .id as $id |
     .complexity as $complexity |
     # Check if this task was absorbed
@@ -1639,12 +1643,16 @@ cmd_status() {
     ({"line": "Line Cook", "sous": "Sous Chef", "executive": "Exec Chef"}[$worker] // $worker) as $worker_name |
     # Escalation indicator
     (if $last_esc != null then " ⬆" else "" end) as $esc_indicator |
+    # Check if task has been worked on (has history)
+    ($worked | index($id) != null) as $has_history |
     if .passes == true and $absorption != null then
       "  \u001b[32m✓\u001b[0m \(.id): \(.title) \u001b[90m(absorbed by \($absorption.absorbedBy))\u001b[0m"
     elif .passes == true then
       "  \u001b[32m✓\u001b[0m \(.id): \(.title)"
     elif .id == $current then
       "  \u001b[33m→\u001b[0m \(.id): \(.title) \u001b[33m[\($current_worker | if . == "line" then "Line Cook" elif . == "sous" then "Sous Chef" elif . == "executive" then "Exec Chef" else . end)]\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
+    elif $has_history then
+      "  \u001b[36m◐\u001b[0m \(.id): \(.title) \u001b[90m[\($worker_name)] awaiting review\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
     else
       "  ○ \(.id): \(.title) \u001b[90m[\($worker_name)]\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
     end' "$prd_path"
