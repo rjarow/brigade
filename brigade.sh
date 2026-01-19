@@ -1659,6 +1659,15 @@ fire_ticket() {
   extract_backlog_from_output "$output_file" "$prd_path" "$task_id" "$worker"
 
   # Check for completion signal
+  # Debug: log output file details for parallel execution debugging
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] $display_id: output_file=$output_file" >&2
+    echo "[DEBUG] $display_id: file exists=$(test -f "$output_file" && echo yes || echo no)" >&2
+    echo "[DEBUG] $display_id: file size=$(wc -c < "$output_file" 2>/dev/null || echo 0)" >&2
+    echo "[DEBUG] $display_id: has COMPLETE=$(grep -c '<promise>COMPLETE</promise>' "$output_file" 2>/dev/null || echo 0)" >&2
+    echo "[DEBUG] $display_id: has ALREADY_DONE=$(grep -c '<promise>ALREADY_DONE</promise>' "$output_file" 2>/dev/null || echo 0)" >&2
+  fi
+
   if grep -q "<promise>COMPLETE</promise>" "$output_file" 2>/dev/null; then
     log_event "SUCCESS" "Task $display_id signaled COMPLETE (${duration}s)"
     rm -f "$output_file"
@@ -1680,6 +1689,11 @@ fire_ticket() {
     return 2
   else
     log_event "WARN" "Task $display_id - no completion signal, may need another iteration (${duration}s)"
+    # Debug: show last 20 lines of output when no signal found
+    if [ "${BRIGADE_DEBUG:-false}" == "true" ] && [ -f "$output_file" ]; then
+      echo "[DEBUG] $display_id: Last 20 lines of output:" >&2
+      tail -20 "$output_file" >&2
+    fi
     rm -f "$output_file"
     return 1
   fi
