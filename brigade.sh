@@ -58,6 +58,28 @@ brigade_mktemp() {
   echo "$tmp"
 }
 
+# Cross-platform file locking using mkdir (atomic on all POSIX systems)
+# Usage: acquire_lock <file_path>  /  release_lock <file_path>
+acquire_lock() {
+  local lock_path="$1.lock"
+  local max_wait=30  # seconds
+  local waited=0
+
+  while ! mkdir "$lock_path" 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if [ $waited -gt $((max_wait * 10)) ]; then
+      echo "Warning: Lock acquisition timeout for $lock_path, forcing" >&2
+      rmdir "$lock_path" 2>/dev/null
+    fi
+  done
+}
+
+release_lock() {
+  local lock_path="$1.lock"
+  rmdir "$lock_path" 2>/dev/null
+}
+
 # Cross-platform timeout execution (works on macOS and Linux)
 # Usage: run_with_timeout <seconds> <command> [args...]
 # Returns: command exit code, or 124 if timed out
@@ -679,17 +701,21 @@ mark_task_complete() {
   local prd_path="$1"
   local task_id="$2"
 
-  # Update PRD
+  # Update PRD (with file locking for parallel safety)
+  acquire_lock "$prd_path"
   local tmp_file=$(brigade_mktemp)
   jq "(.tasks[] | select(.id == \"$task_id\") | .passes) = true" "$prd_path" > "$tmp_file"
   mv "$tmp_file" "$prd_path"
+  release_lock "$prd_path"
 
-  # Clear currentTask from state file
+  # Clear currentTask from state file (with file locking)
   local state_path=$(get_state_path "$prd_path")
   if [ -f "$state_path" ]; then
+    acquire_lock "$state_path"
     tmp_file=$(brigade_mktemp)
     jq '.currentTask = null' "$state_path" > "$tmp_file"
     mv "$tmp_file" "$state_path"
+    release_lock "$state_path"
   fi
 
   echo -e "${GREEN}✓ Marked $task_id as complete${NC}"
@@ -861,9 +887,11 @@ update_last_start_time() {
 
   local state_path=$(get_state_path "$prd_path")
   if [ -f "$state_path" ]; then
+    acquire_lock "$state_path"
     local tmp_file=$(brigade_mktemp)
     jq --arg ts "$(date -Iseconds)" '.lastStartTime = $ts' "$state_path" > "$tmp_file"
     mv "$tmp_file" "$state_path"
+    release_lock "$state_path"
   fi
 }
 
@@ -878,12 +906,14 @@ update_state_task() {
   fi
 
   local state_path=$(get_state_path "$prd_path")
-  local tmp_file=$(brigade_mktemp)
 
+  acquire_lock "$state_path"
+  local tmp_file=$(brigade_mktemp)
   jq --arg task "$task_id" --arg worker "$worker" --arg status "$status" --arg ts "$(date -Iseconds)" \
     '.currentTask = $task | .taskHistory += [{"taskId": $task, "worker": $worker, "status": $status, "timestamp": $ts}]' \
     "$state_path" > "$tmp_file"
   mv "$tmp_file" "$state_path"
+  release_lock "$state_path"
 }
 
 record_escalation() {
@@ -898,12 +928,14 @@ record_escalation() {
   fi
 
   local state_path=$(get_state_path "$prd_path")
-  local tmp_file=$(brigade_mktemp)
 
+  acquire_lock "$state_path"
+  local tmp_file=$(brigade_mktemp)
   jq --arg task "$task_id" --arg from "$from_worker" --arg to "$to_worker" --arg reason "$reason" --arg ts "$(date -Iseconds)" \
     '.escalations += [{"taskId": $task, "from": $from, "to": $to, "reason": $reason, "timestamp": $ts}]' \
     "$state_path" > "$tmp_file"
   mv "$tmp_file" "$state_path"
+  release_lock "$state_path"
 }
 
 record_review() {
@@ -917,12 +949,14 @@ record_review() {
   fi
 
   local state_path=$(get_state_path "$prd_path")
-  local tmp_file=$(brigade_mktemp)
 
+  acquire_lock "$state_path"
+  local tmp_file=$(brigade_mktemp)
   jq --arg task "$task_id" --arg result "$result" --arg reason "$reason" --arg ts "$(date -Iseconds)" \
     '.reviews += [{"taskId": $task, "result": $result, "reason": $reason, "timestamp": $ts}]' \
     "$state_path" > "$tmp_file"
   mv "$tmp_file" "$state_path"
+  release_lock "$state_path"
 }
 
 record_absorption() {
@@ -935,12 +969,14 @@ record_absorption() {
   fi
 
   local state_path=$(get_state_path "$prd_path")
-  local tmp_file=$(brigade_mktemp)
 
+  acquire_lock "$state_path"
+  local tmp_file=$(brigade_mktemp)
   jq --arg task "$task_id" --arg absorbed_by "$absorbed_by" --arg ts "$(date -Iseconds)" \
     '.absorptions += [{"taskId": $task, "absorbedBy": $absorbed_by, "timestamp": $ts}]' \
     "$state_path" > "$tmp_file"
   mv "$tmp_file" "$state_path"
+  release_lock "$state_path"
 }
 
 record_phase_review() {
@@ -955,19 +991,21 @@ record_phase_review() {
   fi
 
   local state_path=$(get_state_path "$prd_path")
-  local tmp_file=$(brigade_mktemp)
 
-  # Extract the phase_review content from output
+  # Extract the phase_review content from output (outside lock to minimize lock time)
   local review_content=""
   if [ -f "$output_file" ]; then
     review_content=$(sed -n '/<phase_review>/,/<\/phase_review>/p' "$output_file" 2>/dev/null | head -50)
   fi
 
+  acquire_lock "$state_path"
+  local tmp_file=$(brigade_mktemp)
   jq --arg completed "$completed_count" --arg total "$total_count" \
      --arg status "$status" --arg content "$review_content" --arg ts "$(date -Iseconds)" \
     '.phaseReviews += [{"completedTasks": ($completed | tonumber), "totalTasks": ($total | tonumber), "status": $status, "content": $content, "timestamp": $ts}]' \
     "$state_path" > "$tmp_file"
   mv "$tmp_file" "$state_path"
+  release_lock "$state_path"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
