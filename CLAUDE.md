@@ -246,6 +246,28 @@ Key config options (in `brigade.config`):
 
 **Note:** The `verification` field is optional. When present, commands are run after worker signals COMPLETE - all must pass (exit 0) for task to be marked done. See ROADMAP.md for implementation status.
 
+## Debugging
+
+For parallel execution issues or tracking down bugs:
+
+```bash
+# Enable debug output (lock tracing, signal detection, completion flow)
+BRIGADE_DEBUG=true ./brigade.sh service prd.json
+
+# Force sequential execution (disable parallel)
+./brigade.sh --sequential service prd.json
+
+# Check worker logs
+ls -la brigade/logs/
+```
+
+**Exit codes (30-39 range to avoid collision with tool codes like jq):**
+- 0 = COMPLETE
+- 1 = needs iteration
+- 32 = BLOCKED
+- 33 = ALREADY_DONE
+- 34 = ABSORBED_BY
+
 ## Worker Communication Signals
 
 Workers signal status via XML tags in their output:
@@ -253,9 +275,9 @@ Workers signal status via XML tags in their output:
 | Signal | Return Code | Meaning |
 |--------|-------------|---------|
 | `<promise>COMPLETE</promise>` | 0 | Task completed successfully |
-| `<promise>ALREADY_DONE</promise>` | 3 | Prior task already did this work |
-| `<promise>ABSORBED_BY:US-XXX</promise>` | 4 | Work absorbed by specific prior task |
-| `<promise>BLOCKED</promise>` | 2 | Cannot proceed, needs escalation |
+| `<promise>ALREADY_DONE</promise>` | 33 | Prior task already did this work |
+| `<promise>ABSORBED_BY:US-XXX</promise>` | 34 | Work absorbed by specific prior task |
+| `<promise>BLOCKED</promise>` | 32 | Cannot proceed, needs escalation |
 | `<learning>...</learning>` | - | Share knowledge with team |
 | `<backlog>...</backlog>` | - | Log out-of-scope discovery for future planning |
 
