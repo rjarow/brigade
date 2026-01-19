@@ -579,6 +579,33 @@ record_absorption() {
   mv "$tmp_file" "$state_path"
 }
 
+record_phase_review() {
+  local prd_path="$1"
+  local completed_count="$2"
+  local total_count="$3"
+  local status="$4"
+  local output_file="$5"
+
+  if [ "$CONTEXT_ISOLATION" != "true" ]; then
+    return
+  fi
+
+  local state_path=$(get_state_path "$prd_path")
+  local tmp_file=$(mktemp)
+
+  # Extract the phase_review content from output
+  local review_content=""
+  if [ -f "$output_file" ]; then
+    review_content=$(sed -n '/<phase_review>/,/<\/phase_review>/p' "$output_file" 2>/dev/null | head -50)
+  fi
+
+  jq --arg completed "$completed_count" --arg total "$total_count" \
+     --arg status "$status" --arg content "$review_content" --arg ts "$(date -Iseconds)" \
+    '.phaseReviews += [{"completedTasks": ($completed | tonumber), "totalTasks": ($total | tonumber), "status": $status, "content": $content, "timestamp": $ts}]' \
+    "$state_path" > "$tmp_file"
+  mv "$tmp_file" "$state_path"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # KNOWLEDGE SHARING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1344,6 +1371,9 @@ RECOMMENDATIONS: <any suggestions, or 'none'>
   # Extract status (macOS compatible - no -P flag)
   local status=$(sed -n 's/.*STATUS: *\([a-z_]*\).*/\1/p' "$output_file" 2>/dev/null | head -1)
   [ -z "$status" ] && status="unknown"
+
+  # Record phase review to state file
+  record_phase_review "$prd_path" "$completed" "$total" "$status" "$output_file"
 
   case "$status" in
     "on_track")
