@@ -132,6 +132,21 @@ ESCALATION_TO_EXEC=true
 ESCALATION_TO_EXEC_AFTER=5
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TASK TIMEOUTS (Per-Complexity)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Auto-escalate tasks that exceed timeout (independent of TEST_TIMEOUT)
+# Set to 0 to disable timeout for that complexity level
+
+# Junior/Line Cook tasks - simpler work, should complete faster
+TASK_TIMEOUT_JUNIOR=900    # 15 minutes
+
+# Senior/Sous Chef tasks - more complex, need more time
+TASK_TIMEOUT_SENIOR=1800   # 30 minutes
+
+# Executive Chef tasks - rare escalations, allow more time
+TASK_TIMEOUT_EXECUTIVE=3600  # 60 minutes
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # EXECUTIVE REVIEW
 # ═══════════════════════════════════════════════════════════════════════════════
 

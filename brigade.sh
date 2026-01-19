@@ -45,6 +45,11 @@ ESCALATION_AFTER=3           # Line Cook → Sous Chef after N iterations
 ESCALATION_TO_EXEC=true      # Allow Sous Chef → Executive Chef (rare)
 ESCALATION_TO_EXEC_AFTER=5   # Sous Chef → Executive Chef after N iterations
 
+# Task timeout defaults (per-complexity, in seconds)
+TASK_TIMEOUT_JUNIOR=900      # 15 minutes for junior/line cook tasks
+TASK_TIMEOUT_SENIOR=1800     # 30 minutes for senior/sous chef tasks
+TASK_TIMEOUT_EXECUTIVE=3600  # 60 minutes for executive tasks (rare)
+
 # Executive review defaults
 REVIEW_ENABLED=true
 REVIEW_JUNIOR_ONLY=true
@@ -132,7 +137,7 @@ print_usage() {
   echo "  service [prd.json]         Run full service (defaults to brigade/tasks/latest.json)"
   echo "  resume [prd.json] [action] Resume after interruption (action: retry|skip)"
   echo "  ticket <prd.json> <id>     Run single ticket"
-  echo "  status [prd.json]          Show kitchen status (auto-detects active PRD)"
+  echo "  status [--all] [prd.json]  Show kitchen status (auto-detects active PRD)"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
   echo "  validate <prd.json>        Validate PRD structure and dependencies"
   echo "  opencode-models            List available OpenCode models"
@@ -406,13 +411,30 @@ init_state() {
 {
   "sessionId": "$(date +%s)-$$",
   "startedAt": "$(date -Iseconds)",
+  "lastStartTime": "$(date -Iseconds)",
   "currentTask": null,
   "taskHistory": [],
   "escalations": [],
-  "reviews": []
+  "reviews": [],
+  "absorptions": []
 }
 EOF
     echo -e "${GRAY}Initialized state: $state_path${NC}"
+  fi
+}
+
+update_last_start_time() {
+  local prd_path="$1"
+
+  if [ "$CONTEXT_ISOLATION" != "true" ]; then
+    return
+  fi
+
+  local state_path=$(get_state_path "$prd_path")
+  if [ -f "$state_path" ]; then
+    local tmp_file=$(mktemp)
+    jq --arg ts "$(date -Iseconds)" '.lastStartTime = $ts' "$state_path" > "$tmp_file"
+    mv "$tmp_file" "$state_path"
   fi
 }
 
@@ -748,6 +770,25 @@ get_worker_name() {
       ;;
     "executive")
       echo "Executive Chef"
+      ;;
+  esac
+}
+
+get_worker_timeout() {
+  local worker="$1"
+
+  case "$worker" in
+    "line")
+      echo "$TASK_TIMEOUT_JUNIOR"
+      ;;
+    "sous")
+      echo "$TASK_TIMEOUT_SENIOR"
+      ;;
+    "executive")
+      echo "$TASK_TIMEOUT_EXECUTIVE"
+      ;;
+    *)
+      echo "$TASK_TIMEOUT_SENIOR"  # Default to senior timeout
       ;;
   esac
 }
@@ -1412,7 +1453,22 @@ apply_remediation() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 cmd_status() {
-  local prd_path="$1"
+  local show_all_escalations=false
+  local prd_path=""
+
+  # Parse arguments
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all)
+        show_all_escalations=true
+        shift
+        ;;
+      *)
+        prd_path="$1"
+        shift
+        ;;
+    esac
+  done
 
   # Auto-detect PRD if not provided
   if [ -z "$prd_path" ]; then
@@ -1522,38 +1578,76 @@ cmd_status() {
 
   # Session stats
   if [ -f "$state_path" ]; then
-    local escalation_count=$(jq '.escalations | length' "$state_path")
     local review_count=$(jq '.reviews | length' "$state_path")
     local review_pass=$(jq '[.reviews[] | select(.result == "PASS")] | length' "$state_path")
     local review_fail=$(jq '[.reviews[] | select(.result == "FAIL")] | length' "$state_path")
     local session_start=$(jq -r '.startedAt // empty' "$state_path")
+    local last_start=$(jq -r '.lastStartTime // empty' "$state_path")
 
     echo ""
     echo -e "${BOLD}Session Stats:${NC}"
 
-    # Session duration
+    # Time tracking - show both total and current run if lastStartTime exists
+    local now_epoch=$(date +%s)
     if [ -n "$session_start" ]; then
       local start_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${session_start%%+*}" "+%s" 2>/dev/null || \
                          date -d "$session_start" "+%s" 2>/dev/null || echo "")
       if [ -n "$start_epoch" ]; then
-        local now_epoch=$(date +%s)
-        local elapsed=$((now_epoch - start_epoch))
-        local hours=$((elapsed / 3600))
-        local mins=$(((elapsed % 3600) / 60))
-        echo -e "  Session time:     ${hours}h ${mins}m"
+        local total_elapsed=$((now_epoch - start_epoch))
+        local total_hours=$((total_elapsed / 3600))
+        local total_mins=$(((total_elapsed % 3600) / 60))
+
+        # If we have lastStartTime, show both total and current run
+        if [ -n "$last_start" ]; then
+          local last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${last_start%%+*}" "+%s" 2>/dev/null || \
+                            date -d "$last_start" "+%s" 2>/dev/null || echo "")
+          if [ -n "$last_epoch" ]; then
+            local run_elapsed=$((now_epoch - last_epoch))
+            local run_hours=$((run_elapsed / 3600))
+            local run_mins=$(((run_elapsed % 3600) / 60))
+            echo -e "  Total time:       ${total_hours}h ${total_mins}m"
+            echo -e "  Current run:      ${run_hours}h ${run_mins}m"
+          else
+            echo -e "  Total time:       ${total_hours}h ${total_mins}m"
+          fi
+        else
+          echo -e "  Total time:       ${total_hours}h ${total_mins}m"
+        fi
       fi
     fi
 
     local absorption_count=$(jq '.absorptions | length' "$state_path")
 
-    echo -e "  Escalations:      $escalation_count"
+    # Get task IDs from current PRD for filtering
+    local prd_task_ids=$(jq -r '[.tasks[].id] | @json' "$prd_path")
+
+    # Count escalations - filter by current PRD unless --all
+    local escalation_count
+    local prd_escalation_count
+    local total_escalation_count=$(jq '.escalations | length' "$state_path")
+    if [ "$show_all_escalations" = "true" ]; then
+      escalation_count=$total_escalation_count
+    else
+      prd_escalation_count=$(jq --argjson ids "$prd_task_ids" \
+        '[.escalations[] | select(.taskId as $tid | $ids | index($tid))] | length' "$state_path")
+      escalation_count=$prd_escalation_count
+    fi
+
+    echo -e "  Escalations:      $escalation_count$([ "$show_all_escalations" = "false" ] && [ "$total_escalation_count" != "$prd_escalation_count" ] && echo " (${total_escalation_count} total, use --all)")"
     echo -e "  Absorptions:      $absorption_count"
     echo -e "  Reviews:          $review_count (${GREEN}$review_pass passed${NC}, ${RED}$review_fail failed${NC})"
 
+    # Show escalation history - filter by current PRD unless --all
     if [ "$escalation_count" -gt 0 ]; then
       echo ""
-      echo -e "${BOLD}Escalation History:${NC}"
-      jq -r '.escalations[] | "  \(.taskId): \(.from) → \(.to) (\(.reason))"' "$state_path"
+      if [ "$show_all_escalations" = "true" ]; then
+        echo -e "${BOLD}Escalation History (all):${NC}"
+        jq -r '.escalations[] | "  \(.taskId): \(.from) → \(.to) (\(.reason))"' "$state_path"
+      else
+        echo -e "${BOLD}Escalation History:${NC}"
+        jq -r --argjson ids "$prd_task_ids" \
+          '.escalations[] | select(.taskId as $tid | $ids | index($tid)) | "  \(.taskId): \(.from) → \(.to) (\(.reason))"' "$state_path"
+      fi
     fi
 
     if [ "$absorption_count" -gt 0 ]; then
@@ -1706,6 +1800,7 @@ cmd_ticket() {
   # Initialize state if context isolation is enabled
   if [ "$CONTEXT_ISOLATION" == "true" ]; then
     init_state "$prd_path"
+    update_last_start_time "$prd_path"
   fi
 
   # Route and fire
@@ -1715,6 +1810,9 @@ cmd_ticket() {
   local iteration_in_tier=0
 
   update_state_task "$prd_path" "$task_id" "$worker" "started"
+
+  # Track task start time for timeout checking
+  local task_start_epoch=$(date +%s)
 
   # Pre-flight check: if tests already pass, task may be done
   if [ -n "$TEST_CMD" ]; then
@@ -1770,6 +1868,51 @@ cmd_ticket() {
       worker="executive"
       escalation_tier=2
       iteration_in_tier=0
+    fi
+
+    # Check for task timeout (escalate if task is taking too long)
+    local worker_timeout=$(get_worker_timeout "$worker")
+    if [ "$worker_timeout" -gt 0 ]; then
+      local now_epoch=$(date +%s)
+      local task_elapsed=$((now_epoch - task_start_epoch))
+
+      if [ "$task_elapsed" -ge "$worker_timeout" ]; then
+        local elapsed_mins=$((task_elapsed / 60))
+        local timeout_mins=$((worker_timeout / 60))
+
+        # Escalate if not already at executive tier
+        if [ "$worker" == "line" ] && [ "$escalation_tier" -eq 0 ]; then
+          echo ""
+          echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
+          log_event "ESCALATE" "ESCALATING $task_id: Line Cook → Sous Chef (timeout)"
+          echo -e "${YELLOW}║  Reason: Task timeout (${elapsed_mins}m > ${timeout_mins}m limit)          ║${NC}"
+          echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
+          echo ""
+
+          record_escalation "$prd_path" "$task_id" "line" "sous" "Task timeout (${elapsed_mins}m exceeded ${timeout_mins}m limit)"
+          worker="sous"
+          escalation_tier=1
+          iteration_in_tier=0
+          task_start_epoch=$(date +%s)  # Reset timer for new worker tier
+        elif [ "$worker" == "sous" ] && [ "$ESCALATION_TO_EXEC" == "true" ] && [ "$escalation_tier" -lt 2 ]; then
+          echo ""
+          echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
+          log_event "ESCALATE" "ESCALATING $task_id: Sous Chef → Executive Chef (timeout)"
+          echo -e "${RED}║  Reason: Task timeout (${elapsed_mins}m > ${timeout_mins}m limit)          ║${NC}"
+          echo -e "${RED}║  This is unusual - Executive Chef stepping in             ║${NC}"
+          echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
+          echo ""
+
+          record_escalation "$prd_path" "$task_id" "sous" "executive" "Task timeout (${elapsed_mins}m exceeded ${timeout_mins}m limit)"
+          worker="executive"
+          escalation_tier=2
+          iteration_in_tier=0
+          task_start_epoch=$(date +%s)  # Reset timer for new worker tier
+        elif [ "$worker" == "executive" ]; then
+          echo -e "${RED}⚠ Executive Chef timeout (${elapsed_mins}m > ${timeout_mins}m) - no higher tier to escalate to${NC}"
+          log_event "WARN" "Task $task_id: Executive Chef timeout but no higher tier available"
+        fi
+      fi
     fi
 
     echo -e "${GRAY}Iteration $i/$MAX_ITERATIONS (tier: $iteration_in_tier, worker: $(get_worker_name "$worker"))${NC}"
@@ -2156,6 +2299,7 @@ $task_id"
   # Initialize state for context isolation
   if [ "$CONTEXT_ISOLATION" == "true" ]; then
     init_state "$prd_path"
+    update_last_start_time "$prd_path"
   fi
 
   # Initialize knowledge sharing
