@@ -58,6 +58,50 @@ brigade_mktemp() {
   echo "$tmp"
 }
 
+# Cross-platform timeout execution (works on macOS and Linux)
+# Usage: run_with_timeout <seconds> <command> [args...]
+# Returns: command exit code, or 124 if timed out
+run_with_timeout() {
+  local timeout_secs="$1"
+  shift
+
+  # Try GNU timeout first (Linux, or macOS with coreutils)
+  if command -v timeout &>/dev/null; then
+    timeout --kill-after=30 "$timeout_secs" "$@"
+    return $?
+  fi
+
+  # Try gtimeout (macOS with coreutils: brew install coreutils)
+  if command -v gtimeout &>/dev/null; then
+    gtimeout --kill-after=30 "$timeout_secs" "$@"
+    return $?
+  fi
+
+  # Fallback: background process with manual timeout
+  "$@" &
+  local pid=$!
+  BRIGADE_WORKER_PIDS+=("$pid")
+
+  local elapsed=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$timeout_secs" ]; then
+      echo -e "${RED}Timeout reached, killing worker...${NC}" >&2
+      kill "$pid" 2>/dev/null
+      sleep 1
+      kill -9 "$pid" 2>/dev/null
+      BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
+      return 124  # Standard timeout exit code
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  wait "$pid"
+  local exit_code=$?
+  BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
+  return $exit_code
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/brigade.config"
 KITCHEN_DIR="$SCRIPT_DIR/kitchen"
@@ -1245,6 +1289,7 @@ fire_ticket() {
   local prd_path="$1"
   local task_id="$2"
   local worker="$3"
+  local worker_timeout="${4:-0}"  # Timeout in seconds, 0 = no timeout
 
   local worker_name=$(get_worker_name "$worker")
   local worker_cmd=$(get_worker_cmd "$worker")
@@ -1272,6 +1317,26 @@ fire_ticket() {
   # Execute worker based on agent type
   local start_time=$(date +%s)
 
+  # Show timeout info if set
+  if [ "$worker_timeout" -gt 0 ]; then
+    local timeout_mins=$((worker_timeout / 60))
+    echo -e "${GRAY}Worker timeout: ${timeout_mins}m${NC}"
+  fi
+
+  # Helper to handle exit code and timeout
+  handle_worker_exit() {
+    local exit_code=$1
+    if [ "$exit_code" -eq 124 ]; then
+      echo -e "${RED}Worker TIMED OUT after $((worker_timeout / 60))m${NC}"
+      echo "<promise>BLOCKED</promise>" >> "$output_file"
+      echo "Worker process timed out and was killed." >> "$output_file"
+    elif [ "$exit_code" -eq 0 ]; then
+      echo -e "${GREEN}Worker completed${NC}"
+    else
+      echo -e "${YELLOW}Worker exited (code: $exit_code)${NC}"
+    fi
+  }
+
   case "$worker_agent" in
     "claude")
       # Claude CLI: claude --dangerously-skip-permissions -p "prompt"
@@ -1280,16 +1345,19 @@ fire_ticket() {
         claude_flags="--dangerously-skip-permissions"
       fi
       if [ "$QUIET_WORKERS" == "true" ]; then
-        if run_with_spinner "$task_id: $task_title" "$output_file" $worker_cmd $claude_flags -p "$full_prompt"; then
-          echo -e "${GREEN}Worker completed${NC}"
+        if [ "$worker_timeout" -gt 0 ]; then
+          run_with_timeout "$worker_timeout" $worker_cmd $claude_flags -p "$full_prompt" > "$output_file" 2>&1
         else
-          echo -e "${YELLOW}Worker exited${NC}"
+          $worker_cmd $claude_flags -p "$full_prompt" > "$output_file" 2>&1
         fi
+        handle_worker_exit $?
       else
-        if $worker_cmd $claude_flags -p "$full_prompt" 2>&1 | tee "$output_file"; then
-          echo -e "${GREEN}Worker completed${NC}"
+        if [ "$worker_timeout" -gt 0 ]; then
+          run_with_timeout "$worker_timeout" $worker_cmd $claude_flags -p "$full_prompt" 2>&1 | tee "$output_file"
+          handle_worker_exit ${PIPESTATUS[0]}
         else
-          echo -e "${YELLOW}Worker exited${NC}"
+          $worker_cmd $claude_flags -p "$full_prompt" 2>&1 | tee "$output_file"
+          handle_worker_exit ${PIPESTATUS[0]}
         fi
       fi
       ;;
@@ -1305,16 +1373,19 @@ fire_ticket() {
         opencode_flags="$opencode_flags --attach $OPENCODE_SERVER"
       fi
       if [ "$QUIET_WORKERS" == "true" ]; then
-        if run_with_spinner "$task_id: $task_title" "$output_file" $worker_cmd $opencode_flags "$full_prompt"; then
-          echo -e "${GREEN}Worker completed${NC}"
+        if [ "$worker_timeout" -gt 0 ]; then
+          run_with_timeout "$worker_timeout" $worker_cmd $opencode_flags "$full_prompt" > "$output_file" 2>&1
         else
-          echo -e "${YELLOW}Worker exited${NC}"
+          $worker_cmd $opencode_flags "$full_prompt" > "$output_file" 2>&1
         fi
+        handle_worker_exit $?
       else
-        if $worker_cmd $opencode_flags "$full_prompt" 2>&1 | tee "$output_file"; then
-          echo -e "${GREEN}Worker completed${NC}"
+        if [ "$worker_timeout" -gt 0 ]; then
+          run_with_timeout "$worker_timeout" $worker_cmd $opencode_flags "$full_prompt" 2>&1 | tee "$output_file"
+          handle_worker_exit ${PIPESTATUS[0]}
         else
-          echo -e "${YELLOW}Worker exited${NC}"
+          $worker_cmd $opencode_flags "$full_prompt" 2>&1 | tee "$output_file"
+          handle_worker_exit ${PIPESTATUS[0]}
         fi
       fi
       ;;
@@ -2415,7 +2486,10 @@ cmd_ticket() {
     # Track each iteration attempt
     update_state_task "$prd_path" "$task_id" "$worker" "iteration_$i"
 
-    fire_ticket "$prd_path" "$task_id" "$worker"
+    # Get timeout for current worker tier
+    local worker_timeout=$(get_worker_timeout "$worker")
+
+    fire_ticket "$prd_path" "$task_id" "$worker" "$worker_timeout"
     local result=$?
 
     if [ $result -eq 0 ]; then
