@@ -367,12 +367,16 @@ find_active_prd() {
         if [ -f "$state_file" ] 2>/dev/null; then
           local current=$(jq -r '.currentTask // empty' "$state_file" 2>/dev/null)
           if [ -n "$current" ]; then
-            # Found active state, find corresponding PRD
+            # Found active state, find PRD that contains this task ID
             local state_dir=$(dirname "$state_file")
             for prd in "$state_dir"/*.json; do
               if [ -f "$prd" ] && jq -e '.tasks' "$prd" >/dev/null 2>&1; then
-                echo "$prd"
-                return 0
+                # Check if this PRD contains the currentTask
+                local has_task=$(jq -r --arg id "$current" '.tasks[] | select(.id == $id) | .id' "$prd" 2>/dev/null)
+                if [ -n "$has_task" ]; then
+                  echo "$prd"
+                  return 0
+                fi
               fi
             done
           fi
