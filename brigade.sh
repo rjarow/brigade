@@ -969,27 +969,43 @@ fire_ticket() {
       if [ "$CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS" == "true" ]; then
         claude_flags="--dangerously-skip-permissions"
       fi
-      if $worker_cmd $claude_flags -p "$full_prompt" 2>&1 | tee "$output_file"; then
-        echo -e "${GREEN}Worker completed${NC}"
+      if [ "$QUIET_WORKERS" == "true" ]; then
+        if $worker_cmd $claude_flags -p "$full_prompt" > "$output_file" 2>&1; then
+          echo -e "${GREEN}Worker completed${NC}"
+        else
+          echo -e "${YELLOW}Worker exited${NC}"
+        fi
       else
-        echo -e "${YELLOW}Worker exited${NC}"
+        if $worker_cmd $claude_flags -p "$full_prompt" 2>&1 | tee "$output_file"; then
+          echo -e "${GREEN}Worker completed${NC}"
+        else
+          echo -e "${YELLOW}Worker exited${NC}"
+        fi
       fi
       ;;
 
     "opencode")
       # OpenCode CLI: opencode run [options] "prompt"
       # See: https://opencode.ai/docs/cli/
-      local opencode_flags="--log-level ERROR"
+      local opencode_flags="--log-level ERROR --no-print-logs"
       if [ -n "$OPENCODE_MODEL" ]; then
         opencode_flags="$opencode_flags --model $OPENCODE_MODEL"
       fi
       if [ -n "$OPENCODE_SERVER" ]; then
         opencode_flags="$opencode_flags --attach $OPENCODE_SERVER"
       fi
-      if $worker_cmd $opencode_flags "$full_prompt" 2>&1 | tee "$output_file"; then
-        echo -e "${GREEN}Worker completed${NC}"
+      if [ "$QUIET_WORKERS" == "true" ]; then
+        if $worker_cmd $opencode_flags "$full_prompt" > "$output_file" 2>&1; then
+          echo -e "${GREEN}Worker completed${NC}"
+        else
+          echo -e "${YELLOW}Worker exited${NC}"
+        fi
       else
-        echo -e "${YELLOW}Worker exited${NC}"
+        if $worker_cmd $opencode_flags "$full_prompt" 2>&1 | tee "$output_file"; then
+          echo -e "${GREEN}Worker completed${NC}"
+        else
+          echo -e "${YELLOW}Worker exited${NC}"
+        fi
       fi
       ;;
 
@@ -1019,10 +1035,18 @@ fire_ticket() {
 
     *)
       # Generic fallback - pipe prompt to command
-      if echo "$full_prompt" | $worker_cmd 2>&1 | tee "$output_file"; then
-        echo -e "${GREEN}Worker completed${NC}"
+      if [ "$QUIET_WORKERS" == "true" ]; then
+        if echo "$full_prompt" | $worker_cmd > "$output_file" 2>&1; then
+          echo -e "${GREEN}Worker completed${NC}"
+        else
+          echo -e "${YELLOW}Worker exited${NC}"
+        fi
       else
-        echo -e "${YELLOW}Worker exited${NC}"
+        if echo "$full_prompt" | $worker_cmd 2>&1 | tee "$output_file"; then
+          echo -e "${GREEN}Worker completed${NC}"
+        else
+          echo -e "${YELLOW}Worker exited${NC}"
+        fi
       fi
       ;;
   esac

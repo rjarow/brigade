@@ -89,6 +89,14 @@ CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=true  # Auto-approve in non-interactive mode
 # OLLAMA_HOST="http://localhost:11434"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# OUTPUT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Suppress worker conversation output (still captured to file for review)
+# Useful for cleaner logs when running unattended
+QUIET_WORKERS=false
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT
 # ═══════════════════════════════════════════════════════════════════════════════
 
