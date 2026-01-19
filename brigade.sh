@@ -2474,30 +2474,53 @@ $task_id"
   log_event "SUCCESS" "SERVICE COMPLETE: $feature_name - $completed tasks in ${hours}h ${minutes}m"
 
   # Merge feature branch to default branch
+  local merge_status="none"  # none, success, failed, pushed
+  local default_branch=""
   if [ -n "$branch_name" ]; then
     local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
     if [ "$current_branch" == "$branch_name" ]; then
-      local default_branch=$(get_default_branch)
+      default_branch=$(get_default_branch)
       echo -e "${CYAN}Merging $branch_name to $default_branch...${NC}"
       if git checkout "$default_branch" && git merge "$branch_name" --no-edit; then
         echo -e "${GREEN}✓ Merged $branch_name to $default_branch${NC}"
-        git push origin "$default_branch" 2>/dev/null && echo -e "${GREEN}✓ Pushed to origin/$default_branch${NC}"
+        merge_status="success"
+        if git push origin "$default_branch" 2>/dev/null; then
+          echo -e "${GREEN}✓ Pushed to origin/$default_branch${NC}"
+          merge_status="pushed"
+        fi
         git checkout "$branch_name"  # Return to feature branch
       else
         echo -e "${RED}Merge failed - resolve conflicts manually${NC}"
+        merge_status="failed"
         git checkout "$branch_name"
       fi
       echo ""
     fi
   fi
 
-  # Show next steps
+  # Show next steps based on what happened
   echo -e "${BOLD}Next Steps:${NC}"
   echo -e "  • Run ${CYAN}./brigade.sh status${NC} to review detailed stats"
   echo -e "  • Check ${CYAN}git log --oneline -10${NC} to review commits"
-  if [ -n "$branch_name" ]; then
-    echo -e "  • Create PR or merge to main when ready"
-  fi
+
+  case "$merge_status" in
+    "pushed")
+      echo -e "  • ${GREEN}✓ Already merged and pushed to $default_branch${NC}"
+      echo -e "  • Delete feature branch if no longer needed: ${CYAN}git branch -d $branch_name${NC}"
+      ;;
+    "success")
+      echo -e "  • ${GREEN}✓ Merged to $default_branch${NC} - push when ready: ${CYAN}git push origin $default_branch${NC}"
+      ;;
+    "failed")
+      echo -e "  • ${RED}⚠ Merge had conflicts${NC} - resolve and retry: ${CYAN}git checkout $default_branch && git merge $branch_name${NC}"
+      ;;
+    *)
+      if [ -n "$branch_name" ]; then
+        echo -e "  • Create PR or merge to main when ready"
+      fi
+      ;;
+  esac
+
   echo -e "  • For chained PRDs, use ${CYAN}./brigade.sh --auto-continue service prd-*.json${NC}"
   echo ""
 }
