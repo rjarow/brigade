@@ -49,6 +49,18 @@ First, check if this is a **greenfield** (new/empty) or **existing** project:
 ### Phase 2: Interview (REQUIRED - DO THIS THOROUGHLY)
 This is your ONE chance to get context. Ask smart questions:
 
+#### Walkaway Mode Check (ASK FIRST)
+Before diving into feature details, ask: "Will this run unattended/overnight (walkaway mode), or will you be monitoring it?"
+
+**If walkaway mode:**
+- Use extended thinking for all major decisions
+- Interview MORE thoroughly than normal - you won't get another chance
+- Ask about edge cases, error handling preferences, fallback behaviors
+- Make acceptance criteria extremely explicit and unambiguous
+- Add more verification commands to catch issues early
+- Include constraints section with common pitfalls for the language/framework
+- Consider: "What should happen if X fails?" for each integration point
+
 #### For Greenfield Projects (CRITICAL - ASK ALL OF THESE):
 1. **Tech stack**: "What language/framework should we use? (e.g., Node/Express, Go, Python/FastAPI, Rust)"
 2. **Project type**: "Is this a CLI tool, REST API, web app, library, or something else?"
@@ -61,6 +73,17 @@ This is your ONE chance to get context. Ask smart questions:
 2. **Requirements**: "Any must-haves? Security requirements? Performance targets?"
 3. **Preferences**: "Any preferred approaches or patterns to follow/avoid?"
 4. **Context**: "Is this replacing something? Integrating with existing systems?"
+
+#### Additional Questions for Walkaway Mode:
+When the user confirms walkaway/unattended execution, ask these additional questions:
+
+1. **Error handling**: "If [integration point] fails, should we retry, skip, or abort?"
+2. **Ambiguity resolution**: "For [ambiguous requirement], I see two approaches: A or B. Which do you prefer?"
+3. **External dependencies**: "This requires [external service/API]. Are credentials configured? Any rate limits I should know about?"
+4. **Merge behavior**: "After completion, should I auto-merge to main? Auto-push? Or leave for your review?"
+5. **Fallback preferences**: "If a task gets stuck after multiple attempts, prefer retry-all or skip-and-continue?"
+
+**Think deeply** about what could go wrong and ask about it now. In walkaway mode, there's no one to ask later.
 
 #### Configuration Check (ALWAYS DO THIS):
 Before generating the PRD, check `brigade/brigade.config` and inform the owner about worker setup:
@@ -164,6 +187,10 @@ Add "Tests written for [specific functionality]" to acceptance criteria:
     "Test non-existent user returns 401",
     "Test malformed email returns 400"
   ],
+  "verification": [
+    "grep -q 'describe.*login' tests/auth.test.ts",
+    "npm test -- --grep 'login' --exit"
+  ],
   "dependsOn": ["US-003"],
   "complexity": "junior"
 }
@@ -209,6 +236,7 @@ Generate a JSON PRD in this format:
   "featureName": "Feature Name",
   "branchName": "feature/kebab-case-name",
   "createdAt": "YYYY-MM-DD",
+  "walkaway": false,
   "description": "Brief description of the feature",
   "constraints": [
     "Language/framework-specific anti-patterns to avoid",
@@ -226,6 +254,10 @@ Generate a JSON PRD in this format:
         "Specific, verifiable criterion 2",
         "Tests pass with parallel execution"
       ],
+      "verification": [
+        "grep -q 'pattern' path/to/file",
+        "npm test -- --grep 'specific test'"
+      ],
       "dependsOn": [],
       "complexity": "junior|senior|auto",
       "passes": false
@@ -233,6 +265,31 @@ Generate a JSON PRD in this format:
   ]
 }
 ```
+
+### Verification Commands (Optional but Recommended)
+
+The `verification` array contains shell commands that Brigade runs after a worker signals COMPLETE. All must pass (exit 0) for the task to be marked done. This catches issues that acceptance criteria alone might miss.
+
+**Guidelines for verification commands:**
+- Keep them simple, fast, and deterministic
+- Use grep/test to check for expected code patterns
+- Run targeted tests for the specific feature
+- Check for expected file structure
+- Verify configuration was updated correctly
+
+**Good verification commands:**
+```json
+"verification": [
+  "grep -q 'class User' src/models/user.ts",
+  "grep -q 'validateEmail' src/models/user.ts",
+  "npm test -- --grep 'User model'"
+]
+```
+
+**Bad verification commands:**
+- Long-running full test suites (use targeted tests)
+- Commands that modify files (verification should be read-only)
+- Flaky network-dependent checks
 
 ### Constraints Section
 
@@ -273,6 +330,17 @@ Explore the directory to determine if this is greenfield or existing:
 - If only brigade/, .git/, README exist → **greenfield**
 
 ### Step 3: Interview (ALWAYS DO THIS)
+
+#### First: Walkaway Mode Check
+Ask: "Will this run unattended (walkaway mode), or will you be monitoring?"
+
+If walkaway mode:
+- Set `"walkaway": true` in the PRD
+- Use extended thinking for complex decisions
+- Ask the additional walkaway questions (error handling, ambiguity, fallbacks)
+- Be extra thorough - no clarifications possible later
+- Add comprehensive verification commands to every task
+- Make acceptance criteria explicit and unambiguous
 
 #### For Greenfield Projects:
 Ask these questions (adjust based on what they've already told you):

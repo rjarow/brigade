@@ -173,8 +173,27 @@ BACKLOG_FILE="brigade-backlog.md"
 # Parallel execution defaults
 MAX_PARALLEL=3
 
+# Verification defaults
+VERIFICATION_ENABLED=true          # Run verification commands after COMPLETE signal
+VERIFICATION_TIMEOUT=60            # Timeout per verification command in seconds
+
+# Visibility defaults
+ACTIVITY_LOG=""                    # Path to activity heartbeat log (empty = disabled)
+ACTIVITY_LOG_INTERVAL=30           # Seconds between heartbeat writes
+TASK_TIMEOUT_WARNING_JUNIOR=10     # Minutes before warning for junior tasks (0 = disabled)
+TASK_TIMEOUT_WARNING_SENIOR=20     # Minutes before warning for senior tasks
+WORKER_LOG_DIR=""                  # Directory for per-task worker logs (empty = disabled)
+STATUS_WATCH_INTERVAL=30           # Seconds between status refreshes in watch mode
+
 # Runtime state (set during execution)
-LAST_REVIEW_FEEDBACK=""  # Feedback from failed executive review, passed to worker on retry
+LAST_REVIEW_FEEDBACK=""       # Feedback from failed executive review, passed to worker on retry
+LAST_VERIFICATION_FEEDBACK="" # Feedback from failed verification commands, passed to worker on retry
+CURRENT_TASK_START_TIME=0          # Epoch timestamp when current task started
+CURRENT_TASK_WARNING_SHOWN=false   # Whether timeout warning was shown for current task
+CURRENT_PRD_PATH=""                # Current PRD being processed (for visibility features)
+CURRENT_TASK_ID=""                 # Current task being worked (for visibility features)
+CURRENT_WORKER=""                  # Current worker (for visibility features)
+LAST_HEARTBEAT_TIME=0              # Last time heartbeat was written
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LOGGING
@@ -219,6 +238,83 @@ log_event() {
   esac
 }
 
+# Write activity heartbeat to log file
+# Usage: write_activity_heartbeat "$prd_path" "$task_id" "$worker" "$elapsed_secs"
+write_activity_heartbeat() {
+  [ -z "$ACTIVITY_LOG" ] && return 0
+
+  local prd_path="$1"
+  local task_id="$2"
+  local worker="$3"
+  local elapsed_secs="$4"
+
+  local ts=$(date "+%H:%M:%S")
+  local display_id=$(format_task_id "$prd_path" "$task_id")
+  local worker_name=$(get_worker_name "$worker")
+  local mins=$((elapsed_secs / 60))
+  local secs=$((elapsed_secs % 60))
+
+  # Ensure directory exists
+  local log_dir=$(dirname "$ACTIVITY_LOG")
+  [ -n "$log_dir" ] && [ "$log_dir" != "." ] && mkdir -p "$log_dir"
+
+  echo "[$ts] $display_id: $worker_name working (${mins}m ${secs}s)" >> "$ACTIVITY_LOG"
+}
+
+# Check and log timeout warning for current task
+# Usage: check_task_timeout_warning "$worker" "$elapsed_secs" "$task_id" "$prd_path"
+check_task_timeout_warning() {
+  [ "$CURRENT_TASK_WARNING_SHOWN" == "true" ] && return 0
+
+  local worker="$1"
+  local elapsed_secs="$2"
+  local task_id="$3"
+  local prd_path="$4"
+
+  local elapsed_mins=$((elapsed_secs / 60))
+  local warning_threshold=0
+
+  case "$worker" in
+    "line") warning_threshold="$TASK_TIMEOUT_WARNING_JUNIOR" ;;
+    "sous") warning_threshold="$TASK_TIMEOUT_WARNING_SENIOR" ;;
+    "executive") warning_threshold="$TASK_TIMEOUT_WARNING_SENIOR" ;;
+  esac
+
+  [ "$warning_threshold" -eq 0 ] && return 0
+
+  if [ "$elapsed_mins" -ge "$warning_threshold" ]; then
+    local display_id=$(format_task_id "$prd_path" "$task_id")
+    local worker_name=$(get_worker_name "$worker")
+    log_event "WARN" "$display_id running ${elapsed_mins}m (expected ~${warning_threshold}m for $worker_name)"
+
+    # Also write to activity log if enabled
+    if [ -n "$ACTIVITY_LOG" ]; then
+      local ts=$(date "+%H:%M:%S")
+      echo "[$ts] ⚠️ $display_id running ${elapsed_mins}m (expected ~${warning_threshold}m for $worker_name)" >> "$ACTIVITY_LOG"
+    fi
+
+    CURRENT_TASK_WARNING_SHOWN=true
+  fi
+}
+
+# Get worker log file path for a task
+# Usage: get_worker_log_path "$prd_path" "$task_id" "$worker"
+get_worker_log_path() {
+  [ -z "$WORKER_LOG_DIR" ] && echo "" && return 0
+
+  local prd_path="$1"
+  local task_id="$2"
+  local worker="$3"
+
+  local prd_prefix=$(get_prd_prefix "$prd_path")
+  local timestamp=$(date "+%Y-%m-%d-%H%M%S")
+
+  # Ensure directory exists
+  mkdir -p "$WORKER_LOG_DIR"
+
+  echo "${WORKER_LOG_DIR}/${prd_prefix}-${task_id}-${worker}-${timestamp}.log"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -239,7 +335,8 @@ print_usage() {
   echo "  service [prd.json]         Run full service (defaults to brigade/tasks/latest.json)"
   echo "  resume [prd.json] [action] Resume after interruption (action: retry|skip)"
   echo "  ticket <prd.json> <id>     Run single ticket"
-  echo "  status [--all] [prd.json]  Show kitchen status (auto-detects active PRD)"
+  echo "  status [options] [prd.json] Show kitchen status (auto-detects active PRD)"
+  echo "                              Options: --all (show all escalations), --watch/-w (auto-refresh)"
   echo "  summary [prd.json] [file]  Generate markdown summary report from state"
   echo "  map [output.md]            Generate codebase map (default: brigade/codebase-map.md)"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
@@ -263,6 +360,7 @@ print_usage() {
 # Spinner for QUIET_WORKERS mode - shows activity while worker runs in background
 # Usage: run_with_spinner "message" "output_file" command args...
 # Returns the exit code of the command
+# Uses global CURRENT_PRD_PATH, CURRENT_TASK_ID, CURRENT_WORKER for heartbeat/warnings
 run_with_spinner() {
   local message="$1"
   local output_file="$2"
@@ -281,6 +379,7 @@ run_with_spinner() {
   BRIGADE_WORKER_PIDS+=("$pid")
 
   local start_time=$(date +%s)
+  LAST_HEARTBEAT_TIME=$start_time
 
   # Hide cursor
   tput civis 2>/dev/null || true
@@ -302,6 +401,20 @@ run_with_spinner() {
 
     # Print spinner with message and time
     printf "\r${CYAN}%s${NC} %s ${GRAY}(%s)${NC}  " "${frames[$frame_idx]}" "$message" "$time_str"
+
+    # Activity heartbeat (every ACTIVITY_LOG_INTERVAL seconds)
+    if [ -n "$ACTIVITY_LOG" ] && [ -n "$CURRENT_TASK_ID" ]; then
+      local since_heartbeat=$((now - LAST_HEARTBEAT_TIME))
+      if [ "$since_heartbeat" -ge "$ACTIVITY_LOG_INTERVAL" ]; then
+        write_activity_heartbeat "$CURRENT_PRD_PATH" "$CURRENT_TASK_ID" "$CURRENT_WORKER" "$elapsed"
+        LAST_HEARTBEAT_TIME=$now
+      fi
+    fi
+
+    # Check timeout warning (only once per task)
+    if [ -n "$CURRENT_TASK_ID" ]; then
+      check_task_timeout_warning "$CURRENT_WORKER" "$elapsed" "$CURRENT_TASK_ID" "$CURRENT_PRD_PATH"
+    fi
 
     frame_idx=$(( (frame_idx + 1) % frame_count ))
     sleep 0.1
@@ -1260,9 +1373,36 @@ Please address this feedback in your implementation.
 "
   fi
 
+  # Include verification feedback if previous attempt failed verification
+  local verification_feedback_section=""
+  if [ -n "$LAST_VERIFICATION_FEEDBACK" ]; then
+    verification_feedback_section="
+---
+⚠️ PREVIOUS ATTEMPT FAILED VERIFICATION:
+$LAST_VERIFICATION_FEEDBACK
+---
+"
+  fi
+
+  # Include verification commands if present (so worker knows what will be checked)
+  local verification_section=""
+  if [ "$VERIFICATION_ENABLED" == "true" ]; then
+    local verification_cmds=$(get_verification_commands "$prd_path" "$task_id")
+    if [ -n "$verification_cmds" ]; then
+      verification_section="
+---
+VERIFICATION COMMANDS (will be run after you signal COMPLETE):
+$verification_cmds
+
+Tip: Run these yourself before signaling COMPLETE to ensure they pass.
+---
+"
+    fi
+  fi
+
   cat <<EOF
 $chef_prompt
-$learnings_section$review_feedback_section
+$learnings_section$review_feedback_section$verification_feedback_section$verification_section
 ---
 FEATURE: $feature_name
 PRD_FILE: $prd_path
@@ -1291,6 +1431,13 @@ fire_ticket() {
   local worker="$3"
   local worker_timeout="${4:-0}"  # Timeout in seconds, 0 = no timeout
 
+  # Set global context for visibility features (heartbeat, timeout warnings)
+  CURRENT_PRD_PATH="$prd_path"
+  CURRENT_TASK_ID="$task_id"
+  CURRENT_WORKER="$worker"
+  CURRENT_TASK_WARNING_SHOWN=false
+  CURRENT_TASK_START_TIME=$(date +%s)
+
   local worker_name=$(get_worker_name "$worker")
   local worker_cmd=$(get_worker_cmd "$worker")
   local worker_agent=$(get_worker_agent "$worker")
@@ -1313,6 +1460,12 @@ fire_ticket() {
 
   local full_prompt=$(build_prompt "$prd_path" "$task_id" "$chef_prompt")
   local output_file=$(brigade_mktemp)
+
+  # Get worker log file path (empty if logging disabled)
+  local worker_log=$(get_worker_log_path "$prd_path" "$task_id" "$worker")
+  if [ -n "$worker_log" ]; then
+    echo -e "${GRAY}Worker log: $worker_log${NC}"
+  fi
 
   # Execute worker based on agent type
   local start_time=$(date +%s)
@@ -1437,6 +1590,30 @@ fire_ticket() {
 
   echo -e "${GRAY}Duration: ${duration}s${NC}"
 
+  # Copy output to worker log file if enabled (for debugging and post-mortems)
+  if [ -n "$worker_log" ] && [ -f "$output_file" ]; then
+    {
+      echo "═══════════════════════════════════════════════════════════"
+      echo "Task: $display_id - $task_title"
+      echo "Worker: $worker_name ($worker_agent)"
+      echo "Started: $(date -r $start_time '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d @$start_time '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'unknown')"
+      echo "Duration: ${duration}s"
+      echo "═══════════════════════════════════════════════════════════"
+      echo ""
+      cat "$output_file"
+    } >> "$worker_log"
+    echo -e "${GRAY}Output saved to: $worker_log${NC}"
+  fi
+
+  # Write final heartbeat
+  if [ -n "$ACTIVITY_LOG" ]; then
+    local ts=$(date "+%H:%M:%S")
+    echo "[$ts] $display_id: completed (${duration}s)" >> "$ACTIVITY_LOG"
+  fi
+
+  # Clear global context
+  CURRENT_TASK_ID=""
+
   # Extract any learnings shared by the worker
   extract_learnings_from_output "$output_file" "$prd_path" "$task_id" "$worker"
 
@@ -1468,6 +1645,112 @@ fire_ticket() {
     rm -f "$output_file"
     return 1
   fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VERIFICATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Run verification commands for a task
+# Returns 0 if all pass, 1 if any fail (sets LAST_VERIFICATION_FEEDBACK)
+run_verification() {
+  local prd_path="$1"
+  local task_id="$2"
+
+  # Check if verification is enabled
+  if [ "$VERIFICATION_ENABLED" != "true" ]; then
+    return 0
+  fi
+
+  # Get verification commands for this task
+  local verification_json=$(jq -r --arg id "$task_id" \
+    '.tasks[] | select(.id == $id) | .verification // []' "$prd_path")
+
+  # Skip if no verification commands
+  local cmd_count=$(echo "$verification_json" | jq 'length')
+  if [ "$cmd_count" -eq 0 ] || [ "$verification_json" == "[]" ] || [ "$verification_json" == "null" ]; then
+    return 0
+  fi
+
+  local display_id=$(format_task_id "$prd_path" "$task_id")
+  echo ""
+  echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  log_event "INFO" "VERIFICATION: Running $cmd_count check(s) for $display_id"
+  echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+
+  local failed_cmds=""
+  local pass_count=0
+  local fail_count=0
+
+  # Run each verification command
+  while IFS= read -r cmd; do
+    [ -z "$cmd" ] && continue
+
+    echo -e "${GRAY}  ▶ $cmd${NC}"
+
+    # Run with timeout
+    local output
+    local exit_code
+    if command -v timeout &>/dev/null; then
+      output=$(timeout "$VERIFICATION_TIMEOUT" bash -c "$cmd" 2>&1)
+      exit_code=$?
+    elif command -v gtimeout &>/dev/null; then
+      output=$(gtimeout "$VERIFICATION_TIMEOUT" bash -c "$cmd" 2>&1)
+      exit_code=$?
+    else
+      output=$(bash -c "$cmd" 2>&1)
+      exit_code=$?
+    fi
+
+    if [ "$exit_code" -eq 0 ]; then
+      echo -e "    ${GREEN}✓ PASS${NC}"
+      pass_count=$((pass_count + 1))
+    elif [ "$exit_code" -eq 124 ]; then
+      echo -e "    ${RED}✗ TIMEOUT (>${VERIFICATION_TIMEOUT}s)${NC}"
+      failed_cmds="${failed_cmds}\n- \`$cmd\` - TIMEOUT after ${VERIFICATION_TIMEOUT}s"
+      fail_count=$((fail_count + 1))
+    else
+      echo -e "    ${RED}✗ FAIL (exit $exit_code)${NC}"
+      if [ -n "$output" ]; then
+        echo -e "    ${GRAY}Output: $(echo "$output" | head -3)${NC}"
+      fi
+      failed_cmds="${failed_cmds}\n- \`$cmd\` - exit code $exit_code"
+      if [ -n "$output" ]; then
+        failed_cmds="${failed_cmds}\n  Output: $(echo "$output" | head -3)"
+      fi
+      fail_count=$((fail_count + 1))
+    fi
+  done < <(echo "$verification_json" | jq -r '.[]')
+
+  echo ""
+
+  if [ "$fail_count" -gt 0 ]; then
+    log_event "ERROR" "VERIFICATION FAILED: $fail_count of $cmd_count check(s) failed"
+    LAST_VERIFICATION_FEEDBACK="Verification commands failed:${failed_cmds}
+
+Please fix these issues and ensure all verification commands pass before signaling COMPLETE."
+    return 1
+  else
+    log_event "SUCCESS" "VERIFICATION PASSED: $pass_count of $cmd_count check(s)"
+    LAST_VERIFICATION_FEEDBACK=""
+    return 0
+  fi
+}
+
+# Get verification commands for a task (for display in prompts)
+get_verification_commands() {
+  local prd_path="$1"
+  local task_id="$2"
+
+  local verification_json=$(jq -r --arg id "$task_id" \
+    '.tasks[] | select(.id == $id) | .verification // []' "$prd_path")
+
+  if [ "$verification_json" == "[]" ] || [ "$verification_json" == "null" ]; then
+    echo ""
+    return
+  fi
+
+  echo "$verification_json" | jq -r '.[]'
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1603,6 +1886,7 @@ executive_review() {
     log_event "SUCCESS" "Executive Review PASSED: $display_id (${duration}s)"
     echo -e "${GRAY}Reason: $review_reason${NC}"
     LAST_REVIEW_FEEDBACK=""  # Clear any previous feedback
+    LAST_VERIFICATION_FEEDBACK=""
     return 0
   else
     log_event "ERROR" "Executive Review FAILED: $display_id (${duration}s)"
@@ -1935,6 +2219,7 @@ apply_remediation() {
 
 cmd_status() {
   local show_all_escalations=false
+  local watch_mode=false
   local prd_path=""
 
   # Parse arguments
@@ -1942,6 +2227,10 @@ cmd_status() {
     case "$1" in
       --all)
         show_all_escalations=true
+        shift
+        ;;
+      --watch|-w)
+        watch_mode=true
         shift
         ;;
       *)
@@ -1970,15 +2259,29 @@ cmd_status() {
     exit 1
   fi
 
-  # Warn if PRD has no state file (never started)
-  local state_path="${prd_path%.json}.state.json"
-  if [ ! -f "$state_path" ]; then
-    echo -e "${YELLOW}Note: No state file for this PRD (never started)${NC}"
-    echo -e "${GRAY}Run: ./brigade.sh service $prd_path${NC}"
-    echo ""
+  # Watch mode setup
+  if [ "$watch_mode" = "true" ]; then
+    echo -e "${CYAN}Watch mode: refreshing every ${STATUS_WATCH_INTERVAL}s (Ctrl+C to exit)${NC}"
+    sleep 1
   fi
 
-  local feature_name=$(jq -r '.featureName' "$prd_path")
+  # Main display loop (runs once unless in watch mode)
+  while true; do
+    # Clear screen in watch mode
+    if [ "$watch_mode" = "true" ]; then
+      clear
+      echo -e "${GRAY}[$(date '+%H:%M:%S')] Auto-refreshing every ${STATUS_WATCH_INTERVAL}s (Ctrl+C to exit)${NC}"
+    fi
+
+    # Warn if PRD has no state file (never started)
+    local state_path="${prd_path%.json}.state.json"
+    if [ ! -f "$state_path" ]; then
+      echo -e "${YELLOW}Note: No state file for this PRD (never started)${NC}"
+      echo -e "${GRAY}Run: ./brigade.sh service $prd_path${NC}"
+      echo ""
+    fi
+
+    local feature_name=$(jq -r '.featureName' "$prd_path")
   local total=$(get_task_count "$prd_path")
   local complete=$(jq '[.tasks[] | select(.passes == true)] | length' "$prd_path")
   local pending=$((total - complete))
@@ -2198,6 +2501,15 @@ cmd_status() {
   fi
 
   echo ""
+
+    # Break out of loop unless in watch mode
+    if [ "$watch_mode" != "true" ]; then
+      break
+    fi
+
+    # Sleep before next refresh
+    sleep "$STATUS_WATCH_INTERVAL"
+  done
 }
 
 cmd_resume() {
@@ -2374,8 +2686,9 @@ cmd_ticket() {
 
   update_state_task "$prd_path" "$task_id" "$worker" "started"
 
-  # Clear any previous review feedback (fresh start)
+  # Clear any previous feedback (fresh start)
   LAST_REVIEW_FEEDBACK=""
+  LAST_VERIFICATION_FEEDBACK=""
 
   # Track task start time for timeout checking
   local task_start_epoch=$(date +%s)
@@ -2512,6 +2825,16 @@ cmd_ticket() {
         update_state_task "$prd_path" "$task_id" "$worker" "already_done_detected"
         mark_task_complete "$prd_path" "$task_id"
         return 0
+      fi
+
+      # Run verification commands if present
+      local verification_passed=true
+      if ! run_verification "$prd_path" "$task_id"; then
+        verification_passed=false
+        echo -e "${YELLOW}Verification failed, continuing iterations...${NC}"
+        update_state_task "$prd_path" "$task_id" "$worker" "verification_failed"
+        # Continue to next iteration - LAST_VERIFICATION_FEEDBACK is set
+        continue
       fi
 
       # Run tests if configured
@@ -3050,12 +3373,28 @@ $task_id"
   # Merge feature branch to default branch
   local merge_status="none"  # none, success, failed, pushed
   local default_branch=""
+  local stashed=false
   if [ -n "$branch_name" ]; then
     local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
     if [ "$current_branch" == "$branch_name" ]; then
       default_branch=$(get_default_branch)
-      echo -e "${CYAN}Merging $branch_name to $default_branch...${NC}"
-      if git checkout "$default_branch" && git merge "$branch_name" --no-edit; then
+
+      # Check for uncommitted changes that would block checkout
+      if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+        echo -e "${YELLOW}Uncommitted changes detected, stashing before merge...${NC}"
+        if git stash push -m "brigade-auto-stash-before-merge"; then
+          stashed=true
+          echo -e "${GREEN}✓ Changes stashed${NC}"
+        else
+          echo -e "${RED}Failed to stash changes - merge aborted${NC}"
+          merge_status="failed"
+        fi
+      fi
+
+      if [ "$merge_status" != "failed" ]; then
+        echo -e "${CYAN}Merging $branch_name to $default_branch...${NC}"
+      fi
+      if [ "$merge_status" != "failed" ] && git checkout "$default_branch" && git merge "$branch_name" --no-edit; then
         echo -e "${GREEN}✓ Merged $branch_name to $default_branch${NC}"
         merge_status="success"
         if git push origin "$default_branch" 2>/dev/null; then
@@ -3073,6 +3412,16 @@ $task_id"
         echo -e "${RED}Merge failed - resolve conflicts manually${NC}"
         merge_status="failed"
         git checkout "$branch_name"
+      fi
+
+      # Restore stashed changes if we stashed earlier
+      if [ "$stashed" = "true" ]; then
+        echo -e "${CYAN}Restoring stashed changes...${NC}"
+        if git stash pop; then
+          echo -e "${GREEN}✓ Stashed changes restored${NC}"
+        else
+          echo -e "${YELLOW}⚠ Could not auto-restore stash (may have conflicts). Run: git stash pop${NC}"
+        fi
       fi
       echo ""
     fi
@@ -3434,6 +3783,25 @@ $current"
       echo -e "    $line"
     done
     errors=$((errors + 1))
+  fi
+
+  # Check verification commands
+  local has_verification=$(jq -r '[.tasks[] | select(.verification != null and (.verification | length) > 0)] | length' "$prd_path")
+  local total_tasks=$(jq '.tasks | length' "$prd_path")
+  if [ "$has_verification" -gt 0 ]; then
+    echo -e "${GREEN}✓${NC} $has_verification of $total_tasks tasks have verification commands"
+
+    # Check for potentially dangerous verification commands
+    local dangerous_cmds=$(jq -r '.tasks[] | select(.verification != null) | .id as $id | .verification[] | select(test("rm -rf|rm -r|rmdir|>/dev|dd if=|mkfs|format|deltree|del /")) | "\($id): \(.)"' "$prd_path" 2>/dev/null)
+    if [ -n "$dangerous_cmds" ]; then
+      echo -e "${RED}✗ Potentially dangerous verification commands found:${NC}"
+      echo "$dangerous_cmds" | while read -r line; do
+        echo -e "    $line"
+      done
+      errors=$((errors + 1))
+    fi
+  else
+    echo -e "${GRAY}ℹ${NC} No verification commands defined (optional)"
   fi
 
   # Summary

@@ -9,6 +9,7 @@ A well-structured PRD is the key to successful Brigade runs. This guide covers b
   "featureName": "Feature Name",
   "branchName": "feature/feature-name",
   "createdAt": "2025-01-17",
+  "walkaway": false,
   "description": "Brief description of the feature",
   "tasks": [
     {
@@ -19,6 +20,10 @@ A well-structured PRD is the key to successful Brigade runs. This guide covers b
         "Criterion 1",
         "Criterion 2"
       ],
+      "verification": [
+        "grep -q 'expected pattern' file.ts",
+        "npm test -- --grep 'specific test'"
+      ],
       "dependsOn": [],
       "complexity": "junior|senior|auto",
       "passes": false
@@ -26,6 +31,18 @@ A well-structured PRD is the key to successful Brigade runs. This guide covers b
   ]
 }
 ```
+
+**Note:** The `verification` field is optional. When present, all commands must pass (exit 0) after the worker signals COMPLETE.
+
+## Walkaway Mode
+
+Set `"walkaway": true` when the PRD will run unattended (overnight, while AFK, etc.). This signals:
+- Brigade should make autonomous decisions where possible
+- Tasks need more explicit acceptance criteria
+- Verification commands are especially important
+- The Executive Chef interviewed more thoroughly during planning
+
+When using `/brigade-generate-prd`, the Executive Chef will ask about walkaway mode and adjust the interview depth accordingly.
 
 ## Task IDs
 
@@ -304,6 +321,60 @@ Combine these:
 { "title": "Add Email field" },
 { "title": "Add Password field" }
 ```
+
+## Verification Commands (Optional)
+
+The `verification` array contains shell commands that Brigade runs after a worker signals COMPLETE. All must pass (exit 0) for the task to be marked done.
+
+This is a safety net that catches issues acceptance criteria alone might miss.
+
+### When to Use Verification
+
+**Good candidates for verification:**
+- Check that expected code patterns exist
+- Run targeted tests for specific functionality
+- Verify configuration files were updated
+- Check file structure was created
+
+### Example
+
+```json
+{
+  "id": "US-001",
+  "title": "Add User model with email validation",
+  "acceptanceCriteria": [
+    "User model has id, email, password_hash fields",
+    "Email validation rejects invalid formats",
+    "Unit tests for validation logic"
+  ],
+  "verification": [
+    "grep -q 'class User' src/models/user.ts",
+    "grep -q 'validateEmail' src/models/user.ts",
+    "npm test -- --grep 'User model' --exit"
+  ],
+  "complexity": "senior"
+}
+```
+
+### Guidelines
+
+**Keep commands:**
+- **Fast** - Seconds, not minutes. Use targeted tests, not full suite.
+- **Simple** - grep, test, file existence checks
+- **Deterministic** - No network calls or timing-dependent checks
+- **Read-only** - Never modify files in verification
+
+**The worker sees these commands** and can run them before signaling COMPLETE. This helps workers self-check their work.
+
+### Verification vs Tests vs Review
+
+| Check | When | What it catches |
+|-------|------|-----------------|
+| **Verification** | After COMPLETE signal | Missing code patterns, forgotten files |
+| **Tests** | After verification passes | Logic bugs, regressions |
+| **Executive Review** | After tests pass | Quality issues, missed criteria |
+
+Verification is faster than both tests and review, so it catches obvious issues early.
 
 ## Example PRD
 

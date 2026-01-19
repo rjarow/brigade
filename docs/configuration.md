@@ -119,6 +119,33 @@ TEST_CMD=""
 
 ⚠️ Without tests, Brigade only relies on the AI's `<promise>COMPLETE</promise>` signal.
 
+## Verification
+
+Run custom verification commands after a worker signals COMPLETE:
+
+```bash
+# Enable verification commands (default: true)
+VERIFICATION_ENABLED=true
+
+# Timeout per verification command (default: 60 seconds)
+VERIFICATION_TIMEOUT=60
+```
+
+Verification commands are defined per-task in the PRD:
+
+```json
+{
+  "id": "US-001",
+  "title": "Add User model",
+  "verification": [
+    "grep -q 'class User' src/models/user.ts",
+    "npm test -- --grep 'User model'"
+  ]
+}
+```
+
+All commands must exit 0 for the task to proceed to tests. Failed verification feedback is passed to the worker on retry.
+
 ## Output
 
 ```bash
@@ -141,6 +168,69 @@ Output is still fully captured for review and debugging. Useful for:
 - Cleaner logs when running unattended
 - Reducing terminal noise during long runs
 - Monitoring multiple parallel tasks
+
+## Visibility & Monitoring
+
+### Activity Heartbeat Log
+
+Write periodic status updates to a tail-able file:
+
+```bash
+# Path to activity log (empty = disabled)
+ACTIVITY_LOG="brigade/tasks/activity.log"
+
+# Seconds between heartbeat writes (default: 30)
+ACTIVITY_LOG_INTERVAL=30
+```
+
+Output format:
+```
+[12:45:30] add-auth/US-005: Sous Chef working (3m 45s)
+[12:46:00] add-auth/US-005: Sous Chef working (4m 15s)
+[12:46:30] add-auth/US-005: completed (4m 42s)
+```
+
+Monitor with: `tail -f brigade/tasks/activity.log`
+
+### Worker Output Logging
+
+Save all worker conversations to per-task log files:
+
+```bash
+# Directory for worker logs (empty = disabled)
+WORKER_LOG_DIR="brigade/logs/"
+```
+
+Creates files like: `add-auth-US-005-sous-2026-01-19-143022.log`
+
+Always writes regardless of `QUIET_WORKERS`. Useful for debugging and post-mortems.
+
+### Task Timeout Warnings
+
+Get warnings when tasks exceed expected duration (separate from hard timeout):
+
+```bash
+# Minutes before warning (0 = disabled)
+TASK_TIMEOUT_WARNING_JUNIOR=10
+TASK_TIMEOUT_WARNING_SENIOR=20
+```
+
+Logs: `⚠️ add-auth/US-005 running 45m (expected ~20m for Sous Chef)`
+
+### Status Watch Mode
+
+Auto-refresh status display:
+
+```bash
+./brigade.sh status --watch
+```
+
+```bash
+# Seconds between refreshes (default: 30)
+STATUS_WATCH_INTERVAL=30
+```
+
+Press Ctrl+C to exit watch mode.
 
 ## Escalation
 

@@ -181,13 +181,33 @@ When a task is fired:
 1. Worker receives:
    - Chef prompt (`chef/sous.md` or `chef/line.md`)
    - Task details (title, description, acceptance criteria)
-   - Project context
+   - Verification commands (if defined)
+   - Relevant learnings from previous tasks
+   - Any feedback from failed review/verification attempts
 
 2. Worker implements the task
 
 3. Worker signals completion:
    - `<promise>COMPLETE</promise>` - Task done
    - `<promise>BLOCKED</promise>` - Cannot proceed
+
+**Important**: Each worker starts with **fresh context**. There's no conversation history from previous tasks - only explicit knowledge sharing via learnings.
+
+### 2.2.1 Context Isolation
+
+Why fresh context matters:
+
+| Problem | How Brigade Solves It |
+|---------|----------------------|
+| Context overflow | Each task gets full context window |
+| Confusion from prior work | No stale information bleeds through |
+| Hallucinations | Workers can't reference non-existent prior "conversation" |
+| Cost accumulation | Only relevant learnings included, not full history |
+
+Knowledge is shared explicitly:
+- `<learning>...</learning>` tags add to shared learnings file
+- Learnings are searched by keyword relevance for each new task
+- Only matched learnings are included in the prompt
 
 ### 2.3 Automatic Escalation
 
@@ -234,7 +254,30 @@ TASK_TIMEOUT_EXECUTIVE=3600        # 60 minutes for Executive Chef
 
 Timer resets when a task escalates to a new tier.
 
-### 2.4 Test Verification
+### 2.4 Verification Commands
+
+If the task has a `verification` array in the PRD:
+
+```
+Task signals COMPLETE
+         ↓
+ Run verification commands
+         ↓
+   ┌─────┴─────┐
+   │           │
+All Pass    Any Fail
+   │           │
+   ▼           ▼
+Continue    Iterate (with feedback)
+```
+
+Verification commands are simple shell commands that must return exit code 0:
+- `grep -q 'pattern' file.ts` - Check for expected code patterns
+- `npm test -- --grep 'specific'` - Run targeted tests
+
+Workers see these commands in their prompt and can run them before signaling COMPLETE.
+
+### 2.5 Test Verification
 
 If `TEST_CMD` is configured:
 
@@ -253,7 +296,7 @@ Continue    Iterate
 
 This ensures the task actually works, not just that the AI thinks it does.
 
-### 2.5 Executive Review
+### 2.6 Executive Review
 
 If `REVIEW_ENABLED=true`:
 

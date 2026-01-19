@@ -279,6 +279,7 @@ The skill will:
 
 # Check kitchen status
 ./brigade.sh status brigade/tasks/prd.json
+./brigade.sh status --watch            # Auto-refresh every 30s
 ./brigade.sh status --all              # Include escalations from other PRDs
 
 # Validate PRD structure
@@ -328,22 +329,27 @@ The skill will:
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
 │ 7. Check completion signals                                   │
-│    COMPLETE → run tests, ALREADY_DONE → skip to next task     │
+│    COMPLETE → run verification, ALREADY_DONE → skip to next   │
 │    ABSORBED_BY:US-XXX → mark done, credit other task          │
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 8. Run tests (if configured)                                  │
+│ 8. Run verification commands (if defined in PRD)              │
+│    Any command fails? → Iterate again with feedback           │
+└─────────────────────────┬─────────────────────────────────────┘
+                          ▼
+┌───────────────────────────────────────────────────────────────┐
+│ 9. Run tests (if configured)                                  │
 │    Tests fail? → Iterate again                                │
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 9. Executive review (if enabled)                              │
-│    Review fails? → Iterate again                              │
+│ 10. Executive review (if enabled)                             │
+│     Review fails? → Iterate again                             │
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 10. Mark complete, show summary, move to next task            │
+│ 11. Mark complete, show summary, move to next task            │
 │     Repeat until all tasks done                               │
 └───────────────────────────────────────────────────────────────┘
 ```

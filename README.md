@@ -40,11 +40,13 @@ Multi-model AI orchestration framework. Route tasks to the right AI based on com
 ## Why Brigade?
 
 - **Minimal owner disruption**: Interview once, then autonomous execution
+- **Fresh context per task**: Each worker starts clean - no context pollution between tasks
 - **Cost optimization**: Use expensive models only when needed
 - **Right tool for the job**: Architecture decisions need senior thinking, boilerplate doesn't
 - **Automatic escalation**: Junior failures auto-escalate to senior
-- **Quality control**: Executive Chef reviews work before marking complete
+- **Quality control**: Verification commands + tests + Executive Chef review
 - **Multi-model**: Mix Claude, OpenCode, GPT, local models - whatever works
+- **Knowledge sharing**: Workers share learnings without sharing bloated context
 
 ## Philosophy
 
@@ -214,6 +216,7 @@ MAX_PARALLEL=3
 
 # Check kitchen status
 ./brigade.sh status brigade/tasks/prd.json       # Show current PRD stats
+./brigade.sh status --watch                      # Auto-refresh every 30s
 ./brigade.sh status --all                        # Include escalations from other PRDs
 
 # Validate PRD structure
@@ -255,14 +258,15 @@ For each task:
 
 1. **Pre-flight check** - Run tests first; skip task if already passing
 2. **Route** based on complexity → Line Cook or Sous Chef
-3. **Execute** task with worker prompt
+3. **Execute** task with fresh context (no pollution from previous tasks)
 4. **Escalate** automatically:
    - Line Cook fails 3x or times out (15m) → Sous Chef
    - Sous Chef fails 5x or times out (30m) → Executive Chef
    - Worker signals `BLOCKED` → Immediate escalation
-5. **Test** if TEST_CMD configured
-6. **Review** Executive Chef checks quality (optional)
-7. **Complete** or iterate
+5. **Verify** - Run verification commands if defined in PRD
+6. **Test** if TEST_CMD configured
+7. **Review** Executive Chef checks quality (optional)
+8. **Complete** or iterate
 
 ### 3. Quality Gates
 
@@ -270,7 +274,8 @@ For each task:
 - **Already done detection**: `<promise>ALREADY_DONE</promise>` skips redundant work
 - **Task absorption**: `<promise>ABSORBED_BY:US-XXX</promise>` when prior task did the work
 - **Empty diff detection**: Catches workers claiming completion without changes
-- **Test verification**: Actual tests run, not just AI confidence
+- **Verification commands**: Custom checks run after COMPLETE (grep for patterns, targeted tests)
+- **Test verification**: Full test suite runs after verification passes
 - **Executive review**: Opus reviews junior work before approval
 - **Escalation**: Failures promote to higher tier automatically
 
@@ -291,6 +296,10 @@ For each task:
         "User model has id, email, password_hash fields",
         "Email validation works",
         "Unit tests for validation logic"
+      ],
+      "verification": [
+        "grep -q 'class User' src/models/user.ts",
+        "npm test -- --grep 'User model'"
       ],
       "dependsOn": [],
       "complexity": "senior",
@@ -313,7 +322,7 @@ For each task:
 }
 ```
 
-**Note**: Tests are mandatory. Every PRD must include test requirements in acceptance criteria AND dedicated test tasks.
+**Note**: The `verification` array is optional but recommended. Commands run after COMPLETE signal - all must pass (exit 0).
 
 ### Complexity Levels
 
@@ -374,6 +383,34 @@ Shows an animated spinner instead of full conversation output:
 ```
 ⠋ US-003: Add user validation (2m 45s)
 ```
+
+### Monitoring
+
+For long-running or unattended execution:
+
+```bash
+# Auto-refreshing status display
+./brigade.sh status --watch
+
+# Activity heartbeat log (tail -f friendly)
+ACTIVITY_LOG="brigade/tasks/activity.log"
+
+# Per-task worker logs for debugging
+WORKER_LOG_DIR="brigade/logs/"
+
+# Timeout warnings before hard timeout
+TASK_TIMEOUT_WARNING_JUNIOR=10  # minutes
+TASK_TIMEOUT_WARNING_SENIOR=20
+```
+
+## Context Isolation
+
+Each worker starts with **fresh context** - no pollution from previous tasks. This prevents:
+- Context window overflow on large PRDs
+- Confusion from unrelated prior work
+- Hallucinations based on stale information
+
+Knowledge is shared explicitly via the learnings file, not implicitly via conversation history.
 
 ## Documentation
 

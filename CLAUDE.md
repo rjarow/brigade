@@ -24,6 +24,7 @@ See `ROADMAP.md` for planned features and recent changes. Check it before starti
 
 # Check progress (auto-detects active PRD)
 ./brigade.sh status
+./brigade.sh status --watch  # Auto-refresh every 30s
 
 # Resume after interruption (retry or skip the failed task)
 ./brigade.sh resume
@@ -51,7 +52,7 @@ See `ROADMAP.md` for planned features and recent changes. Check it before starti
 ## Architecture
 
 ### Core Script
-- `brigade.sh` - Main orchestrator (~2100 lines bash). Handles routing, escalation, review, state management, and parallel execution.
+- `brigade.sh` - Main orchestrator (~3500 lines bash). Handles routing, escalation, review, state management, and parallel execution.
 
 ### Worker Prompts (chef/)
 - `executive.md` - Executive Chef (Opus): Plans PRDs, reviews work, handles rare escalations
@@ -71,14 +72,26 @@ See `ROADMAP.md` for planned features and recent changes. Check it before starti
 
 When modifying brigade.sh, these are the important functions:
 
-| Function | Line ~  | Purpose |
-|----------|---------|---------|
-| `validate_prd_quick` | 165 | Quick PRD validation before service |
-| `get_ready_tasks` | 270 | Find tasks ready to execute (deps met) |
-| `fire_ticket` | 720 | Execute a single task with a worker |
-| `executive_review` | 880 | Run Executive Chef review on completed work |
-| `cmd_service` | 1500 | Main service loop - orchestrates everything |
-| `cmd_validate` | 1920 | Full PRD validation command |
+| Function | Purpose |
+|----------|---------|
+| `get_prd_prefix` | Extract short prefix from PRD filename for display |
+| `format_task_id` | Format task ID with PRD prefix (e.g., "auth/US-001") |
+| `run_with_timeout` | Cross-platform timeout wrapper (Linux/macOS) |
+| `validate_prd_quick` | Quick PRD validation before service |
+| `get_ready_tasks` | Find tasks ready to execute (deps met) |
+| `fire_ticket` | Execute a single task with a worker |
+| `executive_review` | Run Executive Chef review on completed work |
+| `cmd_service` | Main service loop - orchestrates everything |
+| `cmd_summary` | Generate markdown report from state |
+| `cmd_map` | Generate codebase analysis |
+
+## Review Feedback Loop
+
+When executive review fails:
+1. Feedback reason stored in `LAST_REVIEW_FEEDBACK`
+2. On next iteration, feedback included in worker prompt
+3. Worker sees: "⚠️ PREVIOUS ATTEMPT FAILED EXECUTIVE REVIEW: [reason]"
+4. Cleared when review passes or new task starts
 
 ## Task Routing
 
@@ -92,13 +105,40 @@ Tasks are routed based on `complexity` field in PRD:
 1. Line Cook fails `ESCALATION_AFTER` times (default: 3) → Sous Chef takes over
 2. Sous Chef fails `ESCALATION_TO_EXEC_AFTER` times (default: 5) → Executive Chef takes over
 3. Task signals `<promise>BLOCKED</promise>` → Immediate escalation to next tier
+4. Worker process exceeds timeout → Killed and treated as BLOCKED
+
+## Process Timeouts
+
+Workers are killed if they exceed their timeout (prevents overnight hangs):
+- **Junior (Line Cook)**: 15 minutes (`TASK_TIMEOUT_JUNIOR`)
+- **Senior (Sous Chef)**: 30 minutes (`TASK_TIMEOUT_SENIOR`)
+- **Executive Chef**: 60 minutes (`TASK_TIMEOUT_EXECUTIVE`)
+
+Uses `timeout` on Linux, `gtimeout` on macOS with coreutils, or fallback background process monitoring.
+
+## Task ID Display
+
+Task IDs are displayed with PRD prefix for clarity across multiple PRDs:
+- `add-auth/US-003` instead of just `US-003`
+- Prefix extracted from PRD filename: `prd-add-auth.json` → `add-auth`
+- Used in all logs, status, escalation messages
+
+## Interrupt Handling
+
+Ctrl+C triggers graceful cleanup:
+1. Kills tracked worker processes (SIGTERM, then SIGKILL)
+2. Kills background jobs
+3. Cleans up temp files
+4. Shows: "Run './brigade.sh resume' to continue"
 
 ## State Files
 
 The entire `brigade/` directory is typically gitignored. Working files are in `brigade/tasks/`:
 - `brigade/tasks/prd-*.json` - PRD files
-- `brigade/tasks/prd-*.state.json` - Per-PRD state files (session state, task history, escalations, phaseReviews)
+- `brigade/tasks/prd-*.state.json` - Per-PRD state files
 - `brigade/tasks/brigade-learnings.md` - Knowledge shared between workers
+- `brigade/tasks/brigade-backlog.md` - Out-of-scope discoveries for future planning
+- `brigade/codebase-map.md` - Codebase analysis (from `./brigade.sh map`)
 
 Each PRD gets its own state file: `prd-feature.json` → `prd-feature.state.json`. This isolates state per-PRD and avoids confusion when multiple PRDs exist in the same directory.
 
@@ -112,6 +152,47 @@ The `status` command uses these markers:
 - `◐` - Worked on, awaiting review
 - `○` - Not started yet
 - `⬆` - Was escalated to higher tier
+
+## Status Watch Mode
+
+Auto-refreshing status display for monitoring running services:
+```bash
+./brigade.sh status --watch        # Auto-refresh every 30s
+./brigade.sh status --watch --all  # Include all escalations
+```
+
+Press Ctrl+C to exit watch mode. Refresh interval configurable via `STATUS_WATCH_INTERVAL`.
+
+## Visibility & Monitoring
+
+Brigade provides several monitoring features for long-running services:
+
+### Activity Heartbeat Log
+Periodic status written to a tail-able file:
+```bash
+# In brigade.config:
+ACTIVITY_LOG="brigade/tasks/activity.log"
+ACTIVITY_LOG_INTERVAL=30  # seconds
+
+# Monitor:
+tail -f brigade/tasks/activity.log
+```
+Outputs: `[12:45:30] add-auth/US-005: Sous Chef working (3m 45s)`
+
+### Task Timeout Warnings
+Warnings when tasks exceed expected duration (separate from hard timeout):
+```bash
+TASK_TIMEOUT_WARNING_JUNIOR=10  # minutes
+TASK_TIMEOUT_WARNING_SENIOR=20
+```
+Logs: `⚠️ add-auth/US-005 running 45m (expected ~20m for Sous Chef)`
+
+### Worker Output Logging
+Persistent logs of all worker conversations for debugging:
+```bash
+WORKER_LOG_DIR="brigade/logs/"
+```
+Creates: `add-auth-US-005-sous-2026-01-19-143022.log`
 
 ## Configuration
 

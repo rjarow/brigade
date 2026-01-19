@@ -99,6 +99,29 @@ CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=true  # Auto-approve in non-interactive mode
 QUIET_WORKERS=false
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# VISIBILITY & MONITORING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Activity heartbeat log - periodic status written to a tail-able file
+# Set path to enable (relative to project root or absolute)
+# Example: tail -f brigade/tasks/activity.log
+ACTIVITY_LOG=""  # e.g., "brigade/tasks/activity.log"
+ACTIVITY_LOG_INTERVAL=30  # Seconds between heartbeat writes
+
+# Task timeout warnings - alert when tasks exceed expected duration
+# Set to 0 to disable warnings for that complexity level
+TASK_TIMEOUT_WARNING_JUNIOR=10  # Minutes before warning for junior tasks
+TASK_TIMEOUT_WARNING_SENIOR=20  # Minutes before warning for senior tasks
+
+# Worker output logging - stream all worker output to per-task log files
+# Set directory to enable (creates: {prd-prefix}-{task-id}-{worker}-{timestamp}.log)
+# Useful for debugging and post-mortems
+WORKER_LOG_DIR=""  # e.g., "brigade/logs/"
+
+# Status watch mode refresh interval
+STATUS_WATCH_INTERVAL=30  # Seconds between refreshes in `status --watch` mode
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -124,6 +147,18 @@ TEST_CMD=""
 # Timeout for test execution in seconds
 # Tests exceeding this are flagged as "hung" (likely spawning interactive processes)
 TEST_TIMEOUT=120
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VERIFICATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Enable verification commands (run after worker signals COMPLETE)
+# When enabled, tasks with a "verification" array have those commands run
+# All must pass (exit 0) for task to be marked complete
+VERIFICATION_ENABLED=true
+
+# Timeout per verification command in seconds
+VERIFICATION_TIMEOUT=60
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ESCALATION
