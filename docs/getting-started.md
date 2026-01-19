@@ -311,7 +311,7 @@ The skill will:
 └─────────────────────────┬─────────────────────────────────────┘
                           ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ 6. Check for escalation                                       │
+│ 6. Check for escalation (thresholds configurable)             │
 │    Line Cook fails 3x or times out (15m)? → Sous Chef         │
 │    Sous Chef fails 5x or times out (30m)? → Executive Chef    │
 │    Worker signals BLOCKED? → Immediate escalation             │

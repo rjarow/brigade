@@ -71,8 +71,8 @@ Brigade uses kitchen terminology because the workflow mirrors a professional kit
 │  │                      ▼                                    │  │
 │  │  ┌─────────────┐  escalate   ┌─────────────┐  escalate   │  │
 │  │  │ LINE COOK   │───────────► │ SOUS CHEF   │───────────► │  │
-│  │  │ (junior)    │ 3 fails or  │ (senior)    │ 5 fails or  │  │
-│  │  │             │ 15m timeout │             │ 30m timeout │  │
+│  │  │ (junior)    │ N fails or  │ (senior)    │ N fails or  │  │
+│  │  │             │ timeout     │             │ timeout     │  │
 │  │  └──────┬──────┘ or blocked  └──────┬──────┘ or blocked  │  │
 │  │         │                           │                     │  │
 │  │         │    ┌─────────────┐        │                     │  │
@@ -191,24 +191,24 @@ When a task is fired:
 
 ### 2.3 Automatic Escalation
 
-Brigade has a three-tier escalation system:
+Brigade has a three-tier escalation system. All thresholds are configurable (defaults shown):
 
 **Tier 1: Line Cook → Sous Chef**
 ```
-Iteration 1-3: Line Cook attempts
+Line Cook attempts task
          ↓ (after 3 fails OR 15m timeout OR BLOCKED signal)
     ESCALATION
          ↓
-Iteration 4+: Sous Chef takes over
+Sous Chef takes over
 ```
 
 **Tier 2: Sous Chef → Executive Chef** (rare)
 ```
-Iteration 4-8: Sous Chef attempts
+Sous Chef attempts task
          ↓ (after 5 fails OR 30m timeout OR BLOCKED signal)
     ESCALATION
          ↓
-Iteration 9+: Executive Chef takes over
+Executive Chef takes over
 ```
 
 Escalation also triggers immediately on BLOCKED signal:
