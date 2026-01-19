@@ -336,21 +336,44 @@ For each task:
 
 ## State Tracking
 
-Brigade maintains state in `brigade-state.json`:
+Brigade maintains per-PRD state files (`prd-*.state.json`):
 
 ```bash
-./brigade.sh status brigade/tasks/prd.json
+./brigade.sh status                           # Auto-detect active PRD
+./brigade.sh status brigade/tasks/prd.json    # Specific PRD
 ```
 
+### Status Markers
+
+| Marker | Meaning |
+|--------|---------|
+| `✓` | Reviewed and confirmed complete |
+| `→` | Currently in progress |
+| `◐` | Worked on, awaiting review |
+| `○` | Not started yet |
+| `⬆` | Escalated to higher tier |
+
+### Status Output
+
 Shows:
-- Task completion status with worker assignments
-- Currently cooking task with assigned worker
-- Escalation indicators (⬆) on tasks that were promoted
-- Total time and current run time
-- Escalation history with timestamps
-- Review results and absorption stats
+- Progress bar with completion percentage
+- Task list with status markers and worker assignments
+- Session stats (time, reviews, escalations)
 
 Use `--all` to see escalations from previous PRDs in the same session.
+
+### Quiet Mode
+
+For cleaner logs during long runs:
+
+```bash
+QUIET_WORKERS=true  # In brigade.config
+```
+
+Shows an animated spinner instead of full conversation output:
+```
+⠋ US-003: Add user validation (2m 45s)
+```
 
 ## Documentation
 

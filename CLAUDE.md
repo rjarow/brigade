@@ -91,10 +91,28 @@ Tasks are routed based on `complexity` field in PRD:
 
 The entire `brigade/` directory is typically gitignored. Working files are in `brigade/tasks/`:
 - `brigade/tasks/prd-*.json` - PRD files
-- `brigade/tasks/prd-*.state.json` - Per-PRD state files (session state, task history, escalations)
+- `brigade/tasks/prd-*.state.json` - Per-PRD state files (session state, task history, escalations, phaseReviews)
 - `brigade/tasks/brigade-learnings.md` - Knowledge shared between workers
 
 Each PRD gets its own state file: `prd-feature.json` → `prd-feature.state.json`. This isolates state per-PRD and avoids confusion when multiple PRDs exist in the same directory.
+
+State files contain: `sessionId`, `startedAt`, `lastStartTime`, `currentTask`, `taskHistory`, `escalations`, `reviews`, `absorptions`, `phaseReviews`.
+
+## Status Markers
+
+The `status` command uses these markers:
+- `✓` - Reviewed and confirmed complete
+- `→` - Currently in progress
+- `◐` - Worked on, awaiting review
+- `○` - Not started yet
+- `⬆` - Was escalated to higher tier
+
+## Configuration
+
+Key config options (in `brigade.config`):
+- `QUIET_WORKERS=true` - Suppress conversation output, show spinner instead
+- `PHASE_REVIEW_ENABLED=true` - Periodic Executive Chef reviews
+- Config is validated on load; invalid values trigger warnings and use defaults
 
 ## PRD Format
 

@@ -202,7 +202,7 @@ Tasks:
   ✓ US-003: Add JWT utilities [Sous Chef] ⬆
   ✓ US-004: Add login endpoint
   → US-005: Add auth middleware [Sous Chef]
-  ○ US-006: Add logout endpoint [Line Cook]
+  ◐ US-006: Add logout endpoint [Line Cook] awaiting review
   ○ US-007: Add endpoint tests [Line Cook]
 
 Session Stats:
@@ -216,7 +216,16 @@ Escalation History:
   2025-01-17 14:23 US-003: line → sous
 ```
 
-The ⬆ indicator shows tasks that were escalated. Worker assignments show who will handle each pending task.
+**Status Markers:**
+| Marker | Meaning |
+|--------|---------|
+| `✓` | Reviewed and confirmed complete |
+| `→` | Currently in progress |
+| `◐` | Worked on, awaiting review |
+| `○` | Not started yet |
+| `⬆` | Was escalated to higher tier |
+
+Worker assignments show who will handle each pending task.
 
 ## Using Claude Code Skills
 

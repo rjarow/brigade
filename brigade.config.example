@@ -93,7 +93,9 @@ CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=true  # Auto-approve in non-interactive mode
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Suppress worker conversation output (still captured to file for review)
-# Useful for cleaner logs when running unattended
+# When enabled, shows animated spinner instead of full conversation:
+#   ⠋ US-003: Add user validation (2m 45s)
+# Useful for cleaner logs when running unattended or monitoring multiple tasks
 QUIET_WORKERS=false
 
 # ═══════════════════════════════════════════════════════════════════════════════

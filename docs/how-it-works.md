@@ -307,6 +307,9 @@ Example state file:
   ],
   "absorptions": [
     {"taskId": "US-005", "absorbedBy": "US-003", "timestamp": "..."}
+  ],
+  "phaseReviews": [
+    {"completedTasks": 5, "totalTasks": 12, "status": "on_track", "content": "...", "timestamp": "..."}
   ]
 }
 ```
@@ -315,6 +318,7 @@ Example state file:
 - **lastStartTime**: When the current run started (current run time)
 - **currentTask**: Set during execution, cleared on completion (used by `resume`)
 - **absorptions**: Tasks that were absorbed by other tasks
+- **phaseReviews**: Periodic Executive Chef reviews (when `PHASE_REVIEW_ENABLED=true`)
 
 View with:
 ```bash

@@ -119,6 +119,29 @@ TEST_CMD=""
 
 ⚠️ Without tests, Brigade only relies on the AI's `<promise>COMPLETE</promise>` signal.
 
+## Output
+
+```bash
+# Suppress worker conversation output (default: false)
+QUIET_WORKERS=false
+```
+
+When enabled, worker output goes directly to a file instead of streaming to terminal. An animated spinner shows progress:
+
+```
+⠋ US-003: Add user validation (2m 45s)
+```
+
+The spinner displays:
+- Braille animation for visual feedback
+- Task ID and title
+- Elapsed time
+
+Output is still fully captured for review and debugging. Useful for:
+- Cleaner logs when running unattended
+- Reducing terminal noise during long runs
+- Monitoring multiple parallel tasks
+
 ## Escalation
 
 ```bash
@@ -161,6 +184,42 @@ REVIEW_ENABLED=true
 # Only review junior work - saves Opus API calls (default: true)
 REVIEW_JUNIOR_ONLY=true
 ```
+
+## Phase Review
+
+Periodic Executive Chef reviews during long PRD execution:
+
+```bash
+# Enable phase reviews (default: false)
+PHASE_REVIEW_ENABLED=false
+
+# Review every N completed tasks (default: 5)
+PHASE_REVIEW_AFTER=5
+
+# Action on review concerns:
+#   continue  - Log and proceed (default)
+#   pause     - Stop for manual intervention
+#   remediate - Add corrective tasks to PRD
+PHASE_REVIEW_ACTION=continue
+```
+
+Phase reviews are persisted to the state file under `phaseReviews` array, allowing you to review them later:
+
+```json
+{
+  "phaseReviews": [
+    {
+      "completedTasks": 5,
+      "totalTasks": 12,
+      "status": "on_track",
+      "content": "<phase_review>...</phase_review>",
+      "timestamp": "2026-01-18T..."
+    }
+  ]
+}
+```
+
+Useful for larger PRDs (10+ tasks) to catch drift from spec early.
 
 ## Iteration Limits
 
@@ -242,3 +301,16 @@ Customize worker behavior by editing:
 - `chef/executive.md` - Director prompt
 
 These are Markdown files that get prepended to task details.
+
+## Config Validation
+
+Brigade validates configuration values on load:
+
+- **Numeric values** must be positive (MAX_PARALLEL, ESCALATION_AFTER, etc.)
+- **Enum values** must be valid options (PHASE_REVIEW_ACTION, PHASE_GATE)
+
+Invalid values trigger a warning and are auto-corrected to defaults:
+
+```
+Warning: ESCALATION_AFTER=-1 invalid, using 3
+```
