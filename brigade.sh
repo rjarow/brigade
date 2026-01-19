@@ -177,6 +177,63 @@ print_usage() {
   echo "  ./brigade.sh status                                  # Auto-detect active PRD"
 }
 
+# Spinner for QUIET_WORKERS mode - shows activity while worker runs in background
+# Usage: run_with_spinner "message" "output_file" command args...
+# Returns the exit code of the command
+run_with_spinner() {
+  local message="$1"
+  local output_file="$2"
+  shift 2
+
+  # Braille spinner frames (smooth animation)
+  local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+  local frame_count=${#frames[@]}
+  local frame_idx=0
+
+  # Start the command in background, redirecting output to file
+  "$@" > "$output_file" 2>&1 &
+  local pid=$!
+
+  local start_time=$(date +%s)
+
+  # Hide cursor
+  tput civis 2>/dev/null || true
+
+  # Spinner loop
+  while kill -0 $pid 2>/dev/null; do
+    local now=$(date +%s)
+    local elapsed=$((now - start_time))
+    local mins=$((elapsed / 60))
+    local secs=$((elapsed % 60))
+
+    # Format time
+    local time_str
+    if [ $mins -gt 0 ]; then
+      time_str="${mins}m ${secs}s"
+    else
+      time_str="${secs}s"
+    fi
+
+    # Print spinner with message and time
+    printf "\r${CYAN}%s${NC} %s ${GRAY}(%s)${NC}  " "${frames[$frame_idx]}" "$message" "$time_str"
+
+    frame_idx=$(( (frame_idx + 1) % frame_count ))
+    sleep 0.1
+  done
+
+  # Get exit code
+  wait $pid
+  local exit_code=$?
+
+  # Show cursor
+  tput cnorm 2>/dev/null || true
+
+  # Clear the spinner line
+  printf "\r%-80s\r" ""
+
+  return $exit_code
+}
+
 load_config() {
   if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
@@ -1083,7 +1140,7 @@ fire_ticket() {
         claude_flags="--dangerously-skip-permissions"
       fi
       if [ "$QUIET_WORKERS" == "true" ]; then
-        if $worker_cmd $claude_flags -p "$full_prompt" > "$output_file" 2>&1; then
+        if run_with_spinner "$task_id: $task_title" "$output_file" $worker_cmd $claude_flags -p "$full_prompt"; then
           echo -e "${GREEN}Worker completed${NC}"
         else
           echo -e "${YELLOW}Worker exited${NC}"
@@ -1108,7 +1165,7 @@ fire_ticket() {
         opencode_flags="$opencode_flags --attach $OPENCODE_SERVER"
       fi
       if [ "$QUIET_WORKERS" == "true" ]; then
-        if $worker_cmd $opencode_flags "$full_prompt" > "$output_file" 2>&1; then
+        if run_with_spinner "$task_id: $task_title" "$output_file" $worker_cmd $opencode_flags "$full_prompt"; then
           echo -e "${GREEN}Worker completed${NC}"
         else
           echo -e "${YELLOW}Worker exited${NC}"
