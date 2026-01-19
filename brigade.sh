@@ -1659,15 +1659,16 @@ cmd_status() {
 
     # Filter reviews by current PRD task IDs
     local review_count=$(jq --argjson ids "$prd_task_ids" \
-      '[.reviews[] | select(.taskId as $tid | $ids | index($tid))] | length' "$state_path")
+      '[(.reviews // [])[] | select(.taskId as $tid | $ids | index($tid))] | length' "$state_path" 2>/dev/null || echo 0)
     local review_pass=$(jq --argjson ids "$prd_task_ids" \
-      '[.reviews[] | select(.taskId as $tid | $ids | index($tid)) | select(.result == "PASS")] | length' "$state_path")
+      '[(.reviews // [])[] | select(.taskId as $tid | $ids | index($tid)) | select(.result == "PASS")] | length' "$state_path" 2>/dev/null || echo 0)
     local review_fail=$(jq --argjson ids "$prd_task_ids" \
-      '[.reviews[] | select(.taskId as $tid | $ids | index($tid)) | select(.result == "FAIL")] | length' "$state_path")
+      '[(.reviews // [])[] | select(.taskId as $tid | $ids | index($tid)) | select(.result == "FAIL")] | length' "$state_path")
 
     # Filter absorptions by current PRD task IDs
     local absorption_count=$(jq --argjson ids "$prd_task_ids" \
-      '[.absorptions[] | select(.taskId as $tid | $ids | index($tid))] | length' "$state_path")
+      '[(.absorptions // [])[] | select(.taskId as $tid | $ids | index($tid))] | length' "$state_path" 2>/dev/null || echo 0)
+    [ -z "$absorption_count" ] && absorption_count=0
 
     echo ""
     echo -e "${BOLD}Session Stats:${NC}"
@@ -1704,12 +1705,14 @@ cmd_status() {
     # Count escalations - filter by current PRD unless --all
     local escalation_count
     local prd_escalation_count
-    local total_escalation_count=$(jq '.escalations | length' "$state_path")
+    local total_escalation_count=$(jq '(.escalations // []) | length' "$state_path" 2>/dev/null || echo 0)
+    [ -z "$total_escalation_count" ] && total_escalation_count=0
     if [ "$show_all_escalations" = "true" ]; then
       escalation_count=$total_escalation_count
     else
       prd_escalation_count=$(jq --argjson ids "$prd_task_ids" \
-        '[.escalations[] | select(.taskId as $tid | $ids | index($tid))] | length' "$state_path")
+        '[(.escalations // [])[] | select(.taskId as $tid | $ids | index($tid))] | length' "$state_path" 2>/dev/null || echo 0)
+      [ -z "$prd_escalation_count" ] && prd_escalation_count=0
       escalation_count=$prd_escalation_count
     fi
 
@@ -1722,13 +1725,13 @@ cmd_status() {
       echo ""
       if [ "$show_all_escalations" = "true" ]; then
         echo -e "${BOLD}Escalation History (all):${NC}"
-        jq -r '.escalations[] |
+        jq -r '(.escalations // [])[] |
           (.timestamp | split("T") | .[0] + " " + (.[1] | split("+")[0] | split("-")[0] | .[0:5])) as $time |
           "  \($time) \(.taskId): \(.from) → \(.to)"' "$state_path"
       else
         echo -e "${BOLD}Escalation History:${NC}"
         jq -r --argjson ids "$prd_task_ids" \
-          '.escalations[] | select(.taskId as $tid | $ids | index($tid)) |
+          '(.escalations // [])[] | select(.taskId as $tid | $ids | index($tid)) |
           (.timestamp | split("T") | .[0] + " " + (.[1] | split("+")[0] | split("-")[0] | .[0:5])) as $time |
           "  \($time) \(.taskId): \(.from) → \(.to)"' "$state_path"
       fi
@@ -1738,7 +1741,7 @@ cmd_status() {
       echo ""
       echo -e "${BOLD}Absorbed Tasks:${NC}"
       jq -r --argjson ids "$prd_task_ids" \
-        '.absorptions[] | select(.taskId as $tid | $ids | index($tid)) | "  \(.taskId) ← absorbed by \(.absorbedBy)"' "$state_path"
+        '(.absorptions // [])[] | select(.taskId as $tid | $ids | index($tid)) | "  \(.taskId) ← absorbed by \(.absorbedBy)"' "$state_path"
     fi
   fi
 
@@ -2551,10 +2554,10 @@ $task_id"
   local review_count=0
   local review_pass=0
   if [ -f "$state_path" ]; then
-    escalation_count=$(jq '.escalations | length' "$state_path" 2>/dev/null || echo 0)
-    absorption_count=$(jq '.absorptions | length' "$state_path" 2>/dev/null || echo 0)
-    review_count=$(jq '.reviews | length' "$state_path" 2>/dev/null || echo 0)
-    review_pass=$(jq '[.reviews[] | select(.result == "PASS")] | length' "$state_path" 2>/dev/null || echo 0)
+    escalation_count=$(jq '(.escalations // []) | length' "$state_path" 2>/dev/null || echo 0)
+    absorption_count=$(jq '(.absorptions // []) | length' "$state_path" 2>/dev/null || echo 0)
+    review_count=$(jq '(.reviews // []) | length' "$state_path" 2>/dev/null || echo 0)
+    review_pass=$(jq '[(.reviews // [])[] | select(.result == "PASS")] | length' "$state_path" 2>/dev/null || echo 0)
   fi
 
   echo ""
