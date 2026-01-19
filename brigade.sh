@@ -315,9 +315,18 @@ mark_task_complete() {
   local prd_path="$1"
   local task_id="$2"
 
+  # Update PRD
   local tmp_file=$(mktemp)
   jq "(.tasks[] | select(.id == \"$task_id\") | .passes) = true" "$prd_path" > "$tmp_file"
   mv "$tmp_file" "$prd_path"
+
+  # Clear currentTask from state file
+  local state_path=$(get_state_path "$prd_path")
+  if [ -f "$state_path" ]; then
+    tmp_file=$(mktemp)
+    jq '.currentTask = null' "$state_path" > "$tmp_file"
+    mv "$tmp_file" "$state_path"
+  fi
 
   echo -e "${GREEN}✓ Marked $task_id as complete${NC}"
 }
