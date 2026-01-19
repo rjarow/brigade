@@ -717,12 +717,39 @@ mark_task_complete() {
   local prd_path="$1"
   local task_id="$2"
 
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] mark_task_complete: starting for $task_id (pid=$$)" >&2
+  fi
+
   # Update PRD (with file locking for parallel safety)
   acquire_lock "$prd_path"
   local tmp_file=$(brigade_mktemp)
+
+  # Use set +e locally to prevent jq failures from killing the subshell
+  set +e
   jq "(.tasks[] | select(.id == \"$task_id\") | .passes) = true" "$prd_path" > "$tmp_file"
+  local jq_exit=$?
+  set -e
+
+  if [ $jq_exit -ne 0 ]; then
+    echo -e "${RED}Error: jq failed updating PRD for $task_id (exit=$jq_exit)${NC}" >&2
+    release_lock "$prd_path"
+    return 1
+  fi
+
+  # Verify tmp_file has content before overwriting
+  if [ ! -s "$tmp_file" ]; then
+    echo -e "${RED}Error: jq produced empty output for $task_id${NC}" >&2
+    release_lock "$prd_path"
+    return 1
+  fi
+
   mv "$tmp_file" "$prd_path"
   release_lock "$prd_path"
+
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] mark_task_complete: PRD updated for $task_id" >&2
+  fi
 
   # Clear currentTask from state file (with file locking)
   local state_path=$(get_state_path "$prd_path")
@@ -730,9 +757,23 @@ mark_task_complete() {
     acquire_lock "$state_path"
     ensure_valid_state "$state_path" "$prd_path"
     tmp_file=$(brigade_mktemp)
+
+    set +e
     jq '.currentTask = null' "$state_path" > "$tmp_file"
-    mv "$tmp_file" "$state_path"
+    jq_exit=$?
+    set -e
+
+    if [ $jq_exit -eq 0 ] && [ -s "$tmp_file" ]; then
+      mv "$tmp_file" "$state_path"
+    else
+      echo -e "${YELLOW}Warning: Could not update state file for $task_id${NC}" >&2
+    fi
+
     release_lock "$state_path"
+  fi
+
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] mark_task_complete: done for $task_id" >&2
   fi
 
   echo -e "${GREEN}✓ Marked $task_id as complete${NC}"
@@ -967,7 +1008,7 @@ update_state_task() {
   local status="$4"
 
   if [ "$CONTEXT_ISOLATION" != "true" ]; then
-    return
+    return 0
   fi
 
   local state_path=$(get_state_path "$prd_path")
@@ -975,11 +1016,24 @@ update_state_task() {
   acquire_lock "$state_path"
   ensure_valid_state "$state_path" "$prd_path"
   local tmp_file=$(brigade_mktemp)
+
+  # Use set +e locally to prevent jq failures from killing the subshell
+  set +e
   jq --arg task "$task_id" --arg worker "$worker" --arg status "$status" --arg ts "$(date -Iseconds)" \
     '.currentTask = $task | .taskHistory += [{"taskId": $task, "worker": $worker, "status": $status, "timestamp": $ts}]' \
     "$state_path" > "$tmp_file"
-  mv "$tmp_file" "$state_path"
+  local jq_exit=$?
+  set -e
+
+  if [ $jq_exit -eq 0 ] && [ -s "$tmp_file" ]; then
+    mv "$tmp_file" "$state_path"
+  else
+    echo -e "${YELLOW}Warning: Could not update state for $task_id:$status (jq exit=$jq_exit)${NC}" >&2
+    rm -f "$tmp_file"
+  fi
+
   release_lock "$state_path"
+  return 0
 }
 
 record_escalation() {
@@ -3022,9 +3076,19 @@ cmd_ticket() {
       fi
     elif [ $result -eq 33 ]; then
       # Already done by prior task - mark complete without tests/review
+      if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+        echo "[DEBUG] $display_id: fire_ticket returned 33 (ALREADY_DONE), proceeding to mark complete" >&2
+      fi
       echo -e "${GREEN}Task was already completed by a prior task${NC}"
-      update_state_task "$prd_path" "$task_id" "$worker" "already_done"
-      mark_task_complete "$prd_path" "$task_id"
+      if ! update_state_task "$prd_path" "$task_id" "$worker" "already_done"; then
+        echo "[DEBUG] $display_id: update_state_task failed" >&2
+      fi
+      if ! mark_task_complete "$prd_path" "$task_id"; then
+        echo "[DEBUG] $display_id: mark_task_complete failed" >&2
+      fi
+      if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+        echo "[DEBUG] $display_id: ALREADY_DONE handling complete, returning 0" >&2
+      fi
       return 0
     elif [ $result -eq 34 ]; then
       # Absorbed by another task - mark complete without tests/review
