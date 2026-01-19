@@ -65,6 +65,10 @@ acquire_lock() {
   local max_wait=30  # seconds
   local waited=0
 
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] acquire_lock: attempting $lock_path (pid=$$)" >&2
+  fi
+
   while ! mkdir "$lock_path" 2>/dev/null; do
     sleep 0.1
     waited=$((waited + 1))
@@ -72,11 +76,22 @@ acquire_lock() {
       echo "Warning: Lock acquisition timeout for $lock_path, forcing" >&2
       rmdir "$lock_path" 2>/dev/null
     fi
+    # Debug: log contention every second
+    if [ "${BRIGADE_DEBUG:-false}" == "true" ] && [ $((waited % 10)) -eq 0 ]; then
+      echo "[DEBUG] acquire_lock: waiting ${waited}00ms for $lock_path (pid=$$)" >&2
+    fi
   done
+
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] acquire_lock: acquired $lock_path after ${waited}00ms (pid=$$)" >&2
+  fi
 }
 
 release_lock() {
   local lock_path="$1.lock"
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] release_lock: releasing $lock_path (pid=$$)" >&2
+  fi
   rmdir "$lock_path" 2>/dev/null
 }
 
@@ -370,6 +385,7 @@ print_usage() {
   echo "  --dry-run                  Show what would be done without executing"
   echo "  --auto-continue            Chain multiple PRDs for unattended execution"
   echo "  --phase-gate <mode>        Between-PRD behavior: review|continue|pause (default: continue)"
+  echo "  --sequential               Disable parallel execution (debug parallel issues)"
   echo ""
   echo "Examples:"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
@@ -712,6 +728,7 @@ mark_task_complete() {
   local state_path=$(get_state_path "$prd_path")
   if [ -f "$state_path" ]; then
     acquire_lock "$state_path"
+    ensure_valid_state "$state_path" "$prd_path"
     tmp_file=$(brigade_mktemp)
     jq '.currentTask = null' "$state_path" > "$tmp_file"
     mv "$tmp_file" "$state_path"
@@ -892,6 +909,39 @@ EOF
   echo -e "${GRAY}Initialized state: $state_path${NC}"
 }
 
+# Ensure state file is valid JSON before read/write operations
+# If corrupted, backs up and reinitializes. Must be called AFTER acquiring lock.
+ensure_valid_state() {
+  local state_path="$1"
+  local prd_path="$2"
+
+  if [ ! -f "$state_path" ]; then
+    # No file, will be created by caller
+    return 0
+  fi
+
+  if ! jq empty "$state_path" 2>/dev/null; then
+    echo -e "${RED}Warning: State file corrupted, reinitializing${NC}" >&2
+    log_event "WARN" "State file corrupted: $state_path - backing up and reinitializing"
+    cp "$state_path" "${state_path}.corrupted.$(date +%s)" 2>/dev/null || true
+
+    # Create fresh state (we already hold the lock)
+    cat > "$state_path" <<EOF
+{
+  "sessionId": "$(date +%s)-$$",
+  "startedAt": "$(date -Iseconds)",
+  "lastStartTime": "$(date -Iseconds)",
+  "currentTask": null,
+  "taskHistory": [],
+  "escalations": [],
+  "reviews": [],
+  "absorptions": []
+}
+EOF
+    echo -e "${YELLOW}State file reinitialized - some history may be lost${NC}" >&2
+  fi
+}
+
 update_last_start_time() {
   local prd_path="$1"
 
@@ -902,6 +952,7 @@ update_last_start_time() {
   local state_path=$(get_state_path "$prd_path")
   if [ -f "$state_path" ]; then
     acquire_lock "$state_path"
+    ensure_valid_state "$state_path" "$prd_path"
     local tmp_file=$(brigade_mktemp)
     jq --arg ts "$(date -Iseconds)" '.lastStartTime = $ts' "$state_path" > "$tmp_file"
     mv "$tmp_file" "$state_path"
@@ -922,6 +973,7 @@ update_state_task() {
   local state_path=$(get_state_path "$prd_path")
 
   acquire_lock "$state_path"
+  ensure_valid_state "$state_path" "$prd_path"
   local tmp_file=$(brigade_mktemp)
   jq --arg task "$task_id" --arg worker "$worker" --arg status "$status" --arg ts "$(date -Iseconds)" \
     '.currentTask = $task | .taskHistory += [{"taskId": $task, "worker": $worker, "status": $status, "timestamp": $ts}]' \
@@ -944,6 +996,7 @@ record_escalation() {
   local state_path=$(get_state_path "$prd_path")
 
   acquire_lock "$state_path"
+  ensure_valid_state "$state_path" "$prd_path"
   local tmp_file=$(brigade_mktemp)
   jq --arg task "$task_id" --arg from "$from_worker" --arg to "$to_worker" --arg reason "$reason" --arg ts "$(date -Iseconds)" \
     '.escalations += [{"taskId": $task, "from": $from, "to": $to, "reason": $reason, "timestamp": $ts}]' \
@@ -965,6 +1018,7 @@ record_review() {
   local state_path=$(get_state_path "$prd_path")
 
   acquire_lock "$state_path"
+  ensure_valid_state "$state_path" "$prd_path"
   local tmp_file=$(brigade_mktemp)
   jq --arg task "$task_id" --arg result "$result" --arg reason "$reason" --arg ts "$(date -Iseconds)" \
     '.reviews += [{"taskId": $task, "result": $result, "reason": $reason, "timestamp": $ts}]' \
@@ -985,6 +1039,7 @@ record_absorption() {
   local state_path=$(get_state_path "$prd_path")
 
   acquire_lock "$state_path"
+  ensure_valid_state "$state_path" "$prd_path"
   local tmp_file=$(brigade_mktemp)
   jq --arg task "$task_id" --arg absorbed_by "$absorbed_by" --arg ts "$(date -Iseconds)" \
     '.absorptions += [{"taskId": $task, "absorbedBy": $absorbed_by, "timestamp": $ts}]' \
@@ -1013,6 +1068,7 @@ record_phase_review() {
   fi
 
   acquire_lock "$state_path"
+  ensure_valid_state "$state_path" "$prd_path"
   local tmp_file=$(brigade_mktemp)
   jq --arg completed "$completed_count" --arg total "$total_count" \
      --arg status "$status" --arg content "$review_content" --arg ts "$(date -Iseconds)" \
@@ -1682,6 +1738,12 @@ fire_ticket() {
     echo "[DEBUG] $display_id: has ALREADY_DONE=$(grep -c '<promise>ALREADY_DONE</promise>' "$output_file" 2>/dev/null || echo 0)" >&2
   fi
 
+  # Worker signal exit codes (30-39 range to avoid collision with tool exit codes like jq)
+  # 0  = COMPLETE
+  # 1  = no signal / needs iteration
+  # 32 = BLOCKED
+  # 33 = ALREADY_DONE
+  # 34 = ABSORBED_BY
   if grep -q "<promise>COMPLETE</promise>" "$output_file" 2>/dev/null; then
     log_event "SUCCESS" "Task $display_id signaled COMPLETE (${duration}s)"
     rm -f "$output_file"
@@ -1689,18 +1751,18 @@ fire_ticket() {
   elif grep -q "<promise>ALREADY_DONE</promise>" "$output_file" 2>/dev/null; then
     log_event "SUCCESS" "Task $display_id signaled ALREADY_DONE - completed by prior task (${duration}s)"
     rm -f "$output_file"
-    return 3  # Special return code for already done
+    return 33  # ALREADY_DONE (distinct from jq exit code 3)
   elif grep -oq "<promise>ABSORBED_BY:" "$output_file" 2>/dev/null; then
     # Extract the absorbing task ID (e.g., ABSORBED_BY:US-001 -> US-001)
     LAST_ABSORBED_BY=$(grep -o "<promise>ABSORBED_BY:[^<]*</promise>" "$output_file" | sed 's/<promise>ABSORBED_BY://;s/<\/promise>//')
     local absorbed_display=$(format_task_id "$prd_path" "$LAST_ABSORBED_BY")
     log_event "SUCCESS" "Task $display_id ABSORBED BY $absorbed_display (${duration}s)"
     rm -f "$output_file"
-    return 4  # Special return code for absorbed
+    return 34  # ABSORBED_BY
   elif grep -q "<promise>BLOCKED</promise>" "$output_file" 2>/dev/null; then
     log_event "ERROR" "Task $display_id is BLOCKED (${duration}s)"
     rm -f "$output_file"
-    return 2
+    return 32  # BLOCKED
   else
     log_event "WARN" "Task $display_id - no completion signal, may need another iteration (${duration}s)"
     # Debug: show last 20 lines of output when no signal found
@@ -2958,20 +3020,20 @@ cmd_ticket() {
           update_state_task "$prd_path" "$task_id" "$worker" "review_failed"
         fi
       fi
-    elif [ $result -eq 3 ]; then
+    elif [ $result -eq 33 ]; then
       # Already done by prior task - mark complete without tests/review
       echo -e "${GREEN}Task was already completed by a prior task${NC}"
       update_state_task "$prd_path" "$task_id" "$worker" "already_done"
       mark_task_complete "$prd_path" "$task_id"
       return 0
-    elif [ $result -eq 4 ]; then
+    elif [ $result -eq 34 ]; then
       # Absorbed by another task - mark complete without tests/review
       echo -e "${GREEN}Task was absorbed by $LAST_ABSORBED_BY${NC}"
       update_state_task "$prd_path" "$task_id" "$worker" "absorbed"
       record_absorption "$prd_path" "$task_id" "$LAST_ABSORBED_BY"
       mark_task_complete "$prd_path" "$task_id"
       return 0
-    elif [ $result -eq 2 ]; then
+    elif [ $result -eq 32 ]; then
       # Blocked - try escalation if available
       if [ "$ESCALATION_ENABLED" == "true" ] && \
          [ "$worker" == "line" ] && \
@@ -3364,8 +3426,8 @@ $task_id"
           wait "$pid"
           local exit_code=$?
 
-          # Exit codes: 0=COMPLETE, 3=ALREADY_DONE, 4=ABSORBED_BY - all are success
-          if [ $exit_code -eq 0 ] || [ $exit_code -eq 3 ] || [ $exit_code -eq 4 ]; then
+          # Exit codes: 0=COMPLETE, 33=ALREADY_DONE, 34=ABSORBED_BY - all are success
+          if [ $exit_code -eq 0 ] || [ $exit_code -eq 33 ] || [ $exit_code -eq 34 ]; then
             log_event "SUCCESS" "$parallel_display_id completed (parallel)"
             completed=$((completed + 1))
           else
@@ -4177,6 +4239,11 @@ main() {
       --phase-gate)
         PHASE_GATE="$2"
         shift 2
+        ;;
+      --sequential)
+        MAX_PARALLEL=1
+        echo -e "${YELLOW}Sequential mode: parallel execution disabled${NC}"
+        shift
         ;;
       *)
         echo -e "${RED}Unknown option: $1${NC}"
