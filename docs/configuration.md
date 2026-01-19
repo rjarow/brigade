@@ -100,6 +100,15 @@ TEST_CMD="bundle exec rspec"
 TEST_CMD="npm run lint && npm test"
 ```
 
+### Test Timeout
+
+```bash
+# Timeout for test execution (default: 120 seconds)
+TEST_TIMEOUT=120
+```
+
+Tests exceeding this are flagged as "hung" - likely spawning interactive processes.
+
 ### Skipping Tests
 
 Leave empty to skip test verification:
@@ -109,6 +118,49 @@ TEST_CMD=""
 ```
 
 ⚠️ Without tests, Brigade only relies on the AI's `<promise>COMPLETE</promise>` signal.
+
+## Escalation
+
+```bash
+# Enable automatic escalation (default: true)
+ESCALATION_ENABLED=true
+
+# Line Cook → Sous Chef after N iterations (default: 3)
+ESCALATION_AFTER=3
+
+# Enable Sous Chef → Executive Chef escalation (default: true)
+ESCALATION_TO_EXEC=true
+
+# Sous Chef → Executive Chef after N iterations (default: 5)
+ESCALATION_TO_EXEC_AFTER=5
+```
+
+## Task Timeouts
+
+Auto-escalate tasks that exceed time limits (independent of TEST_TIMEOUT):
+
+```bash
+# Junior/Line Cook tasks (default: 15 minutes)
+TASK_TIMEOUT_JUNIOR=900
+
+# Senior/Sous Chef tasks (default: 30 minutes)
+TASK_TIMEOUT_SENIOR=1800
+
+# Executive Chef tasks (default: 60 minutes)
+TASK_TIMEOUT_EXECUTIVE=3600
+```
+
+Set to 0 to disable timeout for that complexity level. Timer resets when a task escalates to a new tier.
+
+## Executive Review
+
+```bash
+# Enable Executive Chef review after task completion (default: true)
+REVIEW_ENABLED=true
+
+# Only review junior work - saves Opus API calls (default: true)
+REVIEW_JUNIOR_ONLY=true
+```
 
 ## Iteration Limits
 

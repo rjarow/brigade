@@ -204,18 +204,26 @@ MAX_PARALLEL=3
 # Chain multiple PRDs for overnight/unattended execution
 ./brigade.sh --auto-continue service brigade/tasks/prd-*.json
 
+# Resume after interruption (retry or skip failed task)
+./brigade.sh resume                              # Auto-detect PRD
+./brigade.sh resume brigade/tasks/prd.json retry # Retry the task
+./brigade.sh resume brigade/tasks/prd.json skip  # Skip and continue
+
 # Run single ticket
 ./brigade.sh ticket brigade/tasks/prd.json US-001
 
 # Check kitchen status
-./brigade.sh status brigade/tasks/prd.json
+./brigade.sh status brigade/tasks/prd.json       # Show current PRD stats
+./brigade.sh status --all                        # Include escalations from other PRDs
+
+# Validate PRD structure
+./brigade.sh validate brigade/tasks/prd.json
+
+# Preview execution without running
+./brigade.sh --dry-run service brigade/tasks/prd.json
 
 # Analyze routing
 ./brigade.sh analyze brigade/tasks/prd.json
-
-# Use OpenCode for junior tasks (cost savings)
-./brigade.sh --opencode plan "Build X"
-./brigade.sh --opencode service brigade/tasks/prd.json
 ```
 
 ## The Flow
@@ -245,16 +253,23 @@ When you run `./brigade.sh plan "..."` or `/brigade-generate-prd`:
 
 For each task:
 
-1. **Route** based on complexity → Line Cook or Sous Chef
-2. **Execute** task with worker prompt
-3. **Escalate** if Line Cook fails 3x → Sous Chef
-4. **Test** if TEST_CMD configured
-5. **Review** Executive Chef checks quality (optional)
-6. **Complete** or iterate
+1. **Pre-flight check** - Run tests first; skip task if already passing
+2. **Route** based on complexity → Line Cook or Sous Chef
+3. **Execute** task with worker prompt
+4. **Escalate** automatically:
+   - Line Cook fails 3x or times out (15m) → Sous Chef
+   - Sous Chef fails 5x or times out (30m) → Executive Chef
+   - Worker signals `BLOCKED` → Immediate escalation
+5. **Test** if TEST_CMD configured
+6. **Review** Executive Chef checks quality (optional)
+7. **Complete** or iterate
 
 ### 3. Quality Gates
 
 - **Completion signals**: Workers output `<promise>COMPLETE</promise>`
+- **Already done detection**: `<promise>ALREADY_DONE</promise>` skips redundant work
+- **Task absorption**: `<promise>ABSORBED_BY:US-XXX</promise>` when prior task did the work
+- **Empty diff detection**: Catches workers claiming completion without changes
 - **Test verification**: Actual tests run, not just AI confidence
 - **Executive review**: Opus reviews junior work before approval
 - **Escalation**: Failures promote to higher tier automatically
@@ -328,10 +343,14 @@ Brigade maintains state in `brigade-state.json`:
 ```
 
 Shows:
-- Task completion status
-- Escalation history
-- Review results
-- Session stats
+- Task completion status with worker assignments
+- Currently cooking task with assigned worker
+- Escalation indicators (⬆) on tasks that were promoted
+- Total time and current run time
+- Escalation history with timestamps
+- Review results and absorption stats
+
+Use `--all` to see escalations from previous PRDs in the same session.
 
 ## Documentation
 
