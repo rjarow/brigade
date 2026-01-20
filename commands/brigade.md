@@ -16,6 +16,7 @@ You are orchestrating Brigade, a multi-model AI task execution framework. This s
 | `/brigade quick "task"` | Execute single task without PRD ceremony |
 | `/brigade pr` | Create PR from completed PRD |
 | `/brigade cost` | Show estimated cost breakdown |
+| `/brigade explore "question"` | Research feasibility without generating PRD |
 
 Aliases: `build` = `plan`, `service` = `run`, `execute` = `run`
 
@@ -708,6 +709,99 @@ When using `/brigade cost`, report in plain English:
 
 ---
 
+# /brigade explore
+
+Research feasibility without committing to a full plan.
+
+## Usage
+
+```
+/brigade explore "could we add real-time sync with websockets?"
+/brigade explore "is it possible to support offline mode?"
+```
+
+## When to Use
+
+- You're unsure if something is feasible
+- You want to understand complexity before planning
+- You need to compare approaches
+- You want library/tool recommendations
+
+## When NOT to Use
+
+- You already know what you want to build (use `/brigade plan`)
+- It's a small, well-defined task (use `/brigade quick`)
+
+## Output
+
+Saves markdown report to `brigade/explorations/`:
+- Feasibility assessment (Possible / Challenging / Not Recommended)
+- Technical approach
+- Challenges and risks
+- Library/tool recommendations
+- Effort estimate (Small / Medium / Large)
+- Alternatives considered
+
+## Workflow
+
+1. Ask exploration question
+2. Claude researches (reads codebase map, considers options)
+3. Report saved to `brigade/explorations/YYYY-MM-DD-slug.md`
+4. Review the report
+5. If feasible, use `/brigade plan` to create implementation tasks
+
+## Example
+
+```
+User: /brigade explore "can we add GraphQL alongside our REST API?"
+
+Claude: Exploring feasibility...
+
+✓ Exploration complete: brigade/explorations/2026-01-20-graphql-api.md
+
+---
+# Exploration: GraphQL API
+
+**Date:** 2026-01-20
+**Project:** My API Service
+
+## Feasibility
+
+**Possible** - The existing Express API structure supports adding GraphQL alongside REST.
+
+## Approach
+
+- Add Apollo Server as middleware
+- Create schema from existing models
+- Expose alongside /api/v1 routes
+- Share authentication middleware
+
+## Technical Challenges
+
+1. **N+1 query problems**: Current ORM doesn't support batching
+2. **Auth middleware**: Needs adaptation for GraphQL context
+3. **Client migration**: Existing clients need updates
+
+## Recommendations
+
+- **Apollo Server**: Most mature GraphQL server for Node
+- **DataLoader**: For batching to solve N+1 issues
+- **graphql-codegen**: For TypeScript type generation
+
+## Effort Estimate
+
+**Medium** - 2-3 days for basic implementation, more for full feature parity.
+
+## Next Steps
+
+1. Run `/brigade plan "Add GraphQL API alongside REST"` to create implementation tasks
+---
+
+Want me to plan this as a PRD?
+```
+
+---
+
 # Quick Reference
 
 ```bash
@@ -737,11 +831,14 @@ When using `/brigade cost`, report in plain English:
 /brigade pr prd.json             # Specific PRD
 /brigade pr --draft              # Create draft PR
 
+# Research
+./brigade.sh explore "question"  # Feasibility research
+./brigade.sh map                 # Analyze codebase
+
 # Utilities
 ./brigade.sh validate prd.json   # Check PRD
 ./brigade.sh summary prd.json    # Generate report
 ./brigade.sh cost prd.json       # Show cost breakdown
-./brigade.sh map                 # Analyze codebase
 ```
 
 ---

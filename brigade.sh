@@ -477,6 +477,7 @@ print_usage() {
   echo "  summary [prd.json] [file]  Generate markdown summary report from state"
   echo "  cost [prd.json]            Show estimated cost breakdown (duration-based)"
   echo "  map [output.md]            Generate codebase map (default: brigade/codebase-map.md)"
+  echo "  explore <question>         Research feasibility without generating PRD"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
   echo "  validate <prd.json>        Validate PRD structure and dependencies"
   echo "  opencode-models            List available OpenCode models"
@@ -6614,6 +6615,117 @@ Output the result as markdown that can be saved to a file."
   rm -f "$temp_output"
 }
 
+cmd_explore() {
+  local question="$*"
+
+  if [ -z "$question" ]; then
+    echo -e "${RED}Error: Please provide a question to explore${NC}"
+    echo "Usage: ./brigade.sh explore \"question\""
+    echo ""
+    echo "Examples:"
+    echo "  ./brigade.sh explore \"could we add real-time sync with websockets?\""
+    echo "  ./brigade.sh explore \"is it possible to support offline mode?\""
+    exit 1
+  fi
+
+  # Ensure explorations directory exists
+  mkdir -p "brigade/explorations"
+
+  # Generate filename from question
+  local date_prefix=$(date +%Y-%m-%d)
+  local slug=$(echo "$question" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-40 | sed 's/-$//')
+  local output_file="brigade/explorations/${date_prefix}-${slug}.md"
+
+  echo ""
+  echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+  log_event "START" "EXPLORATION: $question"
+  echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+  echo ""
+
+  # Load researcher prompt
+  local researcher_prompt="$CHEF_DIR/researcher.md"
+  if [ ! -f "$researcher_prompt" ]; then
+    echo -e "${RED}Error: Researcher prompt not found: $researcher_prompt${NC}"
+    exit 1
+  fi
+
+  # Build exploration prompt
+  local prompt=""
+  prompt+="$(cat "$researcher_prompt")"
+  prompt+=$'\n\n'
+  prompt+="---"$'\n'
+
+  # Include codebase map if available
+  if [ -f "brigade/codebase-map.md" ]; then
+    prompt+="CODEBASE CONTEXT"$'\n\n'
+    prompt+="$(cat brigade/codebase-map.md)"
+    prompt+=$'\n\n'
+    prompt+="---"$'\n'
+  else
+    echo -e "${GRAY}Tip: Run './brigade.sh map' first to include codebase context in exploration.${NC}"
+    echo ""
+  fi
+
+  prompt+="EXPLORATION REQUEST"$'\n\n'
+  prompt+="Question: $question"$'\n'
+  prompt+="Output File: $output_file"$'\n'
+  prompt+="Date: $(date +%Y-%m-%d)"$'\n\n'
+  prompt+="Research this question and save your findings to the output file."$'\n'
+  prompt+="When complete, output: <exploration_complete>$output_file</exploration_complete>"$'\n\n'
+  prompt+="BEGIN RESEARCH:"
+
+  local temp_output=$(brigade_mktemp)
+  local start_time=$(date +%s)
+
+  echo -e "${GRAY}Invoking Researcher (Executive model)...${NC}"
+  echo ""
+
+  # Run with Executive (uses same model, different prompt)
+  if $EXECUTIVE_CMD --dangerously-skip-permissions -p "$prompt" 2>&1 | tee "$temp_output"; then
+    : # Success
+  fi
+
+  local end_time=$(date +%s)
+  local duration=$((end_time - start_time))
+  echo ""
+  echo -e "${GRAY}Duration: ${duration}s${NC}"
+
+  # Check for completion signal
+  if grep -q "<exploration_complete>" "$temp_output" 2>/dev/null; then
+    local result_file=$(sed -n 's/.*<exploration_complete>\(.*\)<\/exploration_complete>.*/\1/p' "$temp_output" | head -1)
+
+    if [ -n "$result_file" ] && [ -f "$result_file" ]; then
+      echo ""
+      echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+      log_event "SUCCESS" "EXPLORATION COMPLETE: $result_file (${duration}s)"
+      echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+      echo ""
+      echo -e "${BOLD}Next steps:${NC}"
+      echo -e "  View report:    ${CYAN}cat $result_file${NC}"
+      echo -e "  Plan feature:   ${CYAN}./brigade.sh plan \"[feature description]\"${NC}"
+    else
+      echo ""
+      echo -e "${YELLOW}Exploration signal received but file not found: $result_file${NC}"
+    fi
+  elif [ -f "$output_file" ]; then
+    # File exists but no signal - still consider it a success
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+    log_event "SUCCESS" "EXPLORATION COMPLETE: $output_file (${duration}s)"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${BOLD}Next steps:${NC}"
+    echo -e "  View report:    ${CYAN}cat $output_file${NC}"
+    echo -e "  Plan feature:   ${CYAN}./brigade.sh plan \"[feature description]\"${NC}"
+  else
+    echo ""
+    echo -e "${YELLOW}Exploration output:${NC}"
+    echo -e "${GRAY}(No output file generated - see above for results)${NC}"
+  fi
+
+  rm -f "$temp_output"
+}
+
 cmd_opencode_models() {
   echo -e "${BOLD}Available OpenCode Models${NC}"
   echo -e "${GRAY}Use these values for OPENCODE_MODEL in brigade.config${NC}"
@@ -6727,6 +6839,9 @@ main() {
       ;;
     "map")
       cmd_map "$@"
+      ;;
+    "explore")
+      cmd_explore "$@"
       ;;
     "opencode-models")
       cmd_opencode_models "$@"
