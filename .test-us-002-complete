@@ -1,0 +1,7 @@
+US-002: Second task with dependency - COMPLETE
+
+Criterion 2: Met
+Completed at: 2026-01-19
+Depends on: US-001 (completed)
+
+This marker file demonstrates successful execution of the second task, which depends on US-001 being complete.
