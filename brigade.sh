@@ -332,6 +332,12 @@ MODULES=""                         # Comma-separated list of modules to enable
 MODULE_TIMEOUT=5                   # Seconds before killing hung module handler
 BRIGADE_LOADED_MODULES=""          # Runtime: space-separated list of loaded modules
 
+# Partial execution filters (set via command line flags)
+FILTER_ONLY=""                     # Comma-separated task IDs to run exclusively
+FILTER_SKIP=""                     # Comma-separated task IDs to skip
+FILTER_FROM=""                     # Start from this task ID (inclusive)
+FILTER_UNTIL=""                    # Run up to this task ID (inclusive)
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # LOGGING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -478,6 +484,7 @@ print_usage() {
   echo "  cost [prd.json]            Show estimated cost breakdown (duration-based)"
   echo "  map [output.md]            Generate codebase map (default: brigade/codebase-map.md)"
   echo "  explore <question>         Research feasibility without generating PRD"
+  echo "  iterate <description>     Quick tweak on completed PRD (creates micro-PRD)"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
   echo "  validate <prd.json>        Validate PRD structure and dependencies"
   echo "  opencode-models            List available OpenCode models"
@@ -490,12 +497,22 @@ print_usage() {
   echo "  --sequential               Disable parallel execution (debug parallel issues)"
   echo "  --walkaway                 AI decides retry/skip on failures (unattended mode)"
   echo ""
+  echo "Partial Execution (filter which tasks run):"
+  echo "  --only <ids>               Run only specified tasks (comma-separated)"
+  echo "  --skip <ids>               Skip specified tasks (comma-separated)"
+  echo "  --from <id>                Start from task (inclusive)"
+  echo "  --until <id>               Run up to task (inclusive)"
+  echo ""
   echo "Examples:"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
   echo "  ./brigade.sh service                                 # Uses brigade/tasks/latest.json"
   echo "  ./brigade.sh service brigade/tasks/prd.json          # Specific PRD"
   echo "  ./brigade.sh --auto-continue service brigade/tasks/prd-*.json  # Chain numbered PRDs"
   echo "  ./brigade.sh status                                  # Auto-detect active PRD"
+  echo "  ./brigade.sh --only US-001,US-003 service prd.json   # Run specific tasks"
+  echo "  ./brigade.sh --skip US-007 service prd.json          # Skip a task"
+  echo "  ./brigade.sh --from US-003 service prd.json          # Start from task"
+  echo "  ./brigade.sh --dry-run --only US-001 service prd.json # Preview filtered plan"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -908,7 +925,18 @@ get_task_count() {
 
 get_pending_tasks() {
   local prd_path="$1"
-  jq -r '.tasks[] | select(.passes == false) | .id' "$prd_path"
+  local all_pending=$(jq -r '.tasks[] | select(.passes == false) | .id' "$prd_path")
+
+  # Apply partial execution filters if any are active
+  if has_active_filters; then
+    for task_id in $all_pending; do
+      if should_run_task "$prd_path" "$task_id"; then
+        echo "$task_id"
+      fi
+    done
+  else
+    echo "$all_pending"
+  fi
 }
 
 get_task_by_id() {
@@ -994,6 +1022,177 @@ can_run_parallel() {
 
   # For now, only parallelize junior tasks
   return 1
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PARTIAL EXECUTION FILTERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Get the index (1-based) of a task in the PRD task list
+# Returns empty if task not found
+get_task_order() {
+  local prd_path="$1"
+  local task_id="$2"
+  local index=1
+
+  for id in $(jq -r '.tasks[].id' "$prd_path"); do
+    if [ "$id" == "$task_id" ]; then
+      echo "$index"
+      return 0
+    fi
+    index=$((index + 1))
+  done
+
+  echo ""
+  return 1
+}
+
+# Check if a task passes all partial execution filters
+# Returns 0 if task should run, 1 if task should be skipped
+should_run_task() {
+  local prd_path="$1"
+  local task_id="$2"
+
+  # No filters = run all tasks
+  if [ -z "$FILTER_ONLY" ] && [ -z "$FILTER_SKIP" ] && [ -z "$FILTER_FROM" ] && [ -z "$FILTER_UNTIL" ]; then
+    return 0
+  fi
+
+  # --only filter: task must be in the list
+  if [ -n "$FILTER_ONLY" ]; then
+    if ! echo ",$FILTER_ONLY," | grep -q ",$task_id,"; then
+      return 1
+    fi
+  fi
+
+  # --skip filter: task must NOT be in the list
+  if [ -n "$FILTER_SKIP" ]; then
+    if echo ",$FILTER_SKIP," | grep -q ",$task_id,"; then
+      return 1
+    fi
+  fi
+
+  # --from filter: task must be at or after the specified task
+  if [ -n "$FILTER_FROM" ]; then
+    local from_order=$(get_task_order "$prd_path" "$FILTER_FROM")
+    local task_order=$(get_task_order "$prd_path" "$task_id")
+    if [ -n "$from_order" ] && [ -n "$task_order" ]; then
+      if [ "$task_order" -lt "$from_order" ]; then
+        return 1
+      fi
+    fi
+  fi
+
+  # --until filter: task must be at or before the specified task
+  if [ -n "$FILTER_UNTIL" ]; then
+    local until_order=$(get_task_order "$prd_path" "$FILTER_UNTIL")
+    local task_order=$(get_task_order "$prd_path" "$task_id")
+    if [ -n "$until_order" ] && [ -n "$task_order" ]; then
+      if [ "$task_order" -gt "$until_order" ]; then
+        return 1
+      fi
+    fi
+  fi
+
+  return 0
+}
+
+# Validate that all task IDs in filters exist in the PRD
+# Returns 0 if valid, 1 if invalid (prints error)
+validate_task_filters() {
+  local prd_path="$1"
+  local all_ids=$(jq -r '.tasks[].id' "$prd_path" | tr '\n' ',' | sed 's/,$//')
+  local valid=0
+
+  # Check --only tasks
+  if [ -n "$FILTER_ONLY" ]; then
+    for task_id in $(echo "$FILTER_ONLY" | tr ',' ' '); do
+      if ! echo ",$all_ids," | grep -q ",$task_id,"; then
+        echo -e "${RED}Error: Task ID '$task_id' in --only does not exist in PRD${NC}"
+        valid=1
+      fi
+    done
+  fi
+
+  # Check --skip tasks
+  if [ -n "$FILTER_SKIP" ]; then
+    for task_id in $(echo "$FILTER_SKIP" | tr ',' ' '); do
+      if ! echo ",$all_ids," | grep -q ",$task_id,"; then
+        echo -e "${RED}Error: Task ID '$task_id' in --skip does not exist in PRD${NC}"
+        valid=1
+      fi
+    done
+  fi
+
+  # Check --from task
+  if [ -n "$FILTER_FROM" ]; then
+    if ! echo ",$all_ids," | grep -q ",$FILTER_FROM,"; then
+      echo -e "${RED}Error: Task ID '$FILTER_FROM' in --from does not exist in PRD${NC}"
+      valid=1
+    fi
+  fi
+
+  # Check --until task
+  if [ -n "$FILTER_UNTIL" ]; then
+    if ! echo ",$all_ids," | grep -q ",$FILTER_UNTIL,"; then
+      echo -e "${RED}Error: Task ID '$FILTER_UNTIL' in --until does not exist in PRD${NC}"
+      valid=1
+    fi
+  fi
+
+  return $valid
+}
+
+# Validate that filtered task set has all dependencies met
+# Returns 0 if valid, 1 if invalid (prints error with hints)
+validate_filter_dependencies() {
+  local prd_path="$1"
+  local valid=0
+
+  # Get all task IDs in the filtered set
+  for task_id in $(jq -r '.tasks[].id' "$prd_path"); do
+    # Skip tasks that won't run
+    if ! should_run_task "$prd_path" "$task_id"; then
+      continue
+    fi
+
+    # Skip tasks already completed
+    local passes=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .passes' "$prd_path")
+    if [ "$passes" == "true" ]; then
+      continue
+    fi
+
+    # Check each dependency
+    for dep in $(get_task_dependencies "$prd_path" "$task_id"); do
+      local dep_passes=$(jq -r --arg id "$dep" '.tasks[] | select(.id == $id) | .passes' "$prd_path")
+
+      # If dependency is not complete and not in the filtered run set, error
+      if [ "$dep_passes" != "true" ]; then
+        if ! should_run_task "$prd_path" "$dep"; then
+          echo -e "${RED}Error: Task $task_id depends on $dep which is not complete and not in run set${NC}"
+          echo -e "${GRAY}Hint: Add $dep to --only, or use --skip to skip $task_id instead${NC}"
+          valid=1
+        fi
+      fi
+    done
+  done
+
+  return $valid
+}
+
+# Check if any partial execution filters are active
+has_active_filters() {
+  [ -n "$FILTER_ONLY" ] || [ -n "$FILTER_SKIP" ] || [ -n "$FILTER_FROM" ] || [ -n "$FILTER_UNTIL" ]
+}
+
+# Get display string for active filters
+get_filter_display() {
+  local parts=""
+  [ -n "$FILTER_ONLY" ] && parts="${parts}only:$FILTER_ONLY "
+  [ -n "$FILTER_SKIP" ] && parts="${parts}skip:$FILTER_SKIP "
+  [ -n "$FILTER_FROM" ] && parts="${parts}from:$FILTER_FROM "
+  [ -n "$FILTER_UNTIL" ] && parts="${parts}until:$FILTER_UNTIL "
+  echo "$parts" | xargs
 }
 
 mark_task_complete() {
@@ -2522,9 +2721,26 @@ Tip: Run these yourself before signaling COMPLETE to ensure they pass.
     fi
   fi
 
+  # Include iteration context if this is an iteration task
+  local iteration_context_section=""
+  if [ -n "$ITERATION_PARENT_PRD" ] && [ -f "$ITERATION_PARENT_PRD" ]; then
+    local parent_feature=$(jq -r '.featureName // "Unknown"' "$ITERATION_PARENT_PRD")
+    local parent_tasks=$(jq -r '.tasks[] | "- \(.id): \(.title)"' "$ITERATION_PARENT_PRD" 2>/dev/null | head -20)
+    iteration_context_section="
+---
+ITERATION CONTEXT (this is a quick tweak on completed work):
+Parent PRD: $parent_feature ($ITERATION_PARENT_PRD)
+Parent tasks completed:
+$parent_tasks
+
+This is a small iteration/tweak on the completed feature. Focus only on the specific change requested.
+---
+"
+  fi
+
   cat <<EOF
 $chef_prompt
-$learnings_section$review_feedback_section$verification_feedback_section$todo_feedback_section$manual_verification_feedback_section$verification_section
+$learnings_section$review_feedback_section$verification_feedback_section$todo_feedback_section$manual_verification_feedback_section$verification_section$iteration_context_section
 ---
 FEATURE: $feature_name
 PRD_FILE: $prd_path
@@ -5239,6 +5455,25 @@ cmd_service() {
   fi
   echo -e "${GREEN}✓${NC} PRD valid"
 
+  # Validate partial execution filters if any are active
+  if has_active_filters; then
+    echo -e "${GRAY}Validating partial execution filters...${NC}"
+
+    # Check that all task IDs in filters exist
+    if ! validate_task_filters "$prd_path"; then
+      echo -e "${RED}Filter validation failed. Check task IDs.${NC}"
+      exit 1
+    fi
+
+    # Check that filtered task set has valid dependencies
+    if ! validate_filter_dependencies "$prd_path"; then
+      echo -e "${RED}Filter dependency validation failed.${NC}"
+      exit 1
+    fi
+
+    echo -e "${GREEN}✓${NC} Filters valid ($(get_filter_display))"
+  fi
+
   # Check verification quality (warn if only grep-based, no execution tests)
   check_verification_quality "$prd_path"
 
@@ -5298,6 +5533,12 @@ cmd_service() {
     echo -e "  Phase Review:   $([ "$PHASE_REVIEW_ENABLED" == "true" ] && echo "Every $PHASE_REVIEW_AFTER tasks ($PHASE_REVIEW_ACTION)" || echo "OFF")"
     echo ""
 
+    # Show active filters if any
+    if has_active_filters; then
+      echo -e "${BOLD}Active Filters:${NC} $(get_filter_display)"
+      echo ""
+    fi
+
     # Show task execution order
     echo -e "${BOLD}Execution Plan:${NC}"
     local task_num=0
@@ -5306,6 +5547,8 @@ cmd_service() {
       task_num=$((task_num + 1))
       if [ "$passes" == "true" ]; then
         echo -e "  ${GREEN}✓${NC} $id: $title ${GRAY}[done]${NC}"
+      elif has_active_filters && ! should_run_task "$prd_path" "$id"; then
+        echo -e "  ${GRAY}⊘ $id: $title [filtered out]${NC}"
       else
         local worker="?"
         case "$complexity" in
@@ -6754,6 +6997,172 @@ cmd_opencode_models() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ITERATION MODE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Find the most recently completed PRD (all tasks pass, has state file)
+find_completed_prd() {
+  local latest_prd=""
+  local latest_time=0
+
+  for state_file in brigade/tasks/prd-*.state.json; do
+    [ ! -f "$state_file" ] && continue
+
+    # Get corresponding PRD file
+    local prd_file="${state_file%.state.json}.json"
+    [ ! -f "$prd_file" ] && continue
+
+    # Check if all tasks are complete
+    local pending=$(jq '[.tasks[] | select(.passes == false)] | length' "$prd_file" 2>/dev/null)
+    [ "$pending" != "0" ] && continue
+
+    # Get modification time of state file
+    local mtime=$(stat -f "%m" "$state_file" 2>/dev/null || stat -c "%Y" "$state_file" 2>/dev/null)
+    if [ -n "$mtime" ] && [ "$mtime" -gt "$latest_time" ]; then
+      latest_time="$mtime"
+      latest_prd="$prd_file"
+    fi
+  done
+
+  echo "$latest_prd"
+}
+
+# Check if description sounds like a substantial change (vs. a tweak)
+is_substantial_change() {
+  local description="$1"
+  local desc_lower=$(echo "$description" | tr '[:upper:]' '[:lower:]')
+
+  # Keywords that suggest substantial work
+  local substantial_keywords="add new|implement|create|refactor|rewrite|redesign|overhaul|migrate|integrate"
+  if echo "$desc_lower" | grep -qE "$substantial_keywords"; then
+    return 0  # Substantial
+  fi
+
+  # Word count heuristic
+  local word_count=$(echo "$description" | wc -w | tr -d ' ')
+  if [ "$word_count" -gt 15 ]; then
+    return 0  # Substantial
+  fi
+
+  return 1  # Tweak
+}
+
+cmd_iterate() {
+  local description="${1:-}"
+
+  if [ -z "$description" ]; then
+    echo -e "${RED}Error: Missing iteration description${NC}"
+    echo ""
+    echo "Usage: ./brigade.sh iterate \"description of tweak\""
+    echo ""
+    echo "Examples:"
+    echo "  ./brigade.sh iterate \"make the button blue instead of green\""
+    echo "  ./brigade.sh iterate \"fix typo in error message\""
+    exit 1
+  fi
+
+  # Find most recently completed PRD
+  local parent_prd=$(find_completed_prd)
+
+  if [ -z "$parent_prd" ]; then
+    echo -e "${RED}Error: No completed PRD found${NC}"
+    echo ""
+    echo -e "${GRAY}Iteration mode requires a completed PRD to iterate on.${NC}"
+    echo -e "${GRAY}Run './brigade.sh service prd.json' first to complete a PRD.${NC}"
+    exit 1
+  fi
+
+  local parent_name=$(jq -r '.featureName // "Unknown"' "$parent_prd")
+  local parent_branch=$(jq -r '.branchName // ""' "$parent_prd")
+
+  echo ""
+  echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║  ITERATION MODE                                           ║${NC}"
+  echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "${BOLD}Parent PRD:${NC} $parent_name"
+  echo -e "${GRAY}$parent_prd${NC}"
+  echo ""
+  echo -e "${BOLD}Tweak:${NC} $description"
+  echo ""
+
+  # Warn if this looks substantial
+  if is_substantial_change "$description"; then
+    echo -e "${YELLOW}⚠ This description sounds substantial.${NC}"
+    echo -e "${GRAY}Iteration mode is for quick tweaks. For larger changes, consider:${NC}"
+    echo -e "${GRAY}  ./brigade.sh plan \"$description\"${NC}"
+    echo ""
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo -e "${GRAY}Aborted.${NC}"
+      exit 0
+    fi
+    echo ""
+  fi
+
+  # Generate iteration PRD
+  local timestamp=$(date +%s)
+  local parent_prefix=$(get_prd_prefix "$parent_prd")
+  local iter_prd="brigade/tasks/prd-${parent_prefix}-iter-${timestamp}.json"
+
+  # Create minimal iteration PRD
+  cat > "$iter_prd" << EOF
+{
+  "featureName": "Iteration: $description",
+  "branchName": "$parent_branch",
+  "iteration": true,
+  "parentPrd": "$parent_prd",
+  "tasks": [
+    {
+      "id": "ITER-001",
+      "title": "$description",
+      "acceptanceCriteria": ["Change implemented as described"],
+      "dependsOn": [],
+      "complexity": "junior",
+      "passes": false
+    }
+  ]
+}
+EOF
+
+  echo -e "${GREEN}✓${NC} Created iteration PRD: $iter_prd"
+  echo ""
+
+  # Set parent context for worker
+  export ITERATION_PARENT_PRD="$parent_prd"
+
+  # Execute the iteration task
+  log_event "START" "Iteration task"
+
+  # Run the ticket directly
+  if cmd_ticket "$iter_prd" "ITER-001"; then
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+    log_event "SUCCESS" "Iteration complete"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    # Offer to clean up
+    read -p "Remove iteration PRD? (Y/n) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+      rm -f "$iter_prd"
+      rm -f "${iter_prd%.json}.state.json"
+      echo -e "${GREEN}✓${NC} Cleaned up iteration files"
+    else
+      echo -e "${GRAY}Kept: $iter_prd${NC}"
+    fi
+  else
+    echo ""
+    echo -e "${YELLOW}Iteration task did not complete successfully.${NC}"
+    echo -e "${GRAY}PRD preserved: $iter_prd${NC}"
+    echo -e "${GRAY}Resume with: ./brigade.sh resume $iter_prd${NC}"
+    exit 1
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -6797,6 +7206,22 @@ main() {
         WALKAWAY_MODE=true
         echo -e "${CYAN}Walkaway mode: AI will decide retry/skip on failures${NC}"
         shift
+        ;;
+      --only)
+        FILTER_ONLY="$2"
+        shift 2
+        ;;
+      --skip)
+        FILTER_SKIP="$2"
+        shift 2
+        ;;
+      --from)
+        FILTER_FROM="$2"
+        shift 2
+        ;;
+      --until)
+        FILTER_UNTIL="$2"
+        shift 2
         ;;
       *)
         echo -e "${RED}Unknown option: $1${NC}"
@@ -6842,6 +7267,9 @@ main() {
       ;;
     "explore")
       cmd_explore "$@"
+      ;;
+    "iterate")
+      cmd_iterate "$@"
       ;;
     "opencode-models")
       cmd_opencode_models "$@"

@@ -17,6 +17,7 @@ You are orchestrating Brigade, a multi-model AI task execution framework. This s
 | `/brigade pr` | Create PR from completed PRD |
 | `/brigade cost` | Show estimated cost breakdown |
 | `/brigade explore "question"` | Research feasibility without generating PRD |
+| `/brigade iterate "tweak"` | Quick tweak on completed PRD |
 
 Aliases: `build` = `plan`, `service` = `run`, `execute` = `run`
 
@@ -802,6 +803,68 @@ Want me to plan this as a PRD?
 
 ---
 
+# /brigade iterate
+
+Make quick tweaks to a completed PRD without full planning ceremony.
+
+## Usage
+
+```
+/brigade iterate "make the button blue instead of green"
+/brigade iterate "fix typo in error message"
+```
+
+## When to Use
+
+- Small changes after completing a PRD
+- UI tweaks (colors, text, spacing)
+- Typo fixes
+- Minor adjustments based on feedback
+
+## When NOT to Use
+
+- New features (use `/brigade plan`)
+- Multi-file changes
+- Architectural changes
+- Anything that sounds "substantial"
+
+## How It Works
+
+1. Finds the most recently completed PRD (all tasks pass)
+2. Detects if description sounds substantial (warns if so)
+3. Creates a micro-PRD linked to the parent
+4. Executes single task with parent context
+5. Offers to clean up iteration PRD on success
+
+## Example
+
+```
+User: /brigade iterate "change primary button color from blue to green"
+
+Claude:
+╔═══════════════════════════════════════════════════════════╗
+║  ITERATION MODE                                           ║
+╚═══════════════════════════════════════════════════════════╝
+
+Parent PRD: Add User Authentication
+brigade/tasks/prd-auth.json
+
+Tweak: change primary button color from blue to green
+
+✓ Created iteration PRD: brigade/tasks/prd-auth-iter-1737388800.json
+
+[Executes task]
+
+╔═══════════════════════════════════════════════════════════╗
+✓ Iteration complete
+╚═══════════════════════════════════════════════════════════╝
+
+Remove iteration PRD? (Y/n) y
+✓ Cleaned up iteration files
+```
+
+---
+
 # Quick Reference
 
 ```bash
@@ -817,6 +880,13 @@ Want me to plan this as a PRD?
 ./brigade.sh --walkaway service prd.json  # Unattended
 ./brigade.sh --auto-continue service prd-*.json  # Chain PRDs
 
+# Partial Execution (filter which tasks run)
+./brigade.sh --only US-001,US-003 service prd.json   # Run specific tasks
+./brigade.sh --skip US-007 service prd.json          # Skip specific tasks
+./brigade.sh --from US-003 service prd.json          # Start from task
+./brigade.sh --until US-005 service prd.json         # Run up to task
+./brigade.sh --dry-run --only US-001 service prd.json  # Preview filtered plan
+
 # Monitoring
 ./brigade.sh status              # Human-readable
 ./brigade.sh status --json       # Machine-readable
@@ -831,9 +901,10 @@ Want me to plan this as a PRD?
 /brigade pr prd.json             # Specific PRD
 /brigade pr --draft              # Create draft PR
 
-# Research
+# Research & Iteration
 ./brigade.sh explore "question"  # Feasibility research
 ./brigade.sh map                 # Analyze codebase
+./brigade.sh iterate "tweak"     # Quick tweak on completed PRD
 
 # Utilities
 ./brigade.sh validate prd.json   # Check PRD
