@@ -1,0 +1,1 @@
+Task US-002 completed: Criterion 2 satisfied (depends on US-001)
