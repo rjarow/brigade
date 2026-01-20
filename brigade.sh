@@ -198,6 +198,11 @@ PHASE_REVIEW_ACTION=continue # continue | pause | remediate
 AUTO_CONTINUE=false          # Chain numbered PRDs without user intervention
 PHASE_GATE="continue"        # review | continue | pause (between PRDs)
 
+# Walkaway mode defaults (autonomous execution without human input)
+WALKAWAY_MODE=false          # Use AI to decide retry/skip on failures
+WALKAWAY_MAX_SKIPS=3         # Max consecutive skips before pausing (prevent runaway)
+WALKAWAY_DECISION_TIMEOUT=120  # Seconds to wait for AI decision
+
 # Context isolation defaults
 CONTEXT_ISOLATION=true
 STATE_FILE="brigade-state.json"
@@ -396,6 +401,7 @@ print_usage() {
   echo "  --auto-continue            Chain multiple PRDs for unattended execution"
   echo "  --phase-gate <mode>        Between-PRD behavior: review|continue|pause (default: continue)"
   echo "  --sequential               Disable parallel execution (debug parallel issues)"
+  echo "  --walkaway                 AI decides retry/skip on failures (unattended mode)"
   echo ""
   echo "Examples:"
   echo "  ./brigade.sh plan \"Add user authentication with JWT\""
@@ -2109,6 +2115,7 @@ fire_ticket() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Run verification commands for a task
+# Supports both old format (string[]) and new format ({type, cmd}[])
 # Returns 0 if all pass, 1 if any fail (sets LAST_VERIFICATION_FEEDBACK)
 run_verification() {
   local prd_path="$1"
@@ -2140,10 +2147,36 @@ run_verification() {
   local fail_count=0
 
   # Run each verification command
-  while IFS= read -r cmd; do
+  # Supports both string format and {type, cmd} object format
+  local i=0
+  while [ $i -lt "$cmd_count" ]; do
+    local item=$(echo "$verification_json" | jq ".[$i]")
+    local cmd=""
+    local vtype=""
+
+    # Check if item is a string or object
+    local item_type=$(echo "$item" | jq -r 'type')
+    if [ "$item_type" == "string" ]; then
+      cmd=$(echo "$item" | jq -r '.')
+      vtype="unknown"
+    else
+      cmd=$(echo "$item" | jq -r '.cmd // empty')
+      vtype=$(echo "$item" | jq -r '.type // "unknown"')
+    fi
+
+    i=$((i + 1))
     [ -z "$cmd" ] && continue
 
-    echo -e "${GRAY}  ▶ $cmd${NC}"
+    # Show type badge if known
+    local type_badge=""
+    case "$vtype" in
+      pattern)     type_badge="${GRAY}[pattern]${NC} " ;;
+      unit)        type_badge="${CYAN}[unit]${NC} " ;;
+      integration) type_badge="${MAGENTA}[integration]${NC} " ;;
+      smoke)       type_badge="${YELLOW}[smoke]${NC} " ;;
+    esac
+
+    echo -e "  ${type_badge}${GRAY}▶ $cmd${NC}"
 
     # Run with timeout
     local output
@@ -2164,20 +2197,20 @@ run_verification() {
       pass_count=$((pass_count + 1))
     elif [ "$exit_code" -eq 124 ]; then
       echo -e "    ${RED}✗ TIMEOUT (>${VERIFICATION_TIMEOUT}s)${NC}"
-      failed_cmds="${failed_cmds}\n- \`$cmd\` - TIMEOUT after ${VERIFICATION_TIMEOUT}s"
+      failed_cmds="${failed_cmds}\n- [$vtype] \`$cmd\` - TIMEOUT after ${VERIFICATION_TIMEOUT}s"
       fail_count=$((fail_count + 1))
     else
       echo -e "    ${RED}✗ FAIL (exit $exit_code)${NC}"
       if [ -n "$output" ]; then
         echo -e "    ${GRAY}Output: $(echo "$output" | head -3)${NC}"
       fi
-      failed_cmds="${failed_cmds}\n- \`$cmd\` - exit code $exit_code"
+      failed_cmds="${failed_cmds}\n- [$vtype] \`$cmd\` - exit code $exit_code"
       if [ -n "$output" ]; then
         failed_cmds="${failed_cmds}\n  Output: $(echo "$output" | head -3)"
       fi
       fail_count=$((fail_count + 1))
     fi
-  done < <(echo "$verification_json" | jq -r '.[]')
+  done
 
   echo ""
 
@@ -2195,6 +2228,8 @@ Please fix these issues and ensure all verification commands pass before signali
 }
 
 # Get verification commands for a task (for display in prompts)
+# Supports both old format (string[]) and new format ({type, cmd}[])
+# Returns commands only (no type info) for backward compatibility
 get_verification_commands() {
   local prd_path="$1"
   local task_id="$2"
@@ -2207,7 +2242,178 @@ get_verification_commands() {
     return
   fi
 
-  echo "$verification_json" | jq -r '.[]'
+  # Extract commands from both formats
+  # If item is a string, use it directly; if object, extract .cmd
+  echo "$verification_json" | jq -r '.[] | if type == "string" then . else .cmd // empty end'
+}
+
+# Classify task type based on title keywords
+# Returns: create, integrate, feature, or unknown
+# Used to determine what verification types are appropriate
+classify_task_type() {
+  local title="$1"
+  local title_lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+
+  # Integration tasks: connect, integrate, wire, hook up, link
+  if echo "$title_lower" | grep -qE '\b(connect|integrate|wire|hook\s*up|link|bridge|merge|combine)\b'; then
+    echo "integrate"
+    return
+  fi
+
+  # Feature/flow tasks: flow, workflow, user can, end-to-end, e2e
+  if echo "$title_lower" | grep -qE '\b(flow|workflow|user\s*can|end-to-end|e2e|journey|scenario)\b'; then
+    echo "feature"
+    return
+  fi
+
+  # Create tasks: add, create, implement, build, write, make
+  if echo "$title_lower" | grep -qE '\b(add|create|implement|build|write|make|introduce|develop)\b'; then
+    echo "create"
+    return
+  fi
+
+  echo "unknown"
+}
+
+# Get verification types present in a task
+# Returns space-separated list of types: pattern unit integration smoke
+get_verification_types() {
+  local prd_path="$1"
+  local task_id="$2"
+
+  local verification_json=$(jq -r --arg id "$task_id" \
+    '.tasks[] | select(.id == $id) | .verification // []' "$prd_path")
+
+  if [ "$verification_json" == "[]" ] || [ "$verification_json" == "null" ]; then
+    echo ""
+    return
+  fi
+
+  local cmd_count=$(echo "$verification_json" | jq 'length')
+  local types=""
+  local has_pattern=false
+  local has_unit=false
+  local has_integration=false
+  local has_smoke=false
+  local has_execution=false
+
+  local i=0
+  while [ $i -lt "$cmd_count" ]; do
+    local item=$(echo "$verification_json" | jq ".[$i]")
+    local item_type=$(echo "$item" | jq -r 'type')
+    local vtype=""
+    local cmd=""
+
+    if [ "$item_type" == "string" ]; then
+      cmd=$(echo "$item" | jq -r '.')
+      # Infer type from command pattern for old format
+      if echo "$cmd" | grep -qE '^[[:space:]]*(grep|egrep|fgrep|test|stat|\[|ls[[:space:]])'; then
+        vtype="pattern"
+      elif echo "$cmd" | grep -qE '(go test|npm test|pytest|cargo test|jest|mocha|bats)'; then
+        # Check if it's likely an integration test
+        if echo "$cmd" | grep -qiE '(integration|e2e|flow|scenario|-run\s+Test.*Flow|-run\s+Test.*Integration)'; then
+          vtype="integration"
+        else
+          vtype="unit"
+        fi
+      else
+        vtype="smoke"  # Assume execution-based
+      fi
+    else
+      vtype=$(echo "$item" | jq -r '.type // "unknown"')
+      cmd=$(echo "$item" | jq -r '.cmd // empty')
+    fi
+
+    case "$vtype" in
+      pattern)     has_pattern=true ;;
+      unit)        has_unit=true; has_execution=true ;;
+      integration) has_integration=true; has_execution=true ;;
+      smoke)       has_smoke=true; has_execution=true ;;
+      *)
+        # For unknown types, check if command looks like execution
+        if [ -n "$cmd" ] && ! echo "$cmd" | grep -qE '^[[:space:]]*(grep|egrep|fgrep|test|stat|\[)'; then
+          has_execution=true
+        fi
+        ;;
+    esac
+
+    i=$((i + 1))
+  done
+
+  # Build result string
+  [ "$has_pattern" == "true" ] && types="$types pattern"
+  [ "$has_unit" == "true" ] && types="$types unit"
+  [ "$has_integration" == "true" ] && types="$types integration"
+  [ "$has_smoke" == "true" ] && types="$types smoke"
+
+  echo "$types" | sed 's/^ //'
+}
+
+# Check if task's verification types match its task type
+# Returns 0 if OK, 1 if warning (missing required verification type)
+# Sets VERIFICATION_COVERAGE_WARNING with details
+check_verification_coverage() {
+  local prd_path="$1"
+  local task_id="$2"
+
+  VERIFICATION_COVERAGE_WARNING=""
+
+  local task_title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title' "$prd_path")
+  local task_type=$(classify_task_type "$task_title")
+  local verification_types=$(get_verification_types "$prd_path" "$task_id")
+
+  # Skip check if no verification at all (separate concern)
+  if [ -z "$verification_types" ]; then
+    return 0
+  fi
+
+  local missing=""
+
+  case "$task_type" in
+    integrate)
+      # Integration tasks need integration tests
+      if ! echo "$verification_types" | grep -q "integration"; then
+        missing="integration"
+      fi
+      ;;
+    feature)
+      # Feature tasks need smoke or integration tests
+      if ! echo "$verification_types" | grep -qE "(smoke|integration)"; then
+        missing="smoke or integration"
+      fi
+      ;;
+    create)
+      # Create tasks should have unit or integration tests
+      if ! echo "$verification_types" | grep -qE "(unit|integration|smoke)"; then
+        missing="unit"
+      fi
+      ;;
+  esac
+
+  if [ -n "$missing" ]; then
+    VERIFICATION_COVERAGE_WARNING="Task '$task_id' ($task_title) is a '$task_type' task but only has [$verification_types] verification. Consider adding $missing tests."
+    return 1
+  fi
+
+  return 0
+}
+
+# Check all tasks in PRD for verification coverage issues
+# Returns 0 if OK, 1 if warnings found (prints warnings)
+check_prd_verification_coverage() {
+  local prd_path="$1"
+  local warnings=0
+
+  local all_ids=$(jq -r '.tasks[].id' "$prd_path")
+
+  for task_id in $all_ids; do
+    if ! check_verification_coverage "$prd_path" "$task_id"; then
+      echo -e "${YELLOW}⚠${NC} $VERIFICATION_COVERAGE_WARNING"
+      warnings=$((warnings + 1))
+    fi
+  done
+
+  return $warnings
 }
 
 # Scan git-changed files for TODO/FIXME/HACK comments that may indicate incomplete work
@@ -2476,6 +2682,212 @@ executive_review() {
     LAST_REVIEW_FEEDBACK="$review_reason"
     return 1
   fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WALKAWAY MODE (AI-driven resume decisions)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Global counter for consecutive skips (reset on successful task)
+WALKAWAY_CONSECUTIVE_SKIPS=0
+
+# Build prompt for walkaway decision
+build_walkaway_decision_prompt() {
+  local prd_path="$1"
+  local task_id="$2"
+  local failure_reason="$3"
+  local iteration_count="$4"
+  local last_worker="$5"
+
+  local task_json=$(get_task_by_id "$prd_path" "$task_id")
+  local feature_name=$(jq -r '.featureName' "$prd_path")
+  local task_title=$(echo "$task_json" | jq -r '.title')
+
+  # Get task history from state
+  local state_path=$(get_state_path "$prd_path")
+  local task_history=""
+  if [ -f "$state_path" ]; then
+    task_history=$(jq -r --arg id "$task_id" '
+      [.taskHistory[] | select(.taskId == $id)] |
+      .[-5:] |
+      map("- \(.timestamp | split("T")[1] | split("+")[0] | .[0:8]): \(.worker) - \(.status)") |
+      join("\n")' "$state_path" 2>/dev/null || echo "")
+  fi
+
+  # Get completed and pending tasks
+  local completed_tasks=$(jq -r '[.tasks[] | select(.passes == true) | .id] | join(", ")' "$prd_path")
+  local pending_tasks=$(jq -r '[.tasks[] | select(.passes == false) | .id] | join(", ")' "$prd_path")
+
+  cat <<EOF
+You are the Executive Chef making an autonomous decision about a failed task in walkaway mode.
+
+FEATURE: $feature_name
+FAILED TASK: $task_id - $task_title
+LAST WORKER: $(get_worker_name "$last_worker")
+ITERATIONS: $iteration_count
+FAILURE REASON: $failure_reason
+
+TASK DETAILS:
+$task_json
+
+RECENT HISTORY:
+$task_history
+
+PROJECT STATUS:
+- Completed: $completed_tasks
+- Pending: $pending_tasks
+- Consecutive skips so far: $WALKAWAY_CONSECUTIVE_SKIPS
+
+DECISION CRITERIA:
+1. RETRY if:
+   - Failure seems transient (timeout, network, flaky test)
+   - Task hasn't been tried many times yet (< 3 iterations at current tier)
+   - Error suggests simple fix the worker might find
+
+2. SKIP if:
+   - Task has been tried many times without progress
+   - Failure is fundamental (missing dependency, wrong approach)
+   - Task is blocking but not critical path
+   - Worker explicitly signaled BLOCKED
+
+3. ABORT (rare) if:
+   - Failure indicates systemic issue affecting all tasks
+   - Critical path task with no workaround
+   - Already hit max consecutive skips ($WALKAWAY_MAX_SKIPS)
+
+OUTPUT FORMAT (exactly one of these):
+<decision>RETRY</decision>
+<decision>SKIP</decision>
+<decision>ABORT</decision>
+
+<reason>Your brief explanation for the decision</reason>
+
+Make your decision:
+EOF
+}
+
+# Ask Executive Chef to decide retry/skip/abort
+# Returns: 0=retry, 1=skip, 2=abort
+# Sets: WALKAWAY_DECISION_REASON
+walkaway_decide_resume() {
+  local prd_path="$1"
+  local task_id="$2"
+  local failure_reason="$3"
+  local iteration_count="${4:-0}"
+  local last_worker="${5:-unknown}"
+
+  WALKAWAY_DECISION_REASON=""
+
+  local display_id=$(format_task_id "$prd_path" "$task_id")
+
+  echo ""
+  echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  log_event "WALKAWAY" "Executive Chef deciding: $display_id ($failure_reason)"
+  echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+
+  local decision_prompt=$(build_walkaway_decision_prompt "$prd_path" "$task_id" "$failure_reason" "$iteration_count" "$last_worker")
+  local output_file=$(brigade_mktemp)
+
+  # Execute with timeout
+  local start_time=$(date +%s)
+
+  if command -v timeout &>/dev/null; then
+    timeout "$WALKAWAY_DECISION_TIMEOUT" $EXECUTIVE_CMD --dangerously-skip-permissions -p "$decision_prompt" 2>&1 | tee "$output_file"
+  elif command -v gtimeout &>/dev/null; then
+    gtimeout "$WALKAWAY_DECISION_TIMEOUT" $EXECUTIVE_CMD --dangerously-skip-permissions -p "$decision_prompt" 2>&1 | tee "$output_file"
+  else
+    $EXECUTIVE_CMD --dangerously-skip-permissions -p "$decision_prompt" 2>&1 | tee "$output_file"
+  fi
+
+  local end_time=$(date +%s)
+  local duration=$((end_time - start_time))
+  echo -e "${GRAY}Decision duration: ${duration}s${NC}"
+
+  # Extract decision
+  local decision=""
+  if grep -q "<decision>RETRY</decision>" "$output_file" 2>/dev/null; then
+    decision="RETRY"
+  elif grep -q "<decision>SKIP</decision>" "$output_file" 2>/dev/null; then
+    decision="SKIP"
+  elif grep -q "<decision>ABORT</decision>" "$output_file" 2>/dev/null; then
+    decision="ABORT"
+  else
+    # Default to retry if unclear (conservative)
+    decision="RETRY"
+    echo -e "${YELLOW}⚠ No clear decision signal, defaulting to RETRY${NC}"
+  fi
+
+  # Extract reason
+  WALKAWAY_DECISION_REASON=$(sed -n 's/.*<reason>\(.*\)<\/reason>.*/\1/p' "$output_file" 2>/dev/null | head -1)
+  if [ -z "$WALKAWAY_DECISION_REASON" ]; then
+    WALKAWAY_DECISION_REASON="AI decision: $decision"
+  fi
+
+  rm -f "$output_file"
+
+  # Record decision in state
+  record_walkaway_decision "$prd_path" "$task_id" "$decision" "$WALKAWAY_DECISION_REASON" "$failure_reason"
+
+  # Log and return appropriate code
+  case "$decision" in
+    "RETRY")
+      log_event "WALKAWAY" "Decision: RETRY - $WALKAWAY_DECISION_REASON"
+      echo -e "${GREEN}Decision: RETRY${NC}"
+      echo -e "${GRAY}Reason: $WALKAWAY_DECISION_REASON${NC}"
+      return 0
+      ;;
+    "SKIP")
+      log_event "WALKAWAY" "Decision: SKIP - $WALKAWAY_DECISION_REASON"
+      echo -e "${YELLOW}Decision: SKIP${NC}"
+      echo -e "${GRAY}Reason: $WALKAWAY_DECISION_REASON${NC}"
+      return 1
+      ;;
+    "ABORT")
+      log_event "WALKAWAY" "Decision: ABORT - $WALKAWAY_DECISION_REASON"
+      echo -e "${RED}Decision: ABORT${NC}"
+      echo -e "${GRAY}Reason: $WALKAWAY_DECISION_REASON${NC}"
+      return 2
+      ;;
+  esac
+}
+
+# Record walkaway decision to state file
+record_walkaway_decision() {
+  local prd_path="$1"
+  local task_id="$2"
+  local decision="$3"
+  local reason="$4"
+  local failure_reason="$5"
+
+  local state_path=$(get_state_path "$prd_path")
+  if [ ! -f "$state_path" ]; then
+    return 0
+  fi
+
+  local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S+00:00")
+
+  acquire_lock "$state_path"
+  local tmp_file=$(brigade_mktemp)
+  jq --arg task "$task_id" \
+    --arg decision "$decision" \
+    --arg reason "$reason" \
+    --arg failure "$failure_reason" \
+    --arg ts "$timestamp" \
+    '.walkawayDecisions = (.walkawayDecisions // []) + [{
+      taskId: $task,
+      decision: $decision,
+      reason: $reason,
+      failureReason: $failure,
+      timestamp: $ts
+    }]' "$state_path" > "$tmp_file"
+
+  if [ $? -eq 0 ] && [ -s "$tmp_file" ]; then
+    mv "$tmp_file" "$state_path"
+  else
+    rm -f "$tmp_file"
+  fi
+  release_lock "$state_path"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3499,11 +3911,25 @@ cmd_resume() {
 
   # Determine action
   if [ -z "$action" ]; then
-    echo -e "What would you like to do?"
-    echo -e "  ${CYAN}retry${NC} - Retry the interrupted task from scratch"
-    echo -e "  ${CYAN}skip${NC}  - Mark as failed and continue to next task"
-    echo ""
-    read -p "Enter choice [retry/skip]: " action
+    if [ "$WALKAWAY_MODE" == "true" ]; then
+      # In walkaway mode, let AI decide
+      walkaway_decide_resume "$prd_path" "$current_task" "$last_status" "0" "$last_worker"
+      local decision=$?
+      case $decision in
+        0) action="retry" ;;
+        1) action="skip" ;;
+        2)
+          echo -e "${RED}WALKAWAY ABORT: Executive Chef aborted the resume${NC}"
+          exit 1
+          ;;
+      esac
+    else
+      echo -e "What would you like to do?"
+      echo -e "  ${CYAN}retry${NC} - Retry the interrupted task from scratch"
+      echo -e "  ${CYAN}skip${NC}  - Mark as failed and continue to next task"
+      echo ""
+      read -p "Enter choice [retry/skip]: " action
+    fi
   fi
 
   case "$action" in
@@ -3994,6 +4420,33 @@ cmd_service() {
   # Check verification quality (warn if only grep-based, no execution tests)
   check_verification_quality "$prd_path"
 
+  # Check for walkaway mode (from PRD or --walkaway flag)
+  local is_walkaway=$(jq -r '.walkaway // false' "$prd_path")
+  if [ "$is_walkaway" == "true" ]; then
+    # Enable walkaway mode from PRD
+    if [ "$WALKAWAY_MODE" != "true" ]; then
+      WALKAWAY_MODE=true
+      echo -e "${CYAN}Walkaway mode enabled (from PRD)${NC}"
+    fi
+
+    # Block walkaway PRDs with grep-only verification
+    if ! check_verification_quality "$prd_path" 2>/dev/null; then
+      echo ""
+      echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
+      echo -e "${RED}║  BLOCKED: Walkaway PRD requires execution-based tests     ║${NC}"
+      echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
+      echo ""
+      echo -e "${GRAY}Walkaway mode runs unattended - grep-only verification is unsafe.${NC}"
+      echo -e "${GRAY}Add at least one of these to each task's verification:${NC}"
+      echo -e "${GRAY}  - Unit test:        npm test --grep 'feature'${NC}"
+      echo -e "${GRAY}  - Integration test: go test -run TestIntegration ./...${NC}"
+      echo -e "${GRAY}  - Smoke test:       ./binary --help${NC}"
+      echo ""
+      echo -e "${GRAY}Or set \"walkaway\": false in the PRD for attended execution.${NC}"
+      exit 1
+    fi
+  fi
+
   # Update latest symlink
   update_latest_symlink "$prd_path"
 
@@ -4238,6 +4691,7 @@ $task_id"
 
         # Wait for all parallel tasks
         local all_success=true
+        local failed_tasks=""
         for mapping in $task_pid_map; do
           local task_id=$(echo "$mapping" | cut -d: -f1)
           local pid=$(echo "$mapping" | cut -d: -f2)
@@ -4253,12 +4707,53 @@ $task_id"
           else
             log_event "ERROR" "$parallel_display_id failed (parallel, exit=$exit_code)"
             all_success=false
+            failed_tasks="$failed_tasks $task_id"
           fi
         done
 
         if [ "$all_success" != "true" ]; then
           echo -e "${RED}Some parallel tasks failed${NC}"
-          exit 1
+
+          if [ "$WALKAWAY_MODE" == "true" ]; then
+            # In walkaway mode, ask AI about each failed task
+            for failed_task in $failed_tasks; do
+              local state_path=$(get_state_path "$prd_path")
+              local last_entry=$(jq -r --arg task "$failed_task" '[.taskHistory[] | select(.taskId == $task)] | last' "$state_path" 2>/dev/null)
+              local last_status=$(echo "$last_entry" | jq -r '.status // "failed"')
+              local last_worker=$(echo "$last_entry" | jq -r '.worker // "unknown"')
+
+              walkaway_decide_resume "$prd_path" "$failed_task" "$last_status" "0" "$last_worker"
+              local decision=$?
+
+              case $decision in
+                0)  # RETRY - will be picked up in next iteration
+                  log_event "WALKAWAY" "Will retry task $failed_task in next iteration"
+                  local tmp_file=$(brigade_mktemp)
+                  jq '.currentTask = null' "$state_path" > "$tmp_file" && mv "$tmp_file" "$state_path"
+                  ;;
+                1)  # SKIP
+                  WALKAWAY_CONSECUTIVE_SKIPS=$((WALKAWAY_CONSECUTIVE_SKIPS + 1))
+                  log_event "WALKAWAY" "Skipping task $failed_task (consecutive skips: $WALKAWAY_CONSECUTIVE_SKIPS)"
+
+                  if [ "$WALKAWAY_CONSECUTIVE_SKIPS" -ge "$WALKAWAY_MAX_SKIPS" ]; then
+                    echo -e "${RED}WALKAWAY PAUSED: Max consecutive skips reached${NC}"
+                    exit 1
+                  fi
+
+                  update_state_task "$prd_path" "$failed_task" "$last_worker" "skipped_walkaway"
+                  ;;
+                2)  # ABORT
+                  echo -e "${RED}WALKAWAY ABORT: Executive Chef aborted the run${NC}"
+                  exit 1
+                  ;;
+              esac
+            done
+            echo -e "${YELLOW}Walkaway mode: continuing with remaining tasks...${NC}"
+          else
+            exit 1
+          fi
+        else
+          WALKAWAY_CONSECUTIVE_SKIPS=0  # Reset on success
         fi
 
         # Phase review at intervals (after parallel batch)
@@ -4273,11 +4768,65 @@ $task_id"
 
     if cmd_ticket "$prd_path" "$next_task"; then
       completed=$((completed + 1))
+      WALKAWAY_CONSECUTIVE_SKIPS=0  # Reset on success
       # Phase review at intervals
       phase_review "$prd_path" "$completed"
     else
       echo -e "${RED}Failed to complete $next_task${NC}"
-      exit 1
+
+      # In walkaway mode, let AI decide
+      if [ "$WALKAWAY_MODE" == "true" ]; then
+        # Get failure info from state
+        local state_path=$(get_state_path "$prd_path")
+        local last_entry=$(jq -r --arg task "$next_task" '[.taskHistory[] | select(.taskId == $task)] | last' "$state_path" 2>/dev/null)
+        local last_status=$(echo "$last_entry" | jq -r '.status // "failed"')
+        local last_worker=$(echo "$last_entry" | jq -r '.worker // "unknown"')
+        local iteration_count=$(echo "$last_entry" | jq -r '.status | if startswith("iteration_") then (. | sub("iteration_"; "") | tonumber) else 0 end' 2>/dev/null || echo 0)
+
+        walkaway_decide_resume "$prd_path" "$next_task" "$last_status" "$iteration_count" "$last_worker"
+        local decision=$?
+
+        case $decision in
+          0)  # RETRY
+            log_event "WALKAWAY" "Retrying task $next_task"
+            # Clear currentTask to allow fresh start
+            local tmp_file=$(brigade_mktemp)
+            jq '.currentTask = null' "$state_path" > "$tmp_file" && mv "$tmp_file" "$state_path"
+            continue  # Loop again, will pick up same task
+            ;;
+          1)  # SKIP
+            WALKAWAY_CONSECUTIVE_SKIPS=$((WALKAWAY_CONSECUTIVE_SKIPS + 1))
+            log_event "WALKAWAY" "Skipping task $next_task (consecutive skips: $WALKAWAY_CONSECUTIVE_SKIPS)"
+
+            # Check safety rail
+            if [ "$WALKAWAY_CONSECUTIVE_SKIPS" -ge "$WALKAWAY_MAX_SKIPS" ]; then
+              echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
+              echo -e "${RED}║  WALKAWAY PAUSED: Max consecutive skips reached           ║${NC}"
+              echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
+              log_event "WALKAWAY" "PAUSED: $WALKAWAY_CONSECUTIVE_SKIPS consecutive skips"
+              echo ""
+              echo -e "Run './brigade.sh resume $prd_path' to continue manually."
+              exit 1
+            fi
+
+            # Mark task as skipped and continue
+            update_state_task "$prd_path" "$next_task" "$last_worker" "skipped_walkaway"
+            local tmp_file=$(brigade_mktemp)
+            jq '.currentTask = null' "$state_path" > "$tmp_file" && mv "$tmp_file" "$state_path"
+            echo -e "${YELLOW}Task $next_task skipped, continuing...${NC}"
+            continue  # Loop again, will get next available task
+            ;;
+          2)  # ABORT
+            echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${RED}║  WALKAWAY ABORT: Executive Chef aborted the run           ║${NC}"
+            echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
+            echo -e "${GRAY}Reason: $WALKAWAY_DECISION_REASON${NC}"
+            exit 1
+            ;;
+        esac
+      else
+        exit 1
+      fi
     fi
   done
 
@@ -4780,6 +5329,37 @@ $current"
     echo -e "${GRAY}ℹ${NC} No verification commands defined (optional)"
   fi
 
+  # Check verification type coverage (task type vs verification type)
+  if [ "$has_verification" -gt 0 ]; then
+    echo ""
+    echo -e "${GRAY}Checking verification type coverage...${NC}"
+    local coverage_warnings=0
+
+    for task_id in $all_ids; do
+      if ! check_verification_coverage "$prd_path" "$task_id"; then
+        echo -e "  ${YELLOW}⚠${NC} $VERIFICATION_COVERAGE_WARNING"
+        coverage_warnings=$((coverage_warnings + 1))
+      fi
+    done
+
+    if [ "$coverage_warnings" -gt 0 ]; then
+      warnings=$((warnings + coverage_warnings))
+    else
+      echo -e "${GREEN}✓${NC} Verification types match task types"
+    fi
+  fi
+
+  # Check walkaway mode + grep-only verification (blocking combination)
+  local is_walkaway=$(jq -r '.walkaway // false' "$prd_path")
+  if [ "$is_walkaway" == "true" ]; then
+    if ! check_verification_quality "$prd_path" 2>/dev/null; then
+      echo -e "${RED}✗ Walkaway PRD has grep-only verification - unsafe for unattended execution${NC}"
+      echo -e "  ${GRAY}Walkaway mode requires at least one execution-based verification command${NC}"
+      echo -e "  ${GRAY}Add unit, integration, or smoke tests to each task${NC}"
+      errors=$((errors + 1))
+    fi
+  fi
+
   # Summary
   echo ""
   if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
@@ -5143,6 +5723,11 @@ main() {
       --sequential)
         MAX_PARALLEL=1
         echo -e "${YELLOW}Sequential mode: parallel execution disabled${NC}"
+        shift
+        ;;
+      --walkaway)
+        WALKAWAY_MODE=true
+        echo -e "${CYAN}Walkaway mode: AI will decide retry/skip on failures${NC}"
         shift
         ;;
       *)

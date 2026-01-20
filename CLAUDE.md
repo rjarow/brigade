@@ -47,6 +47,9 @@ See `ROADMAP.md` for planned features and recent changes. Check it before starti
 # Chain multiple PRDs for unattended execution
 ./brigade.sh --auto-continue service brigade/tasks/prd-*.json
 
+# Fully autonomous execution (AI decides retry/skip on failures)
+./brigade.sh --walkaway service brigade/tasks/prd.json
+
 # Run tests (requires bats-core)
 ./tests/run_tests.sh
 ```
@@ -250,12 +253,18 @@ Key config options (in `brigade.config`):
 {
   "featureName": "Feature Name",
   "branchName": "feature/kebab-case",
+  "walkaway": false,
   "tasks": [
     {
       "id": "US-001",
       "title": "Task title",
       "acceptanceCriteria": ["Criterion 1", "Criterion 2"],
-      "verification": ["grep -q 'pattern' file.ts", "npm test -- --grep 'test'"],
+      "verification": [
+        {"type": "pattern", "cmd": "grep -q 'pattern' file.ts"},
+        {"type": "unit", "cmd": "npm test -- --grep 'specific'"},
+        {"type": "integration", "cmd": "npm test -- --grep 'flow'"},
+        {"type": "smoke", "cmd": "./binary --help"}
+      ],
       "dependsOn": [],
       "complexity": "junior|senior|auto",
       "passes": false
@@ -264,11 +273,20 @@ Key config options (in `brigade.config`):
 }
 ```
 
-**Note:** The `verification` field is optional but recommended. When present, commands are run after worker signals COMPLETE - all must pass (exit 0) for task to be marked done.
+**Note:** The `verification` field supports both string format (backward compatible) and typed object format (recommended). When present, commands are run after worker signals COMPLETE - all must pass (exit 0) for task to be marked done.
 
-**Verification quality:**
-- Brigade warns at service start if all verification commands are grep-only (no execution tests)
-- Include at least one command that actually runs the feature (e.g., `./binary --help`, `npm test -- --grep 'specific'`)
+**Verification types:**
+- `pattern` - File/code existence checks (grep, test -f)
+- `unit` - Unit tests for isolated logic
+- `integration` - Tests that verify components work together
+- `smoke` - Quick checks that the feature runs at all
+
+**Verification strictness:**
+- Brigade validates that verification type matches task type:
+  - Tasks with "add/create/implement" → need `unit` or `integration` tests
+  - Tasks with "connect/integrate/wire" → need `integration` tests
+  - Tasks with "flow/workflow/user can" → need `smoke` or `integration` tests
+- Walkaway PRDs (`"walkaway": true`) with grep-only verification are **blocked** at service start
 - Changed files are scanned for TODO/FIXME markers - task won't complete until addressed
 - **Critical:** Tasks that wire/integrate components need integration or smoke tests, not just unit tests. A task like "add download button" passing unit tests doesn't mean downloads actually work end-to-end.
 

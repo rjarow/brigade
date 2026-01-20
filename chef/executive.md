@@ -115,6 +115,18 @@ When reviewing completed work:
 
    Tests that only pass in isolation are not acceptable. If tests fail with these flags, the review fails.
 
+7. **Does the implementation actually work end-to-end?** (Critical for integration tasks)
+   - If the task connects/integrates components: Is the wiring actually complete?
+   - Do the acceptance criteria verify the feature works, or just that code exists?
+   - Watch for UI/button tasks that wire to stub implementations (e.g., `// TODO: implement`)
+   - If task title contains "connect", "wire", "integrate": Verify data actually flows
+
+   **Fail the review** if you see patterns like:
+   - Function exists but has TODO/placeholder inside
+   - Button clicks call empty/stub handlers
+   - Integration test mocks the very thing being integrated
+   - Acceptance criteria only check code existence, not behavior
+
 ## Git Workflow
 
 Workers commit their changes to a feature branch after completing each task. You are the code reviewer.

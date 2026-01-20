@@ -303,6 +303,24 @@ AUTO_CONTINUE=false
 PHASE_GATE="continue"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# WALKAWAY MODE (Autonomous Execution)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Full autonomous execution with AI-driven resume decisions.
+# When enabled, Executive Chef decides retry/skip on failures instead of prompting.
+# Also auto-enabled when PRD has "walkaway": true
+
+# Enable walkaway mode (AI decides retry/skip on failures)
+# Use with: ./brigade.sh --walkaway service prd.json
+WALKAWAY_MODE=false
+
+# Safety rail: max consecutive skips before pausing
+# Prevents runaway skipping when tasks are fundamentally broken
+WALKAWAY_MAX_SKIPS=3
+
+# Timeout for AI decision in seconds
+WALKAWAY_DECISION_TIMEOUT=120
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # LIMITS
 # ═══════════════════════════════════════════════════════════════════════════════
 

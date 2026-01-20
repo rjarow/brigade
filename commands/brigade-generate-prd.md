@@ -52,14 +52,19 @@ This is your ONE chance to get context. Ask smart questions:
 #### Walkaway Mode Check (ASK FIRST)
 Before diving into feature details, ask: "Will this run unattended/overnight (walkaway mode), or will you be monitoring it?"
 
-**If walkaway mode:**
+**If walkaway mode**, set expectations upfront:
+> "Great - walkaway mode means I'll run autonomously without asking questions. To make that work, I need to ask a lot of questions NOW. Expect this planning session to take 15-30 minutes with many follow-ups. This is normal and necessary - every ambiguity I don't clarify now becomes a potential failure point at 3am. Ready?"
+
+Then conduct the **Walkaway Mode Deep Interview** (see below):
 - Use extended thinking for all major decisions
-- Interview MORE thoroughly than normal - you won't get another chance
-- Ask about edge cases, error handling preferences, fallback behaviors
+- Interview exhaustively - you won't get another chance
+- Resolve EVERY ambiguity upfront (no "I'll figure it out")
+- Ask about edge cases, error handling, fallback behaviors for EACH integration
 - Make acceptance criteria extremely explicit and unambiguous
-- Add more verification commands to catch issues early
+- Add verification commands that actually prove features work (not just code exists)
 - Include constraints section with common pitfalls for the language/framework
-- Consider: "What should happen if X fails?" for each integration point
+- For each integration point: "What should happen if X fails?"
+- For each decision: "Should I do A or B? Here are the tradeoffs..."
 
 #### For Greenfield Projects (CRITICAL - ASK ALL OF THESE):
 1. **Tech stack**: "What language/framework should we use? (e.g., Node/Express, Go, Python/FastAPI, Rust)"
@@ -74,16 +79,83 @@ Before diving into feature details, ask: "Will this run unattended/overnight (wa
 3. **Preferences**: "Any preferred approaches or patterns to follow/avoid?"
 4. **Context**: "Is this replacing something? Integrating with existing systems?"
 
-#### Additional Questions for Walkaway Mode:
-When the user confirms walkaway/unattended execution, ask these additional questions:
+#### Walkaway Mode Deep Interview (CRITICAL - BE EXHAUSTIVE)
 
-1. **Error handling**: "If [integration point] fails, should we retry, skip, or abort?"
-2. **Ambiguity resolution**: "For [ambiguous requirement], I see two approaches: A or B. Which do you prefer?"
-3. **External dependencies**: "This requires [external service/API]. Are credentials configured? Any rate limits I should know about?"
-4. **Merge behavior**: "After completion, should I auto-merge to main? Auto-push? Or leave for your review?"
-5. **Fallback preferences**: "If a task gets stuck after multiple attempts, prefer retry-all or skip-and-continue?"
+When the user confirms walkaway/unattended execution, you MUST conduct an exhaustive interview. **This is expected to be lengthy** - the user should anticipate 10-20+ follow-up questions depending on complexity. Better to over-interview now than have the run fail at 3am with no one to answer questions.
 
-**Think deeply** about what could go wrong and ask about it now. In walkaway mode, there's no one to ask later.
+**Mindset:** Imagine you're the overnight operator who will have ZERO access to the user for the next 8 hours. What do you need to know to handle every situation?
+
+##### Round 1: Scope & Completeness
+1. **Functional scope**: "Should this feature be fully functional end-to-end, or is a UI stub with placeholder logic acceptable?"
+   - If end-to-end: Scope PRD to include wiring/integration tasks, not just component creation
+   - If stub: Explicitly mark PRD as `"walkaway": false` (requires human verification)
+2. **Definition of done**: "How will you know this is complete? What would you test manually?"
+3. **Out of scope**: "What should I explicitly NOT do, even if it seems related?"
+4. **Hidden requirements**: "Are there any non-obvious requirements? Security? Performance? Accessibility?"
+
+##### Round 2: Technical Decisions (Ask about EACH ambiguity you identify)
+For every technical choice you see, ask upfront:
+- "For [X], should I use approach A (pros/cons) or approach B (pros/cons)?"
+- "I see the codebase uses [pattern]. Should I follow that or do you want something different?"
+- "There's a tradeoff between [simplicity] and [flexibility] here. Which matters more?"
+
+**Examples of things to ask about:**
+- Data storage: "Store in memory, file, or database?"
+- Error handling: "Fail fast or graceful degradation?"
+- Logging: "Verbose or minimal?"
+- Naming: "Follow existing conventions or improve them?"
+- Dependencies: "Use existing libraries or minimize dependencies?"
+
+##### Round 3: Error Scenarios (Ask about EACH integration point)
+For every external dependency or integration:
+1. "If [database/API/service] is unavailable, should I retry, skip, or abort?"
+2. "If [operation] times out, what's the right timeout value? What happens then?"
+3. "If [validation] fails, should I reject with error or accept with warning?"
+4. "If [data] is malformed, skip that record or fail the whole batch?"
+
+##### Round 4: Edge Cases (Think through the unhappy paths)
+- "What if the input is empty?"
+- "What if the input is extremely large?"
+- "What if there are duplicate entries?"
+- "What if the user/data doesn't exist?"
+- "What if permissions are denied?"
+- "What if the network is slow?"
+- "What if another process is accessing the same resource?"
+
+##### Round 5: Configuration & Environment
+1. **Credentials**: "This needs [API keys/tokens/secrets]. Are they configured? Where should I look for them?"
+2. **Environment**: "Development, staging, or production behavior? Any env-specific differences?"
+3. **External services**: "Any rate limits, quotas, or usage concerns I should know about?"
+4. **File paths**: "Are there any hardcoded paths I should make configurable?"
+
+##### Round 6: Post-Completion Behavior
+1. **Merge behavior**: "After completion, should I auto-merge to main? Auto-push? Or leave for your review?"
+2. **Notifications**: "Should I leave any notes about what was done or decisions made?"
+3. **Cleanup**: "Any temporary resources to clean up?"
+4. **Next steps**: "After this PRD completes, is there follow-up work to plan?"
+
+##### Round 7: Failure Recovery
+1. **Stuck tasks**: "If a task gets stuck after multiple attempts, prefer retry-all or skip-and-continue?"
+2. **Partial completion**: "If we complete 80% but one task keeps failing, is that acceptable or should we rollback?"
+3. **Data safety**: "Any operations that are dangerous to retry? (e.g., sending emails, charging cards)"
+4. **Rollback strategy**: "If things go wrong, how do we undo? Is the work idempotent?"
+
+##### Round 8: Acceptance Criteria Clarity
+For each task you're planning, ask yourself: "Could an AI misinterpret this?" If yes, clarify:
+- "When you say [X], do you mean [interpretation A] or [interpretation B]?"
+- "For the [feature], should it handle [edge case]?"
+- "The acceptance criteria mention [vague term]. Can you be more specific?"
+
+##### Interview Completion Checklist
+Before generating the PRD, confirm:
+- [ ] Every ambiguity has been resolved with a clear decision
+- [ ] Every integration point has error handling defined
+- [ ] Every technical choice has been made (no "TBD" in the PRD)
+- [ ] Edge cases have been discussed and documented
+- [ ] The user understands this will run without human intervention
+- [ ] Verification commands can actually prove the feature works
+
+**IMPORTANT:** It's completely acceptable (and expected) for walkaway interviews to take 15-30 minutes. The user WANTS thorough questioning - that's why they're choosing walkaway mode. They'd rather answer questions now than debug failures later.
 
 #### Configuration Check (ALWAYS DO THIS):
 Before generating the PRD, check `brigade/brigade.config` and inform the owner about worker setup:
@@ -148,6 +220,69 @@ Decompose the feature into atomic, well-scoped tasks:
 
 ### Phase 5: Generate PRD
 Output the final PRD JSON and save it. After this, execution is autonomous.
+
+#### Enhanced PRD Content for Walkaway Mode
+When generating a walkaway PRD, include additional detail that wouldn't be necessary for attended runs:
+
+**1. Explicit Constraints Section** (in PRD or per-task notes)
+```json
+{
+  "constraints": [
+    "Do NOT modify existing user table schema",
+    "All new endpoints must require authentication",
+    "Use existing error handling pattern from src/middleware/errors.ts",
+    "Database operations must use transactions",
+    "No hardcoded credentials - use environment variables"
+  ]
+}
+```
+
+**2. Decision Log** (document choices made during interview)
+```json
+{
+  "decisions": [
+    {"q": "Store sessions in memory or Redis?", "a": "Redis for persistence across restarts"},
+    {"q": "Fail fast or graceful degradation?", "a": "Graceful - log errors but continue"},
+    {"q": "Auto-merge on completion?", "a": "No - leave PR for review"}
+  ]
+}
+```
+
+**3. More Granular Acceptance Criteria**
+Instead of:
+- "User can log in"
+
+Write:
+- "POST /auth/login accepts {email, password} body"
+- "Returns 200 with {token, expiresAt} on valid credentials"
+- "Returns 401 with {error: 'Invalid credentials'} on wrong password"
+- "Returns 401 with {error: 'User not found'} on unknown email"
+- "Returns 400 with {error: 'Email required'} if email missing"
+- "Rate limits to 5 attempts per minute per IP"
+
+**4. Error Handling Instructions** (per-task if complex)
+```json
+{
+  "errorHandling": {
+    "databaseTimeout": "Retry 3x with exponential backoff, then fail task",
+    "validationError": "Return 400 with specific field errors",
+    "externalAPIFailure": "Log warning, return cached data if available, else 503"
+  }
+}
+```
+
+**5. Typed Verification with Coverage**
+Ensure every task has verification that actually exercises the code:
+```json
+{
+  "verification": [
+    {"type": "pattern", "cmd": "grep -q 'func Login' internal/auth/handler.go"},
+    {"type": "unit", "cmd": "go test ./internal/auth/... -run TestLogin"},
+    {"type": "integration", "cmd": "go test ./tests/integration/... -run TestAuthFlow"},
+    {"type": "smoke", "cmd": "curl -f http://localhost:8080/health"}
+  ]
+}
+```
 
 ## Task Sizing Guidelines
 
@@ -270,6 +405,41 @@ Generate a JSON PRD in this format:
 
 The `verification` array contains shell commands that Brigade runs after a worker signals COMPLETE. All must pass (exit 0) for the task to be marked done. **This is your primary defense against broken features shipping.**
 
+#### Verification Format (NEW: Typed Verification)
+
+Brigade supports both string format (backward compatible) and typed object format (recommended):
+
+**String format (simple):**
+```json
+"verification": [
+  "grep -q 'func Foo' file.go",
+  "go test ./..."
+]
+```
+
+**Object format (recommended for walkaway PRDs):**
+```json
+"verification": [
+  {"type": "pattern", "cmd": "grep -q 'func Foo' file.go"},
+  {"type": "unit", "cmd": "go test ./internal/..."},
+  {"type": "integration", "cmd": "go test -run TestFullFlow ./..."},
+  {"type": "smoke", "cmd": "./bin/app --help"}
+]
+```
+
+**Verification types:**
+- `pattern` - File/code existence checks (grep, test -f)
+- `unit` - Unit tests for isolated logic
+- `integration` - Tests that verify components work together
+- `smoke` - Quick checks that the feature runs at all
+
+**Brigade validates** that task type matches verification type:
+- Tasks with "add/create/implement" → need `unit` or `integration` tests
+- Tasks with "connect/integrate/wire" → need `integration` tests
+- Tasks with "flow/workflow/user can" → need `smoke` or `integration` tests
+
+**Walkaway PRDs (unattended execution) REQUIRE execution-based verification.** PRDs with `"walkaway": true` and only grep/pattern verification will be blocked.
+
 #### CRITICAL: Include Execution-Based Verification
 
 **Every task MUST have at least one command that actually runs the code**, not just checks that code exists. Grep-only verification lets broken implementations pass.
@@ -283,12 +453,12 @@ The `verification` array contains shell commands that Brigade runs after a worke
 ```
 This passes even if FetchTrack has a `// TODO: implement` inside!
 
-**Good (includes execution test):**
+**Good (typed with execution test):**
 ```json
 "verification": [
-  "grep -q 'func FetchTrack' internal/spotify/client.go",
-  "go test ./internal/spotify/... -run TestFetchTrack",
-  "./bin/myapp download --dry-run https://example.com/track/123"
+  {"type": "pattern", "cmd": "grep -q 'func FetchTrack' internal/spotify/client.go"},
+  {"type": "unit", "cmd": "go test ./internal/spotify/... -run TestFetchTrack"},
+  {"type": "smoke", "cmd": "./bin/myapp download --dry-run https://example.com/track/123"}
 ]
 ```
 This actually runs the feature and catches broken implementations.
