@@ -270,6 +270,7 @@ Key config options (in `brigade.config`):
 - Brigade warns at service start if all verification commands are grep-only (no execution tests)
 - Include at least one command that actually runs the feature (e.g., `./binary --help`, `npm test -- --grep 'specific'`)
 - Changed files are scanned for TODO/FIXME markers - task won't complete until addressed
+- **Critical:** Tasks that wire/integrate components need integration or smoke tests, not just unit tests. A task like "add download button" passing unit tests doesn't mean downloads actually work end-to-end.
 
 ## Debugging
 
