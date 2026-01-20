@@ -1,0 +1,12 @@
+US-002: Second task depends on first - COMPLETE
+
+Task: Second task depends on first
+Feature: Integration Test Feature
+Acceptance Criteria: Criterion 2 ✓
+Depends On: US-001 ✓
+
+This file demonstrates successful completion of task US-002.
+The task has been completed by the Sous Chef worker.
+This task required US-001 to be completed first.
+
+Completed: 2026-01-20
