@@ -134,8 +134,22 @@ SUPERVISOR_STATUS_FILE=""  # e.g., "brigade/tasks/status.json"
 
 # Append-only JSONL event stream for real-time monitoring
 # Supervisor tails this file to receive events as they happen
-# Events: service_start, task_start, task_complete, escalation, review, attention, service_complete
+# Events: service_start, task_start, task_complete, escalation, review, attention,
+#         decision_needed, decision_received, scope_decision, service_complete
 SUPERVISOR_EVENTS_FILE=""  # e.g., "brigade/tasks/events.jsonl"
+
+# Command ingestion file - supervisor writes commands here for Brigade to execute
+# When set, Brigade polls this file for decisions instead of using interactive prompts
+# Command format: {"decision":"d-xxx","action":"retry|skip|abort","reason":"...","guidance":"..."}
+# Use with walkaway mode for fully autonomous execution with supervisor oversight
+SUPERVISOR_CMD_FILE=""  # e.g., "brigade/tasks/cmd.json"
+
+# Polling interval when waiting for supervisor commands (seconds)
+SUPERVISOR_CMD_POLL_INTERVAL=2
+
+# Maximum wait time for supervisor commands (seconds, 0 = wait forever)
+# Falls back to walkaway mode if timeout expires and WALKAWAY_MODE=true
+SUPERVISOR_CMD_TIMEOUT=300
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CODEBASE MAP
@@ -222,6 +236,20 @@ TASK_TIMEOUT_SENIOR=1800   # 30 minutes
 
 # Executive Chef tasks - rare escalations, allow more time
 TASK_TIMEOUT_EXECUTIVE=3600  # 60 minutes
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WORKER HEALTH CHECKS
+# ═══════════════════════════════════════════════════════════════════════════════
+# Detect crashed workers (vs timed out workers)
+# When enabled, Brigade monitors worker processes and detects unexpected exits
+
+# How often to check if worker process is still alive (seconds)
+# Set to 0 to disable health checks (not recommended)
+WORKER_HEALTH_CHECK_INTERVAL=5
+
+# Exit code to use when worker crashes unexpectedly
+# 124 is reserved for timeout, 125 is default for crashes
+WORKER_CRASH_EXIT_CODE=125
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXECUTIVE REVIEW
@@ -319,6 +347,11 @@ WALKAWAY_MAX_SKIPS=3
 
 # Timeout for AI decision in seconds
 WALKAWAY_DECISION_TIMEOUT=120
+
+# Let Executive Chef decide on scope questions automatically
+# When true, ambiguous requirements are decided by exec chef and flagged for human review
+# Workers can ask: <scope-question>Should I use OAuth or JWT?</scope-question>
+WALKAWAY_SCOPE_DECISIONS=true
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LIMITS

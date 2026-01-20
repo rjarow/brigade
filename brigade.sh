@@ -95,10 +95,94 @@ release_lock() {
   rmdir "$lock_path" 2>/dev/null
 }
 
-# Cross-platform timeout execution (works on macOS and Linux)
+# Cross-platform timeout execution with health monitoring (works on macOS and Linux)
 # Usage: run_with_timeout <seconds> <command> [args...]
-# Returns: command exit code, or 124 if timed out
+# Returns: command exit code, 124 if timed out, WORKER_CRASH_EXIT_CODE if crashed
+#
+# IMPORTANT: This function monitors the worker process to detect crashes.
+# If the worker process dies unexpectedly, it's detected and treated as a crash.
 run_with_timeout() {
+  local timeout_secs="$1"
+  shift
+
+  # Always use background monitoring for health checks
+  # This ensures we detect crashes even when the process dies without closing pipes
+
+  "$@" &
+  local pid=$!
+  BRIGADE_WORKER_PIDS+=("$pid")
+
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] run_with_timeout: started pid=$pid, timeout=${timeout_secs}s" >&2
+  fi
+
+  local elapsed=0
+  local check_interval="${WORKER_HEALTH_CHECK_INTERVAL:-5}"
+  [ "$check_interval" -lt 1 ] && check_interval=1
+
+  local last_check_time=$(date +%s)
+
+  while true; do
+    # Check if process is still running
+    if ! kill -0 "$pid" 2>/dev/null; then
+      # Process is gone - get exit code
+      wait "$pid" 2>/dev/null
+      local exit_code=$?
+      BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
+
+      if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+        echo "[DEBUG] run_with_timeout: pid=$pid exited with code=$exit_code after ${elapsed}s" >&2
+      fi
+
+      # Check if this was an unexpected crash (non-zero, non-timeout)
+      # We consider it a crash if it exited quickly with a signal-related code
+      if [ "$exit_code" -gt 128 ] && [ "$elapsed" -lt 5 ]; then
+        # Exit code > 128 typically means killed by signal
+        local signal=$((exit_code - 128))
+        echo -e "${RED}Worker crashed (signal $signal) after ${elapsed}s${NC}" >&2
+        return "${WORKER_CRASH_EXIT_CODE:-125}"
+      fi
+
+      return $exit_code
+    fi
+
+    # Check timeout
+    if [ "$timeout_secs" -gt 0 ] && [ "$elapsed" -ge "$timeout_secs" ]; then
+      echo -e "${RED}Timeout reached (${timeout_secs}s), killing worker...${NC}" >&2
+
+      # Graceful kill first
+      kill "$pid" 2>/dev/null
+      sleep 2
+
+      # Force kill if still running
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null
+        sleep 1
+      fi
+
+      wait "$pid" 2>/dev/null
+      BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
+      return 124  # Standard timeout exit code
+    fi
+
+    # Sleep for health check interval
+    sleep "$check_interval"
+    elapsed=$((elapsed + check_interval))
+
+    # Periodic health check logging (debug mode)
+    if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+      local now=$(date +%s)
+      if [ $((now - last_check_time)) -ge 30 ]; then
+        echo "[DEBUG] run_with_timeout: pid=$pid still running, elapsed=${elapsed}s" >&2
+        last_check_time=$now
+      fi
+    fi
+  done
+}
+
+# Legacy function for backwards compatibility
+# Prefer run_with_timeout for new code
+run_with_timeout_legacy() {
   local timeout_secs="$1"
   shift
 
@@ -114,29 +198,8 @@ run_with_timeout() {
     return $?
   fi
 
-  # Fallback: background process with manual timeout
-  "$@" &
-  local pid=$!
-  BRIGADE_WORKER_PIDS+=("$pid")
-
-  local elapsed=0
-  while kill -0 "$pid" 2>/dev/null; do
-    if [ "$elapsed" -ge "$timeout_secs" ]; then
-      echo -e "${RED}Timeout reached, killing worker...${NC}" >&2
-      kill "$pid" 2>/dev/null
-      sleep 1
-      kill -9 "$pid" 2>/dev/null
-      BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
-      return 124  # Standard timeout exit code
-    fi
-    sleep 1
-    elapsed=$((elapsed + 1))
-  done
-
-  wait "$pid"
-  local exit_code=$?
-  BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
-  return $exit_code
+  # Fall through to run_with_timeout
+  run_with_timeout "$timeout_secs" "$@"
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -185,6 +248,10 @@ TASK_TIMEOUT_JUNIOR=900      # 15 minutes for junior/line cook tasks
 TASK_TIMEOUT_SENIOR=1800     # 30 minutes for senior/sous chef tasks
 TASK_TIMEOUT_EXECUTIVE=3600  # 60 minutes for executive tasks (rare)
 
+# Worker health check defaults
+WORKER_HEALTH_CHECK_INTERVAL=5  # Seconds between health checks (0 = disable)
+WORKER_CRASH_EXIT_CODE=125      # Exit code when worker crashes (vs 124 for timeout)
+
 # Executive review defaults
 REVIEW_ENABLED=true
 REVIEW_JUNIOR_ONLY=true
@@ -202,6 +269,7 @@ PHASE_GATE="continue"        # review | continue | pause (between PRDs)
 WALKAWAY_MODE=false          # Use AI to decide retry/skip on failures
 WALKAWAY_MAX_SKIPS=3         # Max consecutive skips before pausing (prevent runaway)
 WALKAWAY_DECISION_TIMEOUT=120  # Seconds to wait for AI decision
+WALKAWAY_SCOPE_DECISIONS=true   # Let exec chef decide on scope questions in walkaway mode
 
 # Context isolation defaults
 CONTEXT_ISOLATION=true
@@ -232,6 +300,9 @@ WORKER_LOG_DIR=""                  # Directory for per-task worker logs (empty =
 STATUS_WATCH_INTERVAL=30           # Seconds between status refreshes in watch mode
 SUPERVISOR_STATUS_FILE=""          # Write compact status JSON on state changes (empty = disabled)
 SUPERVISOR_EVENTS_FILE=""          # Append-only JSONL event stream (empty = disabled)
+SUPERVISOR_CMD_FILE=""             # Command ingestion file (empty = disabled)
+SUPERVISOR_CMD_POLL_INTERVAL=2     # Seconds between polls when waiting for command
+SUPERVISOR_CMD_TIMEOUT=300         # Max seconds to wait for supervisor command (0 = wait forever)
 
 # Codebase map defaults
 MAP_STALE_COMMITS=20               # Regenerate map if this many commits behind HEAD (0 = disable)
@@ -477,6 +548,8 @@ run_with_spinner() {
   # Get exit code
   wait $pid
   local exit_code=$?
+  local end_time=$(date +%s)
+  local total_elapsed=$((end_time - start_time))
 
   # Remove PID from tracking (process completed)
   BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
@@ -486,6 +559,13 @@ run_with_spinner() {
 
   # Clear the spinner line
   printf "\r%-80s\r" ""
+
+  # Detect crash (signal-related exit code and quick exit)
+  if [ "$exit_code" -gt 128 ] && [ "$total_elapsed" -lt 5 ]; then
+    local signal=$((exit_code - 128))
+    echo -e "${RED}Worker crashed (signal $signal) after ${total_elapsed}s${NC}"
+    return "${WORKER_CRASH_EXIT_CODE:-125}"
+  fi
 
   return $exit_code
 }
@@ -1305,10 +1385,191 @@ emit_supervisor_event() {
       local completed="$1" failed="$2" duration="$3"
       printf '{"ts":"%s","event":"service_complete","completed":%d,"failed":%d,"duration":%d}\n' "$ts" "$completed" "$failed" "$duration"
       ;;
+    decision_needed)
+      # Decision needed event - supervisor should respond via SUPERVISOR_CMD_FILE
+      # Args: decision_id, decision_type, task_id, context_json
+      local decision_id="$1" decision_type="$2" task_id="$3" context="$4"
+      printf '{"ts":"%s","event":"decision_needed","id":"%s","type":"%s","task":"%s","context":%s}\n' "$ts" "$decision_id" "$decision_type" "$task_id" "$context"
+      ;;
+    decision_received)
+      # Decision received from supervisor
+      local decision_id="$1" action="$2"
+      printf '{"ts":"%s","event":"decision_received","id":"%s","action":"%s"}\n' "$ts" "$decision_id" "$action"
+      ;;
+    scope_decision)
+      # Scope question decided by exec chef in walkaway mode
+      local task="$1" question="$2" decision="$3"
+      printf '{"ts":"%s","event":"scope_decision","task":"%s","question":"%s","decision":"%s"}\n' "$ts" "$task" "$question" "$decision"
+      ;;
     *)
       printf '{"ts":"%s","event":"%s"}\n' "$ts" "$event_type"
       ;;
   esac >> "$SUPERVISOR_EVENTS_FILE"
+}
+
+# Generate unique decision ID
+generate_decision_id() {
+  printf "d-%s-%04d" "$(date +%s)" "$$"
+}
+
+# Wait for supervisor command or fall back to alternative decision methods
+# Args: decision_type, task_id, context_json, prd_path, [last_worker]
+# Returns: 0=retry, 1=skip, 2=abort
+# Sets: DECISION_REASON, DECISION_GUIDANCE
+wait_for_decision() {
+  local decision_type="$1"
+  local task_id="$2"
+  local context="$3"
+  local prd_path="$4"
+  local last_worker="${5:-unknown}"
+
+  DECISION_REASON=""
+  DECISION_GUIDANCE=""
+
+  local decision_id=$(generate_decision_id)
+
+  # If supervisor is configured, use supervisor mode
+  if [ -n "$SUPERVISOR_CMD_FILE" ]; then
+    return $(wait_for_supervisor_command "$decision_id" "$decision_type" "$task_id" "$context" "$prd_path")
+  fi
+
+  # Otherwise, fall back to walkaway mode or interactive
+  if [ "$WALKAWAY_MODE" == "true" ]; then
+    # Extract failure reason from context
+    local failure_reason=$(echo "$context" | jq -r '.failureReason // "failed"' 2>/dev/null)
+    local iteration_count=$(echo "$context" | jq -r '.iterations // 0' 2>/dev/null)
+
+    walkaway_decide_resume "$prd_path" "$task_id" "$failure_reason" "$iteration_count" "$last_worker"
+    local result=$?
+    DECISION_REASON="$WALKAWAY_DECISION_REASON"
+    return $result
+  fi
+
+  # Interactive fallback
+  echo -e "What would you like to do?"
+  echo -e "  ${CYAN}retry${NC} - Retry the interrupted task from scratch"
+  echo -e "  ${CYAN}skip${NC}  - Mark as failed and continue to next task"
+  echo ""
+  read -p "Enter choice [retry/skip]: " action
+
+  case "$action" in
+    retry|r)
+      DECISION_REASON="User chose to retry"
+      return 0
+      ;;
+    skip|s)
+      DECISION_REASON="User chose to skip"
+      return 1
+      ;;
+    *)
+      echo -e "${RED}Invalid choice. Defaulting to retry.${NC}"
+      DECISION_REASON="Invalid choice, defaulted to retry"
+      return 0
+      ;;
+  esac
+}
+
+# Wait for command from supervisor via SUPERVISOR_CMD_FILE
+# Args: decision_id, decision_type, task_id, context_json, prd_path
+# Returns: 0=retry, 1=skip, 2=abort
+wait_for_supervisor_command() {
+  local decision_id="$1"
+  local decision_type="$2"
+  local task_id="$3"
+  local context="$4"
+  local prd_path="$5"
+
+  local display_id=$(format_task_id "$prd_path" "$task_id")
+
+  # Emit decision_needed event
+  emit_supervisor_event "decision_needed" "$decision_id" "$decision_type" "$display_id" "$context"
+
+  log_event "SUPERVISOR" "Waiting for decision: $decision_id ($decision_type for $display_id)"
+  echo -e "${CYAN}Waiting for supervisor decision...${NC}"
+  echo -e "${GRAY}Decision ID: $decision_id${NC}"
+  echo -e "${GRAY}Command file: $SUPERVISOR_CMD_FILE${NC}"
+
+  local start_time=$(date +%s)
+  local cmd_found=false
+
+  # Poll for command file
+  while true; do
+    # Check timeout
+    if [ "$SUPERVISOR_CMD_TIMEOUT" -gt 0 ]; then
+      local elapsed=$(($(date +%s) - start_time))
+      if [ "$elapsed" -ge "$SUPERVISOR_CMD_TIMEOUT" ]; then
+        echo -e "${YELLOW}⚠ Supervisor command timeout (${elapsed}s), falling back to walkaway mode${NC}"
+
+        # Fall back to walkaway mode
+        if [ "$WALKAWAY_MODE" == "true" ]; then
+          local failure_reason=$(echo "$context" | jq -r '.failureReason // "failed"' 2>/dev/null)
+          local iteration_count=$(echo "$context" | jq -r '.iterations // 0' 2>/dev/null)
+          local last_worker=$(echo "$context" | jq -r '.lastWorker // "unknown"' 2>/dev/null)
+
+          walkaway_decide_resume "$prd_path" "$task_id" "$failure_reason" "$iteration_count" "$last_worker"
+          local result=$?
+          DECISION_REASON="Supervisor timeout, walkaway decided: $WALKAWAY_DECISION_REASON"
+          return $result
+        fi
+
+        # No walkaway mode - abort
+        DECISION_REASON="Supervisor timeout, no fallback available"
+        return 2
+      fi
+    fi
+
+    # Check for command file
+    if [ -f "$SUPERVISOR_CMD_FILE" ]; then
+      # Read and parse command
+      local cmd_content=$(cat "$SUPERVISOR_CMD_FILE")
+      local cmd_decision_id=$(echo "$cmd_content" | jq -r '.decision // ""' 2>/dev/null)
+
+      # Check if this command is for our decision
+      if [ "$cmd_decision_id" == "$decision_id" ]; then
+        local action=$(echo "$cmd_content" | jq -r '.action // ""' 2>/dev/null)
+        local reason=$(echo "$cmd_content" | jq -r '.reason // ""' 2>/dev/null)
+        local guidance=$(echo "$cmd_content" | jq -r '.guidance // ""' 2>/dev/null)
+
+        # Remove the command file to prevent re-reading
+        rm -f "$SUPERVISOR_CMD_FILE"
+
+        # Emit decision_received event
+        emit_supervisor_event "decision_received" "$decision_id" "$action"
+
+        log_event "SUPERVISOR" "Received decision: $action"
+        echo -e "${GREEN}Supervisor decision received: $action${NC}"
+
+        DECISION_REASON="${reason:-Supervisor decision: $action}"
+        DECISION_GUIDANCE="$guidance"
+
+        case "$action" in
+          retry)
+            return 0
+            ;;
+          skip)
+            return 1
+            ;;
+          abort)
+            return 2
+            ;;
+          pause)
+            echo -e "${YELLOW}Supervisor requested pause. Waiting for resume...${NC}"
+            # Recursive wait for actual decision
+            wait_for_supervisor_command "$decision_id" "$decision_type" "$task_id" "$context" "$prd_path"
+            return $?
+            ;;
+          *)
+            echo -e "${RED}Unknown action: $action. Defaulting to retry.${NC}"
+            DECISION_REASON="Unknown supervisor action, defaulted to retry"
+            return 0
+            ;;
+        esac
+      fi
+    fi
+
+    # Sleep before next poll
+    sleep "$SUPERVISOR_CMD_POLL_INTERVAL"
+  done
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1642,6 +1903,227 @@ extract_backlog_from_output() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SCOPE DECISIONS (Walkaway Mode)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Record scope decision to state file for later review
+record_scope_decision() {
+  local prd_path="$1"
+  local task_id="$2"
+  local question="$3"
+  local decision="$4"
+  local rationale="$5"
+
+  local state_path=$(get_state_path "$prd_path")
+  if [ ! -f "$state_path" ]; then
+    return 0
+  fi
+
+  local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S+00:00")
+
+  # Acquire lock for atomic state update
+  acquire_lock "$state_path"
+
+  local tmp_file=$(brigade_mktemp)
+  jq --arg task "$task_id" \
+     --arg question "$question" \
+     --arg decision "$decision" \
+     --arg rationale "$rationale" \
+     --arg ts "$timestamp" \
+     '.scopeDecisions = (.scopeDecisions // []) + [{
+       "taskId": $task,
+       "question": $question,
+       "decision": $decision,
+       "rationale": $rationale,
+       "timestamp": $ts,
+       "reviewedByHuman": false
+     }]' "$state_path" > "$tmp_file"
+  mv "$tmp_file" "$state_path"
+
+  release_lock "$state_path"
+
+  # Emit event for supervisor
+  emit_supervisor_event "scope_decision" "$task_id" "$question" "$decision"
+}
+
+# Build prompt for exec chef to decide on a scope question
+build_scope_decision_prompt() {
+  local prd_path="$1"
+  local task_id="$2"
+  local question="$3"
+  local context="$4"
+
+  local feature_name=$(jq -r '.featureName' "$prd_path")
+  local task_title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title' "$prd_path")
+  local task_ac=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .acceptanceCriteria | join("\n  - ")' "$prd_path")
+
+  # Get PRD constraints if available
+  local constraints=$(jq -r '.constraints // [] | if length > 0 then "CONSTRAINTS:\n" + (map("- " + .) | join("\n")) else "" end' "$prd_path" 2>/dev/null)
+  local decisions=$(jq -r '.decisions // {} | if . != {} then "PRIOR DECISIONS:\n" + (to_entries | map("- " + .key + ": " + .value) | join("\n")) else "" end' "$prd_path" 2>/dev/null)
+
+  cat <<EOF
+You are the Executive Chef (Director) making a scope decision for a task.
+
+WALKAWAY MODE ACTIVE: Make a judgment call. The human will review later.
+
+FEATURE: $feature_name
+TASK: $task_id - $task_title
+
+ACCEPTANCE CRITERIA:
+  - $task_ac
+
+${constraints:+$constraints
+
+}${decisions:+$decisions
+
+}SCOPE QUESTION:
+$question
+
+${context:+CONTEXT:
+$context
+
+}---
+
+Make a decision that:
+1. Stays within the spirit of the task and feature goals
+2. Is conservative (prefer simpler solutions when unclear)
+3. Maintains security and quality standards
+4. Can be easily reviewed/reversed later if wrong
+
+Respond with:
+<scope-decision>Your decision (what to do)</scope-decision>
+<scope-rationale>Brief explanation of why</scope-rationale>
+EOF
+}
+
+# Ask Executive Chef to decide on a scope question
+# Returns the decision text
+# Sets: SCOPE_DECISION_RATIONALE
+decide_scope_question() {
+  local prd_path="$1"
+  local task_id="$2"
+  local question="$3"
+  local context="${4:-}"
+
+  SCOPE_DECISION_RATIONALE=""
+
+  local display_id=$(format_task_id "$prd_path" "$task_id")
+
+  echo ""
+  echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  log_event "SCOPE" "Exec Chef deciding scope question for: $display_id"
+  echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo -e "${GRAY}Question: $question${NC}"
+  echo ""
+
+  local decision_prompt=$(build_scope_decision_prompt "$prd_path" "$task_id" "$question" "$context")
+  local output_file=$(brigade_mktemp)
+
+  # Execute with timeout
+  if command -v timeout &>/dev/null; then
+    timeout "$WALKAWAY_DECISION_TIMEOUT" $EXECUTIVE_CMD --dangerously-skip-permissions -p "$decision_prompt" 2>&1 | tee "$output_file"
+  elif command -v gtimeout &>/dev/null; then
+    gtimeout "$WALKAWAY_DECISION_TIMEOUT" $EXECUTIVE_CMD --dangerously-skip-permissions -p "$decision_prompt" 2>&1 | tee "$output_file"
+  else
+    $EXECUTIVE_CMD --dangerously-skip-permissions -p "$decision_prompt" 2>&1 | tee "$output_file"
+  fi
+
+  # Extract decision and rationale
+  local decision=$(sed -n 's/.*<scope-decision>\(.*\)<\/scope-decision>.*/\1/p' "$output_file" 2>/dev/null | head -1)
+  SCOPE_DECISION_RATIONALE=$(sed -n 's/.*<scope-rationale>\(.*\)<\/scope-rationale>.*/\1/p' "$output_file" 2>/dev/null | head -1)
+
+  rm -f "$output_file"
+
+  if [ -z "$decision" ]; then
+    decision="Continue with conservative approach (no clear decision from exec chef)"
+    SCOPE_DECISION_RATIONALE="Exec chef did not provide clear decision signal"
+  fi
+
+  # Record decision in state for human review
+  record_scope_decision "$prd_path" "$task_id" "$question" "$decision" "$SCOPE_DECISION_RATIONALE"
+
+  log_event "SCOPE" "Decision: $decision"
+  echo -e "${GREEN}Scope decision: $decision${NC}"
+  echo -e "${GRAY}Rationale: $SCOPE_DECISION_RATIONALE${NC}"
+  echo -e "${YELLOW}⚠ Flagged for human review${NC}"
+
+  echo "$decision"
+}
+
+# Extract and handle scope questions from worker output
+# In walkaway mode, asks exec chef to decide; otherwise logs for human attention
+extract_scope_questions_from_output() {
+  local output_file="$1"
+  local prd_path="$2"
+  local task_id="$3"
+  local worker="$4"
+
+  # Check for scope questions
+  if ! grep -q "<scope-question>" "$output_file" 2>/dev/null; then
+    return 0
+  fi
+
+  local question=$(sed -n 's/.*<scope-question>\(.*\)<\/scope-question>.*/\1/p' "$output_file" | head -1)
+  if [ -z "$question" ]; then
+    return 0
+  fi
+
+  echo -e "${YELLOW}❓ Scope question detected${NC}"
+
+  if [ "$WALKAWAY_MODE" == "true" ] && [ "$WALKAWAY_SCOPE_DECISIONS" == "true" ]; then
+    # In walkaway mode, let exec chef decide
+    local decision=$(decide_scope_question "$prd_path" "$task_id" "$question")
+    # Decision is recorded in decide_scope_question
+    return 0
+  elif [ -n "$SUPERVISOR_CMD_FILE" ]; then
+    # Emit event for supervisor to handle
+    local context='{"question":"'"$question"'","worker":"'"$worker"'"}'
+    emit_supervisor_event "decision_needed" "$(generate_decision_id)" "scope_question" "$task_id" "$context"
+    log_event "SCOPE" "Scope question emitted for supervisor: $question"
+    return 0
+  else
+    # Log for human attention
+    log_event "SCOPE" "Scope question needs human input: $question"
+    echo -e "${RED}⚠ Scope question requires human decision:${NC}"
+    echo -e "${YELLOW}  $question${NC}"
+    emit_supervisor_event "attention" "$task_id" "Scope question: $question"
+    return 1  # Signal that human attention is needed
+  fi
+}
+
+# Get pending scope decisions that need human review
+get_pending_scope_decisions() {
+  local prd_path="$1"
+
+  local state_path=$(get_state_path "$prd_path")
+  if [ ! -f "$state_path" ]; then
+    echo "[]"
+    return
+  fi
+
+  jq '[(.scopeDecisions // [])[] | select(.reviewedByHuman == false)]' "$state_path" 2>/dev/null || echo "[]"
+}
+
+# Mark a scope decision as reviewed by human
+mark_scope_decision_reviewed() {
+  local prd_path="$1"
+  local index="$2"
+
+  local state_path=$(get_state_path "$prd_path")
+  if [ ! -f "$state_path" ]; then
+    return 1
+  fi
+
+  acquire_lock "$state_path"
+
+  local tmp_file=$(brigade_mktemp)
+  jq --argjson idx "$index" '.scopeDecisions[$idx].reviewedByHuman = true' "$state_path" > "$tmp_file"
+  mv "$tmp_file" "$state_path"
+
+  release_lock "$state_path"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ROUTING LOGIC
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1853,6 +2335,7 @@ INSTRUCTIONS:
 7. If absorbed by a prior task (prior task completed this work), output: <promise>ABSORBED_BY:US-XXX</promise> (replace US-XXX with the task ID)
 8. Share useful learnings with: <learning>What you learned</learning>
 9. Log out-of-scope discoveries with: <backlog>Description of issue or enhancement</backlog>
+10. For scope/requirement ambiguities, ask: <scope-question>Your question about scope or approach</scope-question>
 
 BEGIN WORK:
 EOF
@@ -1912,15 +2395,26 @@ fire_ticket() {
     echo -e "${GRAY}Worker timeout: ${timeout_mins}m${NC}"
   fi
 
-  # Helper to handle exit code and timeout
+  # Helper to handle exit code and timeout/crash detection
   handle_worker_exit() {
     local exit_code=$1
     if [ "$exit_code" -eq 124 ]; then
       echo -e "${RED}Worker TIMED OUT after $((worker_timeout / 60))m${NC}"
       echo "<promise>BLOCKED</promise>" >> "$output_file"
       echo "Worker process timed out and was killed." >> "$output_file"
+    elif [ "$exit_code" -eq "${WORKER_CRASH_EXIT_CODE:-125}" ]; then
+      echo -e "${RED}Worker CRASHED unexpectedly${NC}"
+      echo "<promise>BLOCKED</promise>" >> "$output_file"
+      echo "Worker process crashed unexpectedly. This may indicate a bug in the worker or resource exhaustion." >> "$output_file"
+      log_event "ERROR" "Worker crashed for task $task_id - will escalate"
     elif [ "$exit_code" -eq 0 ]; then
       echo -e "${GREEN}Worker completed${NC}"
+    elif [ "$exit_code" -gt 128 ]; then
+      # Killed by signal
+      local signal=$((exit_code - 128))
+      echo -e "${RED}Worker killed by signal $signal${NC}"
+      echo "<promise>BLOCKED</promise>" >> "$output_file"
+      echo "Worker was killed by signal $signal." >> "$output_file"
     else
       echo -e "${YELLOW}Worker exited (code: $exit_code)${NC}"
     fi
@@ -2055,6 +2549,9 @@ fire_ticket() {
 
   # Extract any backlog items (out-of-scope discoveries)
   extract_backlog_from_output "$output_file" "$prd_path" "$task_id" "$worker"
+
+  # Handle any scope questions (in walkaway mode, exec chef decides)
+  extract_scope_questions_from_output "$output_file" "$prd_path" "$task_id" "$worker"
 
   # Check for completion signal
   # Debug: log output file details for parallel execution debugging
@@ -3911,25 +4408,28 @@ cmd_resume() {
 
   # Determine action
   if [ -z "$action" ]; then
-    if [ "$WALKAWAY_MODE" == "true" ]; then
-      # In walkaway mode, let AI decide
-      walkaway_decide_resume "$prd_path" "$current_task" "$last_status" "0" "$last_worker"
-      local decision=$?
-      case $decision in
-        0) action="retry" ;;
-        1) action="skip" ;;
-        2)
-          echo -e "${RED}WALKAWAY ABORT: Executive Chef aborted the resume${NC}"
-          exit 1
-          ;;
-      esac
-    else
-      echo -e "What would you like to do?"
-      echo -e "  ${CYAN}retry${NC} - Retry the interrupted task from scratch"
-      echo -e "  ${CYAN}skip${NC}  - Mark as failed and continue to next task"
-      echo ""
-      read -p "Enter choice [retry/skip]: " action
-    fi
+    # Build context for decision
+    local iteration_count=$(echo "$last_entry" | jq -r '.status | if startswith("iteration_") then (. | sub("iteration_"; "") | tonumber) else 0 end' 2>/dev/null || echo 0)
+    local context=$(cat <<EOF
+{"failureReason":"$last_status","iterations":$iteration_count,"lastWorker":"$last_worker","taskTitle":"$task_title"}
+EOF
+)
+
+    # Use wait_for_decision which handles supervisor, walkaway, and interactive modes
+    wait_for_decision "resume_interrupted" "$current_task" "$context" "$prd_path" "$last_worker"
+    local decision=$?
+
+    case $decision in
+      0) action="retry" ;;
+      1) action="skip" ;;
+      2)
+        echo -e "${RED}ABORT: Decision to abort the resume${NC}"
+        if [ -n "$DECISION_REASON" ]; then
+          echo -e "${GRAY}Reason: $DECISION_REASON${NC}"
+        fi
+        exit 1
+        ;;
+    esac
   fi
 
   case "$action" in
@@ -4714,41 +5214,48 @@ $task_id"
         if [ "$all_success" != "true" ]; then
           echo -e "${RED}Some parallel tasks failed${NC}"
 
-          if [ "$WALKAWAY_MODE" == "true" ]; then
-            # In walkaway mode, ask AI about each failed task
+          # Handle failure decisions - supervisor, walkaway, or exit
+          if [ -n "$SUPERVISOR_CMD_FILE" ] || [ "$WALKAWAY_MODE" == "true" ]; then
             for failed_task in $failed_tasks; do
               local state_path=$(get_state_path "$prd_path")
               local last_entry=$(jq -r --arg task "$failed_task" '[.taskHistory[] | select(.taskId == $task)] | last' "$state_path" 2>/dev/null)
               local last_status=$(echo "$last_entry" | jq -r '.status // "failed"')
               local last_worker=$(echo "$last_entry" | jq -r '.worker // "unknown"')
+              local task_title=$(jq -r --arg id "$failed_task" '.tasks[] | select(.id == $id) | .title' "$prd_path")
 
-              walkaway_decide_resume "$prd_path" "$failed_task" "$last_status" "0" "$last_worker"
+              # Build context for decision
+              local context=$(cat <<EOF
+{"failureReason":"$last_status","iterations":0,"lastWorker":"$last_worker","taskTitle":"$task_title"}
+EOF
+)
+
+              wait_for_decision "max_iterations" "$failed_task" "$context" "$prd_path" "$last_worker"
               local decision=$?
 
               case $decision in
                 0)  # RETRY - will be picked up in next iteration
-                  log_event "WALKAWAY" "Will retry task $failed_task in next iteration"
+                  log_event "DECISION" "Will retry task $failed_task in next iteration"
                   local tmp_file=$(brigade_mktemp)
                   jq '.currentTask = null' "$state_path" > "$tmp_file" && mv "$tmp_file" "$state_path"
                   ;;
                 1)  # SKIP
                   WALKAWAY_CONSECUTIVE_SKIPS=$((WALKAWAY_CONSECUTIVE_SKIPS + 1))
-                  log_event "WALKAWAY" "Skipping task $failed_task (consecutive skips: $WALKAWAY_CONSECUTIVE_SKIPS)"
+                  log_event "DECISION" "Skipping task $failed_task (consecutive skips: $WALKAWAY_CONSECUTIVE_SKIPS)"
 
                   if [ "$WALKAWAY_CONSECUTIVE_SKIPS" -ge "$WALKAWAY_MAX_SKIPS" ]; then
-                    echo -e "${RED}WALKAWAY PAUSED: Max consecutive skips reached${NC}"
+                    echo -e "${RED}PAUSED: Max consecutive skips reached${NC}"
                     exit 1
                   fi
 
-                  update_state_task "$prd_path" "$failed_task" "$last_worker" "skipped_walkaway"
+                  update_state_task "$prd_path" "$failed_task" "$last_worker" "skipped_decision"
                   ;;
                 2)  # ABORT
-                  echo -e "${RED}WALKAWAY ABORT: Executive Chef aborted the run${NC}"
+                  echo -e "${RED}ABORT: Decision to abort the run${NC}"
                   exit 1
                   ;;
               esac
             done
-            echo -e "${YELLOW}Walkaway mode: continuing with remaining tasks...${NC}"
+            echo -e "${YELLOW}Continuing with remaining tasks...${NC}"
           else
             exit 1
           fi
@@ -4774,21 +5281,28 @@ $task_id"
     else
       echo -e "${RED}Failed to complete $next_task${NC}"
 
-      # In walkaway mode, let AI decide
-      if [ "$WALKAWAY_MODE" == "true" ]; then
+      # Handle failure decisions - supervisor, walkaway, or exit
+      if [ -n "$SUPERVISOR_CMD_FILE" ] || [ "$WALKAWAY_MODE" == "true" ]; then
         # Get failure info from state
         local state_path=$(get_state_path "$prd_path")
         local last_entry=$(jq -r --arg task "$next_task" '[.taskHistory[] | select(.taskId == $task)] | last' "$state_path" 2>/dev/null)
         local last_status=$(echo "$last_entry" | jq -r '.status // "failed"')
         local last_worker=$(echo "$last_entry" | jq -r '.worker // "unknown"')
         local iteration_count=$(echo "$last_entry" | jq -r '.status | if startswith("iteration_") then (. | sub("iteration_"; "") | tonumber) else 0 end' 2>/dev/null || echo 0)
+        local task_title=$(jq -r --arg id "$next_task" '.tasks[] | select(.id == $id) | .title' "$prd_path")
 
-        walkaway_decide_resume "$prd_path" "$next_task" "$last_status" "$iteration_count" "$last_worker"
+        # Build context for decision
+        local context=$(cat <<EOF
+{"failureReason":"$last_status","iterations":$iteration_count,"lastWorker":"$last_worker","taskTitle":"$task_title"}
+EOF
+)
+
+        wait_for_decision "max_iterations" "$next_task" "$context" "$prd_path" "$last_worker"
         local decision=$?
 
         case $decision in
           0)  # RETRY
-            log_event "WALKAWAY" "Retrying task $next_task"
+            log_event "DECISION" "Retrying task $next_task"
             # Clear currentTask to allow fresh start
             local tmp_file=$(brigade_mktemp)
             jq '.currentTask = null' "$state_path" > "$tmp_file" && mv "$tmp_file" "$state_path"
@@ -4796,21 +5310,21 @@ $task_id"
             ;;
           1)  # SKIP
             WALKAWAY_CONSECUTIVE_SKIPS=$((WALKAWAY_CONSECUTIVE_SKIPS + 1))
-            log_event "WALKAWAY" "Skipping task $next_task (consecutive skips: $WALKAWAY_CONSECUTIVE_SKIPS)"
+            log_event "DECISION" "Skipping task $next_task (consecutive skips: $WALKAWAY_CONSECUTIVE_SKIPS)"
 
             # Check safety rail
             if [ "$WALKAWAY_CONSECUTIVE_SKIPS" -ge "$WALKAWAY_MAX_SKIPS" ]; then
               echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
-              echo -e "${RED}║  WALKAWAY PAUSED: Max consecutive skips reached           ║${NC}"
+              echo -e "${RED}║  PAUSED: Max consecutive skips reached                    ║${NC}"
               echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
-              log_event "WALKAWAY" "PAUSED: $WALKAWAY_CONSECUTIVE_SKIPS consecutive skips"
+              log_event "DECISION" "PAUSED: $WALKAWAY_CONSECUTIVE_SKIPS consecutive skips"
               echo ""
               echo -e "Run './brigade.sh resume $prd_path' to continue manually."
               exit 1
             fi
 
             # Mark task as skipped and continue
-            update_state_task "$prd_path" "$next_task" "$last_worker" "skipped_walkaway"
+            update_state_task "$prd_path" "$next_task" "$last_worker" "skipped_decision"
             local tmp_file=$(brigade_mktemp)
             jq '.currentTask = null' "$state_path" > "$tmp_file" && mv "$tmp_file" "$state_path"
             echo -e "${YELLOW}Task $next_task skipped, continuing...${NC}"
@@ -4818,9 +5332,9 @@ $task_id"
             ;;
           2)  # ABORT
             echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
-            echo -e "${RED}║  WALKAWAY ABORT: Executive Chef aborted the run           ║${NC}"
+            echo -e "${RED}║  ABORT: Decision to abort the run                         ║${NC}"
             echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
-            echo -e "${GRAY}Reason: $WALKAWAY_DECISION_REASON${NC}"
+            echo -e "${GRAY}Reason: $DECISION_REASON${NC}"
             exit 1
             ;;
         esac
