@@ -303,6 +303,45 @@ This actually runs the feature and catches broken implementations.
 - **CLI commands**: `./binary command --help` and `./binary command --dry-run [args]`
 - **Libraries**: Unit tests that call the public API
 - **Services**: Health check or basic operation test
+- **TUI/UI code**: Integration test that exercises a full user flow (see below)
+
+#### UI/TUI Verification Requirements (CRITICAL)
+
+UI and TUI code is particularly prone to integration bugs - components that work in isolation but break when combined. **Every UI/TUI task MUST include an integration test that exercises an actual user flow.**
+
+**Bad (unit tests only - components may not work together):**
+```json
+"verification": [
+  "go test ./internal/tui/...",
+  "grep -q 'type SearchView' internal/tui/search.go"
+]
+```
+This passes even if navigation between views is broken!
+
+**Good (includes integration/flow test):**
+```json
+"verification": [
+  "go test ./internal/tui/...",
+  "go test -run TestApp_SearchAndSelect ./internal/tui",
+  "go test -run TestApp_FullNavigationFlow ./internal/tui"
+]
+```
+
+**UI/TUI integration test patterns:**
+- `TestApp_FullNavigationFlow` - Navigate through multiple views without panic
+- `TestApp_SearchAndSelect` - Search → select item → verify state
+- `TestView_RenderWithRealData` - Render with actual (not mocked) model data
+
+**Common UI bugs that integration tests catch:**
+- Type assertion failures (pointer vs value receivers)
+- Nil pointer dereferences on navigation
+- State not propagating between views
+- Event handlers not wired correctly
+
+**For Bubble Tea specifically:**
+- Test that `Update()` returns correctly typed models
+- Test navigation between views with real key events
+- Verify model state after a sequence of updates
 
 **Guidelines:**
 - Keep them fast (use `--dry-run`, mock data, or test fixtures)
