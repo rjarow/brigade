@@ -13,6 +13,9 @@ You are orchestrating Brigade, a multi-model AI task execution framework. This s
 | `/brigade run` | Execute a PRD |
 | `/brigade status` | Check progress |
 | `/brigade resume` | Resume after failure |
+| `/brigade quick "task"` | Execute single task without PRD ceremony |
+| `/brigade pr` | Create PR from completed PRD |
+| `/brigade cost` | Show estimated cost breakdown |
 
 Aliases: `build` = `plan`, `service` = `run`, `execute` = `run`
 
@@ -362,11 +365,358 @@ Check `currentTask`, `attention`, `attentionReason`.
 
 ---
 
+# /brigade quick
+
+Execute a single task without PRD ceremony. For small, well-defined changes that don't need full planning.
+
+## Usage
+
+```
+/brigade quick "description of what to do"
+/brigade quick "complex task" --senior
+```
+
+## When to Use
+
+- Small, well-defined changes
+- Bug fixes with clear scope
+- Adding a flag, config option, or small feature
+- Documentation updates
+
+## When NOT to Use
+
+- Multi-step features (use `/brigade plan` instead)
+- Architectural changes
+- Anything requiring multiple files with dependencies
+
+## Flags
+
+- `--senior` - Route to Sous Chef instead of Line Cook
+- `--branch NAME` - Use specific branch name instead of auto-generated
+
+## Workflow
+
+### Step 1: Create Minimal PRD
+
+Generate a single-task PRD programmatically:
+
+```bash
+# Generate timestamp-based ID
+timestamp=$(date +%s)
+prd_path="brigade/tasks/prd-quick-${timestamp}.json"
+
+# Create minimal PRD
+cat > "$prd_path" << EOF
+{
+  "featureName": "Quick: {description}",
+  "branchName": "quick/${timestamp}",
+  "createdAt": "$(date +%Y-%m-%d)",
+  "quick": true,
+  "tasks": [{
+    "id": "QT-001",
+    "title": "{description}",
+    "acceptanceCriteria": ["Task completed as described"],
+    "dependsOn": [],
+    "complexity": "{junior|senior}",
+    "passes": false
+  }]
+}
+EOF
+```
+
+Set `complexity` to:
+- `"junior"` by default
+- `"senior"` if `--senior` flag provided
+
+### Step 2: Execute
+
+```bash
+./brigade.sh ticket "$prd_path" QT-001
+```
+
+### Step 3: Report Result
+
+If successful:
+> "Done! {brief summary of what was changed}"
+
+If failed:
+> "Quick task failed. Error: {reason}. Options: retry, investigate, or convert to full PRD?"
+
+### Step 4: Offer PR (Optional)
+
+If successful and there are git changes:
+> "Changes committed. Create a PR?"
+
+If user says yes, run `/brigade pr` workflow.
+
+## Example Conversations
+
+### Simple Quick Task
+```
+User: /brigade quick "add a --verbose flag to brigade.sh"
+
+Claude: Creating quick task for: "add a --verbose flag to brigade.sh"
+[Executes via Line Cook]
+
+Done! Added --verbose flag to brigade.sh:
+- Flag parsed in argument handling
+- VERBOSE variable controls debug output
+- Help text updated
+
+Create a PR for this change?
+```
+
+### Senior Quick Task
+```
+User: /brigade quick "refactor the state file locking" --senior
+
+Claude: Creating quick task (senior): "refactor the state file locking"
+[Executes via Sous Chef]
+
+Done! Refactored state file locking:
+- Extracted lock operations to separate functions
+- Added timeout handling
+- Improved error messages
+
+Create a PR?
+```
+
+---
+
+# /brigade pr
+
+Create a pull request from a completed PRD.
+
+## Usage
+
+```
+/brigade pr                              # Auto-detect PRD
+/brigade pr brigade/tasks/prd-auth.json  # Specific PRD
+```
+
+## Options
+
+- `--draft` - Create as draft PR
+- `--base BRANCH` - Target branch (default: main/master)
+- `--title "Custom title"` - Override auto-generated title
+
+## Workflow
+
+### Step 1: Find PRD
+
+If no PRD specified:
+```bash
+ls brigade/tasks/prd-*.json
+```
+
+- If one PRD exists, use it
+- If multiple exist, prefer the one with most recent state file
+- If ambiguous, ask user which one
+
+### Step 2: Verify Completion
+
+Check that all tasks are complete:
+```bash
+incomplete=$(jq '[.tasks[] | select(.passes != true)] | length' "$prd")
+if [ "$incomplete" -gt 0 ]; then
+  echo "PRD has $incomplete incomplete tasks"
+fi
+```
+
+If incomplete:
+> "This PRD has 3 incomplete tasks. Options:
+> 1. Create draft PR anyway
+> 2. List incomplete tasks
+> 3. Cancel"
+
+### Step 3: Extract Metadata
+
+```bash
+feature=$(jq -r '.featureName' "$prd")
+branch=$(jq -r '.branchName' "$prd")
+description=$(jq -r '.description // empty' "$prd")
+
+# Build task checklist
+tasks=$(jq -r '.tasks[] | "- [" + (if .passes then "x" else " " end) + "] " + .id + ": " + .title' "$prd")
+```
+
+### Step 4: Check Git State
+
+```bash
+# Ensure we're on the right branch
+current=$(git branch --show-current)
+if [ "$current" != "$branch" ]; then
+  echo "Warning: Current branch ($current) differs from PRD branch ($branch)"
+  # Offer to switch or continue
+fi
+
+# Check if remote branch exists
+if ! git ls-remote --heads origin "$branch" | grep -q "$branch"; then
+  echo "Pushing branch to origin..."
+  git push -u origin "$branch"
+fi
+```
+
+### Step 5: Create PR
+
+```bash
+gh pr create \
+  --head "$branch" \
+  --title "$feature" \
+  --body "$(cat <<'EOF'
+## Summary
+$feature
+
+$description
+
+## Completed Tasks
+$tasks
+
+---
+Generated by [Brigade](https://github.com/rjarow/brigade)
+EOF
+)"
+```
+
+Add `--draft` flag if `--draft` option was specified.
+
+### Step 6: Report
+
+Return PR URL to user:
+> "PR created: https://github.com/user/repo/pull/123"
+
+## Example Conversations
+
+### Auto-Detect PRD
+```
+User: /brigade pr
+
+Claude: Found completed PRD: prd-add-auth.json (8/8 tasks complete)
+Creating PR for branch `feature/add-auth`...
+
+PR created: https://github.com/user/repo/pull/123
+
+## Summary
+Add User Authentication
+
+## Completed Tasks
+- [x] US-001: Add user model
+- [x] US-002: Add login endpoint
+- [x] US-003: Add auth middleware
+- [x] US-004: Add logout endpoint
+- [x] US-005: Add password hashing
+- [x] US-006: Add JWT token generation
+- [x] US-007: Add token refresh endpoint
+- [x] US-008: Add authentication tests
+```
+
+### Incomplete PRD
+```
+User: /brigade pr
+
+Claude: Found PRD: prd-download.json (4/6 tasks complete)
+2 tasks are incomplete:
+- US-005: Add progress indicator
+- US-006: Add download tests
+
+Options:
+1. Create draft PR anyway
+2. Resume execution to complete tasks
+3. Cancel
+
+User: 1
+
+Claude: Creating draft PR...
+Draft PR created: https://github.com/user/repo/pull/124
+```
+
+### Quick Task PR
+```
+User: /brigade quick "fix typo in README"
+
+Claude: Done! Fixed typo in README.md
+Create a PR?
+
+User: yes
+
+Claude: Creating PR...
+PR created: https://github.com/user/repo/pull/125
+```
+
+---
+
+# /brigade cost
+
+Show estimated cost breakdown for a PRD based on task durations.
+
+## Usage
+
+```
+/brigade cost                              # Auto-detect PRD
+/brigade cost brigade/tasks/prd-auth.json  # Specific PRD
+```
+
+## How It Works
+
+Cost estimates are based on:
+1. **Duration** - Time spent on each task (tracked in state file)
+2. **Worker tier** - Different rates for Line Cook, Sous Chef, Executive Chef
+3. **User-configured rates** - You set $/minute rates in `brigade.config`
+
+This gives order-of-magnitude estimates. For exact costs, use your provider's billing dashboard.
+
+## Configuration
+
+Set your rates in `brigade.config`:
+
+```bash
+COST_RATE_LINE=0.05        # $/minute for Line Cook
+COST_RATE_SOUS=0.15        # $/minute for Sous Chef
+COST_RATE_EXECUTIVE=0.30   # $/minute for Executive Chef
+COST_WARN_THRESHOLD=10.00  # Warn if PRD exceeds this cost (optional)
+```
+
+Estimate your rates based on:
+- Which model you're using per tier
+- Your provider's pricing
+- Include some buffer for overhead
+
+## Output
+
+```
+Cost Summary: add-auth
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Feature:   Add User Authentication
+Tasks:     8/8 complete
+Duration:  42m 15s
+Estimated: $4.82
+
+By Worker:
+  Line Cook:      $1.25  (6 tasks, 25m 0s)
+  Sous Chef:      $3.57  (2 tasks, 17m 15s)
+  Executive Chef: $0.00  (0 tasks)
+
+Note: Estimates based on configured rates ($0.05/min line, $0.15/min sous, $0.30/min exec).
+      Actual costs depend on your provider. Configure rates in brigade.config.
+```
+
+## Natural Language Summary
+
+When using `/brigade cost`, report in plain English:
+
+> "This PRD cost approximately $4.82 over 42 minutes. Most of the cost ($3.57) was from 2 Sous Chef tasks. Want me to break it down further?"
+
+---
+
 # Quick Reference
 
 ```bash
 # Planning
 ./brigade.sh plan "feature description"
+
+# Quick Tasks (no PRD ceremony)
+/brigade quick "small task description"
+/brigade quick "complex task" --senior
 
 # Execution
 ./brigade.sh service brigade/tasks/prd-name.json
@@ -382,9 +732,15 @@ Check `currentTask`, `attention`, `attentionReason`.
 ./brigade.sh resume prd.json retry
 ./brigade.sh resume prd.json skip
 
+# PR Creation
+/brigade pr                      # Auto-detect PRD
+/brigade pr prd.json             # Specific PRD
+/brigade pr --draft              # Create draft PR
+
 # Utilities
 ./brigade.sh validate prd.json   # Check PRD
 ./brigade.sh summary prd.json    # Generate report
+./brigade.sh cost prd.json       # Show cost breakdown
 ./brigade.sh map                 # Analyze codebase
 ```
 

@@ -309,6 +309,12 @@ SUPERVISOR_CMD_TIMEOUT=300         # Max seconds to wait for supervisor command 
 # Codebase map defaults
 MAP_STALE_COMMITS=20               # Regenerate map if this many commits behind HEAD (0 = disable)
 
+# Cost estimation defaults (duration-based)
+COST_RATE_LINE=0.05                # $/minute for Line Cook
+COST_RATE_SOUS=0.15                # $/minute for Sous Chef
+COST_RATE_EXECUTIVE=0.30           # $/minute for Executive Chef
+COST_WARN_THRESHOLD=""             # Warn if PRD exceeds this cost (empty = disabled)
+
 # Runtime state (set during execution)
 LAST_REVIEW_FEEDBACK=""       # Feedback from failed executive review, passed to worker on retry
 LAST_VERIFICATION_FEEDBACK="" # Feedback from failed verification commands, passed to worker on retry
@@ -469,6 +475,7 @@ print_usage() {
   echo "  status [options] [prd.json] Show kitchen status (auto-detects active PRD)"
   echo "                              Options: --all (show all escalations), --watch/-w (auto-refresh)"
   echo "  summary [prd.json] [file]  Generate markdown summary report from state"
+  echo "  cost [prd.json]            Show estimated cost breakdown (duration-based)"
   echo "  map [output.md]            Generate codebase map (default: brigade/codebase-map.md)"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
   echo "  validate <prd.json>        Validate PRD structure and dependencies"
@@ -488,6 +495,56 @@ print_usage() {
   echo "  ./brigade.sh service brigade/tasks/prd.json          # Specific PRD"
   echo "  ./brigade.sh --auto-continue service brigade/tasks/prd-*.json  # Chain numbered PRDs"
   echo "  ./brigade.sh status                                  # Auto-detect active PRD"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COST ESTIMATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Calculate estimated cost for a task based on duration and worker tier
+# Usage: calculate_task_cost <duration_seconds> <worker>
+# Returns: cost in dollars (4 decimal places)
+calculate_task_cost() {
+  local duration="$1"  # seconds
+  local worker="$2"    # line|sous|executive
+
+  local rate
+  case "$worker" in
+    line) rate="${COST_RATE_LINE:-0.05}" ;;
+    sous) rate="${COST_RATE_SOUS:-0.15}" ;;
+    executive) rate="${COST_RATE_EXECUTIVE:-0.30}" ;;
+    *) rate="0.10" ;;  # fallback for unknown workers
+  esac
+
+  # cost = duration_seconds / 60 * rate_per_minute
+  echo "scale=4; $duration / 60 * $rate" | bc
+}
+
+# Format duration seconds to human-readable string
+# Usage: format_duration_hms <seconds>
+# Returns: "Xh Ym Zs" or "Ym Zs" or "Zs"
+format_duration_hms() {
+  local seconds="$1"
+  local hours=$((seconds / 3600))
+  local mins=$(((seconds % 3600) / 60))
+  local secs=$((seconds % 60))
+
+  if [ "$hours" -gt 0 ]; then
+    echo "${hours}h ${mins}m ${secs}s"
+  elif [ "$mins" -gt 0 ]; then
+    echo "${mins}m ${secs}s"
+  else
+    echo "${secs}s"
+  fi
+}
+
+# Format cost as currency
+# Usage: format_cost <amount>
+# Returns: "$X.XX"
+format_cost() {
+  local amount="$1"
+  # Format to 2 decimal places
+  printf "\$%.2f" "$amount"
 }
 
 # Spinner for QUIET_WORKERS mode - shows activity while worker runs in background
@@ -1234,6 +1291,7 @@ update_state_task() {
   local task_id="$2"
   local worker="$3"
   local status="$4"
+  local duration="${5:-}"  # Optional duration in seconds (for complete status)
 
   if [ "$CONTEXT_ISOLATION" != "true" ]; then
     return 0
@@ -1247,9 +1305,17 @@ update_state_task() {
 
   # Use set +e locally to prevent jq failures from killing the subshell
   set +e
-  jq --arg task "$task_id" --arg worker "$worker" --arg status "$status" --arg ts "$(date -Iseconds)" \
-    '.currentTask = $task | .taskHistory += [{"taskId": $task, "worker": $worker, "status": $status, "timestamp": $ts}]' \
-    "$state_path" > "$tmp_file"
+
+  # Include duration in taskHistory entry if provided (for completed tasks)
+  if [ -n "$duration" ]; then
+    jq --arg task "$task_id" --arg worker "$worker" --arg status "$status" --arg ts "$(date -Iseconds)" --argjson dur "$duration" \
+      '.currentTask = $task | .taskHistory += [{"taskId": $task, "worker": $worker, "status": $status, "timestamp": $ts, "duration": $dur}]' \
+      "$state_path" > "$tmp_file"
+  else
+    jq --arg task "$task_id" --arg worker "$worker" --arg status "$status" --arg ts "$(date -Iseconds)" \
+      '.currentTask = $task | .taskHistory += [{"taskId": $task, "worker": $worker, "status": $status, "timestamp": $ts}]' \
+      "$state_path" > "$tmp_file"
+  fi
   local jq_exit=$?
   set -e
 
@@ -4973,7 +5039,12 @@ cmd_ticket() {
       if [ "$tests_passed" == "true" ]; then
         # Executive review before marking complete
         if executive_review "$prd_path" "$task_id" "$worker"; then
-          update_state_task "$prd_path" "$task_id" "$worker" "completed"
+          # Calculate task duration for cost tracking
+          local task_duration=0
+          if [ "$CURRENT_TASK_START_TIME" -gt 0 ]; then
+            task_duration=$(($(date +%s) - CURRENT_TASK_START_TIME))
+          fi
+          update_state_task "$prd_path" "$task_id" "$worker" "complete" "$task_duration"
           mark_task_complete "$prd_path" "$task_id"
           return 0
         else
@@ -6299,6 +6370,127 @@ cmd_summary() {
   fi
 }
 
+cmd_cost() {
+  local prd_path="$1"
+
+  # Auto-detect PRD if not provided
+  if [ -z "$prd_path" ]; then
+    prd_path=$(find_active_prd)
+    if [ -z "$prd_path" ]; then
+      echo -e "${RED}Error: No PRD found. Specify a PRD path.${NC}"
+      exit 1
+    fi
+  fi
+
+  if [ ! -f "$prd_path" ]; then
+    echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
+    exit 1
+  fi
+
+  local state_path="${prd_path%.json}.state.json"
+  if [ ! -f "$state_path" ]; then
+    echo -e "${RED}Error: No state file found for this PRD.${NC}"
+    echo -e "${GRAY}State file expected at: $state_path${NC}"
+    echo -e "${GRAY}Run service first: ./brigade.sh service $prd_path${NC}"
+    exit 1
+  fi
+
+  local feature_name=$(jq -r '.featureName // "Unknown"' "$prd_path")
+  local total_tasks=$(jq '.tasks | length' "$prd_path")
+  local completed_tasks=$(jq '[.tasks[] | select(.passes == true)] | length' "$prd_path")
+
+  # Aggregate durations by worker tier from taskHistory
+  # Each entry has: taskId, worker, status, timestamp, and optionally duration
+  local line_duration=0
+  local sous_duration=0
+  local exec_duration=0
+  local line_tasks=0
+  local sous_tasks=0
+  local exec_tasks=0
+
+  # Parse taskHistory to sum durations by worker
+  # Look for entries with status "complete" and a duration field
+  while IFS='|' read -r worker duration; do
+    [ -z "$worker" ] && continue
+    local dur=${duration:-0}
+
+    case "$worker" in
+      line)
+        line_duration=$((line_duration + dur))
+        ((line_tasks++))
+        ;;
+      sous)
+        sous_duration=$((sous_duration + dur))
+        ((sous_tasks++))
+        ;;
+      executive)
+        exec_duration=$((exec_duration + dur))
+        ((exec_tasks++))
+        ;;
+    esac
+  done < <(jq -r '.taskHistory[]? | select(.status == "complete" and .duration) | "\(.worker)|\(.duration)"' "$state_path" 2>/dev/null)
+
+  # Calculate costs
+  local line_cost=$(calculate_task_cost "$line_duration" "line")
+  local sous_cost=$(calculate_task_cost "$sous_duration" "sous")
+  local exec_cost=$(calculate_task_cost "$exec_duration" "executive")
+
+  # Total cost (use bc for floating point addition)
+  local total_cost=$(echo "$line_cost + $sous_cost + $exec_cost" | bc)
+  local total_duration=$((line_duration + sous_duration + exec_duration))
+
+  # Get PRD prefix for display
+  local prd_prefix=$(get_prd_prefix "$prd_path")
+
+  # Output report
+  echo ""
+  echo -e "${BOLD}Cost Summary: ${prd_prefix}${NC}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo -e "Feature:   ${CYAN}$feature_name${NC}"
+  echo -e "Tasks:     $completed_tasks/$total_tasks complete"
+  echo -e "Duration:  $(format_duration_hms $total_duration)"
+  echo -e "Estimated: ${GREEN}$(format_cost $total_cost)${NC}"
+  echo ""
+  echo "By Worker:"
+
+  if [ "$line_tasks" -gt 0 ]; then
+    echo -e "  Line Cook:      $(format_cost $line_cost)  ($line_tasks tasks, $(format_duration_hms $line_duration))"
+  else
+    echo -e "  Line Cook:      \$0.00  (0 tasks)"
+  fi
+
+  if [ "$sous_tasks" -gt 0 ]; then
+    echo -e "  Sous Chef:      $(format_cost $sous_cost)  ($sous_tasks tasks, $(format_duration_hms $sous_duration))"
+  else
+    echo -e "  Sous Chef:      \$0.00  (0 tasks)"
+  fi
+
+  if [ "$exec_tasks" -gt 0 ]; then
+    echo -e "  Executive Chef: $(format_cost $exec_cost)  ($exec_tasks tasks, $(format_duration_hms $exec_duration))"
+  else
+    echo -e "  Executive Chef: \$0.00  (0 tasks)"
+  fi
+
+  echo ""
+  echo -e "${GRAY}Note: Estimates based on configured rates (\$${COST_RATE_LINE}/min line, \$${COST_RATE_SOUS}/min sous, \$${COST_RATE_EXECUTIVE}/min exec).${NC}"
+  echo -e "${GRAY}      Actual costs depend on your provider. Configure rates in brigade.config.${NC}"
+
+  # Warn if threshold exceeded
+  if [ -n "$COST_WARN_THRESHOLD" ]; then
+    if (( $(echo "$total_cost > $COST_WARN_THRESHOLD" | bc -l) )); then
+      echo ""
+      echo -e "${YELLOW}⚠️  Cost exceeds threshold (\$${COST_WARN_THRESHOLD})${NC}"
+    fi
+  fi
+
+  # If no duration data found, explain why
+  if [ "$total_duration" -eq 0 ]; then
+    echo ""
+    echo -e "${YELLOW}No duration data found.${NC}"
+    echo -e "${GRAY}Duration tracking was added recently. Re-run tasks to collect cost data.${NC}"
+  fi
+}
+
 # Check if codebase map is stale (too many commits behind HEAD)
 # Returns: 0 = fresh, 1 = stale, 2 = no map exists
 # Sets MAP_COMMITS_BEHIND to the number of commits behind
@@ -6529,6 +6721,9 @@ main() {
       ;;
     "summary")
       cmd_summary "$@"
+      ;;
+    "cost")
+      cmd_cost "$@"
       ;;
     "map")
       cmd_map "$@"

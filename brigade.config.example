@@ -167,6 +167,22 @@ MODULE_TIMEOUT=5
 # MODULE_COST_TRACKING_OUTPUT="brigade/costs.csv"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# COST ESTIMATION
+# ═══════════════════════════════════════════════════════════════════════════════
+# Duration-based cost estimates. Set rates based on your provider's pricing.
+# Run `./brigade.sh cost [prd]` to see cost breakdown.
+
+# Cost per minute for each worker tier (in dollars)
+# Estimate based on your model's pricing and typical token usage
+COST_RATE_LINE=0.05        # $/minute for Line Cook (junior tasks)
+COST_RATE_SOUS=0.15        # $/minute for Sous Chef (senior tasks)
+COST_RATE_EXECUTIVE=0.30   # $/minute for Executive Chef (planning, review)
+
+# Warning threshold - warn if PRD cost exceeds this amount
+# Leave empty to disable threshold warnings
+COST_WARN_THRESHOLD=""     # e.g., "10.00" to warn if PRD exceeds $10
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # CODEBASE MAP
 # ═══════════════════════════════════════════════════════════════════════════════
 
