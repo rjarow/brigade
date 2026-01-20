@@ -2906,6 +2906,7 @@ cmd_status() {
   local watch_mode=false
   local json_mode=false
   local brief_mode=false
+  local alert_only_mode=false
   local prd_path=""
 
   # Parse arguments
@@ -2927,6 +2928,10 @@ cmd_status() {
         brief_mode=true
         shift
         ;;
+      --alert-only|-a)
+        alert_only_mode=true
+        shift
+        ;;
       *)
         prd_path="$1"
         shift
@@ -2946,18 +2951,28 @@ cmd_status() {
       exit 1
     fi
     # Only show "Found" message in human-readable mode
-    if [ "$json_mode" = "false" ] && [ "$brief_mode" = "false" ]; then
+    if [ "$json_mode" = "false" ] && [ "$brief_mode" = "false" ] && [ "$alert_only_mode" = "false" ]; then
       echo -e "${GRAY}Found: $prd_path${NC}"
     fi
   fi
 
   if [ ! -f "$prd_path" ]; then
-    if [ "$json_mode" = "true" ] || [ "$brief_mode" = "true" ]; then
+    if [ "$json_mode" = "true" ] || [ "$brief_mode" = "true" ] || [ "$alert_only_mode" = "true" ]; then
       echo '{"error": "PRD file not found", "attention": true}'
       exit 1
     fi
     echo -e "${RED}Error: PRD file not found: $prd_path${NC}"
     exit 1
+  fi
+
+  # Alert-only mode: output brief JSON only if attention is needed
+  if [ "$alert_only_mode" = "true" ]; then
+    local brief_output=$(output_status_brief "$prd_path")
+    if echo "$brief_output" | grep -q '"attention":true'; then
+      echo "$brief_output"
+    fi
+    # Output nothing if no attention needed
+    return 0
   fi
 
   # Brief mode: output ultra-compact JSON and exit
@@ -3226,8 +3241,35 @@ cmd_status() {
 }
 
 cmd_resume() {
-  local prd_path="$1"
-  local action="$2"  # "retry" or "skip" (optional)
+  local prd_path=""
+  local action=""
+
+  # Parse arguments (supports --retry-all, --skip-all flags)
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --retry-all|--retry)
+        action="retry"
+        shift
+        ;;
+      --skip-all|--skip)
+        action="skip"
+        shift
+        ;;
+      *)
+        # Could be prd_path or action word
+        if [ -z "$prd_path" ] && [[ "$1" == *.json ]]; then
+          prd_path="$1"
+        elif [ -z "$prd_path" ] && [ -f "$1" ]; then
+          prd_path="$1"
+        elif [ -z "$action" ] && [[ "$1" == "retry" || "$1" == "skip" ]]; then
+          action="$1"
+        elif [ -z "$prd_path" ]; then
+          prd_path="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
 
   # Auto-detect PRD if not provided
   if [ -z "$prd_path" ]; then
@@ -4853,10 +4895,11 @@ cmd_opencode_models() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 main() {
-  # Check for quiet modes that suppress banner (status --json, status --brief)
+  # Check for quiet modes that suppress banner (status --json, status --brief, status --alert-only)
   local quiet_mode=false
   if [[ "$*" == *"status"*"--json"* ]] || [[ "$*" == *"status"*"-j"* ]] || \
-     [[ "$*" == *"status"*"--brief"* ]] || [[ "$*" == *"status"*"-b"* ]]; then
+     [[ "$*" == *"status"*"--brief"* ]] || [[ "$*" == *"status"*"-b"* ]] || \
+     [[ "$*" == *"status"*"--alert-only"* ]] || [[ "$*" == *"status"*"-a"* ]]; then
     quiet_mode=true
   fi
 
