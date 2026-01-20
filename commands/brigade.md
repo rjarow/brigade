@@ -67,10 +67,19 @@ Then conduct exhaustive interview covering:
 - Failure Recovery
 
 #### For Greenfield Projects:
-1. **Tech stack**: "What language/framework?"
+1. **Tech stack**: "What language/framework? (or say 'you decide' and I'll recommend based on the feature)"
 2. **Project type**: "CLI, API, web app, library?"
 3. **Scope**: "What's the MVP? What's out of scope?"
 4. **Requirements**: "Database? Auth? External APIs?"
+
+**If user says "you decide" for tech stack**, recommend based on feature type:
+- **CLI tools** → Go (fast, single binary, great stdlib) or Rust (if performance-critical)
+- **REST APIs** → Go (simple, performant) or Node/Express (if team knows JS)
+- **Web apps** → Node + React/Next.js (ecosystem, hiring)
+- **Scripts/automation** → Python (readability, libraries)
+- **Libraries** → Match the target ecosystem
+
+Explain your recommendation briefly, then confirm before proceeding.
 
 #### For Existing Projects:
 1. **Scope**: "Should I include [related capability]?"
