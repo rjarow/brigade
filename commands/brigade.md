@@ -100,7 +100,21 @@ The goal is a thoughtful decision, not a quick lookup. Take the time to get it r
 3. **Preferences**: "Patterns to follow/avoid?"
 
 ### Phase 3: Codebase Analysis
-Explore project structure, patterns, dependencies, test patterns.
+
+**For existing projects**, use the codebase map:
+
+1. **Check for existing map**: Look for `brigade/codebase-map.md`
+2. **Generate or refresh if needed**:
+   ```bash
+   ./brigade.sh map
+   ```
+   This analyzes the codebase and generates a structured map. It auto-detects staleness (embeds commit hash) and regenerates if the codebase has changed significantly.
+
+3. **Read the map**: The map contains project structure, patterns, dependencies, conventions, and areas of concern.
+
+4. **Supplement with exploration**: For the specific feature, also explore relevant files directly to understand patterns you'll need to follow.
+
+**For greenfield projects**, skip the map (nothing to analyze yet).
 
 ### Phase 4: Task Breakdown
 
