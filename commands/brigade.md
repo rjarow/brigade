@@ -18,6 +18,7 @@ You are orchestrating Brigade, a multi-model AI task execution framework. This s
 | `/brigade cost` | Show estimated cost breakdown |
 | `/brigade explore "question"` | Research feasibility without generating PRD |
 | `/brigade iterate "tweak"` | Quick tweak on completed PRD |
+| `/brigade template [name]` | Generate PRD from template |
 
 Aliases: `build` = `plan`, `service` = `run`, `execute` = `run`
 
@@ -865,11 +866,92 @@ Remove iteration PRD? (Y/n) y
 
 ---
 
+# /brigade template
+
+Generate PRDs from pre-built templates for common patterns.
+
+## Usage
+
+```
+/brigade template              # List available templates
+/brigade template api users    # REST API for "users" resource
+/brigade template cli mytool   # CLI tool scaffold
+/brigade template auth         # Auth system (no resource needed)
+```
+
+## Built-in Templates
+
+| Template | Description | Requires Resource |
+|----------|-------------|-------------------|
+| `api` | REST API with CRUD endpoints | Yes |
+| `cli` | CLI tool with arg parsing | Yes |
+| `auth` | Authentication system (JWT) | No |
+| `crud` | Basic CRUD operations | Yes |
+| `feature` | Generic feature scaffold | Yes |
+
+## Custom Templates
+
+Add your own templates to `brigade/templates/` in your project:
+
+```json
+{
+  "featureName": "{{Name}} Widget",
+  "branchName": "feature/{{name}}-widget",
+  "description": "Widget for {{name}}",
+  "tasks": [
+    {
+      "id": "US-001",
+      "title": "Create {{Name}} widget",
+      "acceptanceCriteria": ["{{Name}} widget implemented"],
+      "complexity": "junior",
+      "passes": false
+    }
+  ]
+}
+```
+
+### Variables
+
+| Variable | Input | Result |
+|----------|-------|--------|
+| `{{name}}` | `users` | `users` |
+| `{{Name}}` | `users` | `Users` |
+| `{{NAME}}` | `users` | `USERS` |
+| `{{name_singular}}` | `users` | `user` |
+| `{{Name_singular}}` | `users` | `User` |
+
+Project templates in `brigade/templates/` override built-in templates with the same name.
+
+## Example
+
+```
+User: /brigade template api products
+
+Claude:
+╔═══════════════════════════════════════════════════════════╗
+║  PRD GENERATED FROM TEMPLATE                              ║
+╚═══════════════════════════════════════════════════════════╝
+
+Feature:  Products REST API
+Template: api
+Tasks:    7
+Output:   brigade/tasks/prd-products.json
+
+Next steps:
+  Review:   cat brigade/tasks/prd-products.json | jq
+  Validate: ./brigade.sh validate brigade/tasks/prd-products.json
+  Execute:  ./brigade.sh service brigade/tasks/prd-products.json
+```
+
+---
+
 # Quick Reference
 
 ```bash
 # Planning
 ./brigade.sh plan "feature description"
+./brigade.sh template api users        # PRD from template
+./brigade.sh template                  # List templates
 
 # Quick Tasks (no PRD ceremony)
 /brigade quick "small task description"

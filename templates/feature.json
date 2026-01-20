@@ -1,0 +1,75 @@
+{
+  "featureName": "{{Name}} Feature",
+  "branchName": "feature/{{name}}",
+  "description": "Implementation of {{name}} feature",
+  "tasks": [
+    {
+      "id": "US-001",
+      "title": "Design {{name}} architecture",
+      "description": "Plan the implementation approach for {{name}}",
+      "acceptanceCriteria": [
+        "Key components identified",
+        "Data structures defined",
+        "Integration points documented"
+      ],
+      "dependsOn": [],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Implement core {{name}} logic",
+      "description": "Build the main {{name}} functionality",
+      "acceptanceCriteria": [
+        "Core {{name}} behavior implemented",
+        "Edge cases handled",
+        "Error handling in place"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "Add {{name}} configuration",
+      "description": "Make {{name}} configurable",
+      "acceptanceCriteria": [
+        "Configuration options defined",
+        "Sensible defaults provided",
+        "Configuration documented"
+      ],
+      "dependsOn": ["US-002"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "Integrate {{name}} with existing code",
+      "description": "Wire {{name}} into the application",
+      "acceptanceCriteria": [
+        "{{Name}} accessible from appropriate entry points",
+        "Existing functionality not broken",
+        "Integration follows existing patterns"
+      ],
+      "dependsOn": ["US-002"],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "Add {{name}} tests",
+      "description": "Unit and integration tests for {{name}}",
+      "acceptanceCriteria": [
+        "Unit tests for core logic",
+        "Integration tests for feature flow",
+        "Edge cases and error paths tested"
+      ],
+      "verification": [
+        {"type": "unit", "cmd": "npm test 2>/dev/null || go test ./... 2>/dev/null || pytest 2>/dev/null || echo 'Configure test command'"}
+      ],
+      "dependsOn": ["US-002", "US-003", "US-004"],
+      "complexity": "junior",
+      "passes": false
+    }
+  ]
+}

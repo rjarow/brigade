@@ -1,0 +1,105 @@
+{
+  "featureName": "{{Name}} CRUD Operations",
+  "branchName": "feature/{{name}}-crud",
+  "description": "Create, Read, Update, Delete operations for {{name}}",
+  "tasks": [
+    {
+      "id": "US-001",
+      "title": "Create {{Name}} data model",
+      "description": "Define the {{Name}} entity structure",
+      "acceptanceCriteria": [
+        "{{Name}} model/struct/class defined",
+        "Required fields identified and typed",
+        "Validation rules documented or implemented"
+      ],
+      "dependsOn": [],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Implement Create{{Name}} function",
+      "description": "Function to create a new {{name_singular}}",
+      "acceptanceCriteria": [
+        "Create{{Name}} accepts {{Name}} data",
+        "Validates input before creation",
+        "Returns created {{name_singular}} with generated ID",
+        "Handles duplicate/conflict errors"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "Implement Get{{Name}} function",
+      "description": "Function to retrieve {{name}} by ID",
+      "acceptanceCriteria": [
+        "Get{{Name}} accepts ID parameter",
+        "Returns {{name_singular}} if found",
+        "Returns appropriate error if not found"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "Implement List{{Name}} function",
+      "description": "Function to retrieve all {{name}}",
+      "acceptanceCriteria": [
+        "List{{Name}} returns all {{name}}",
+        "Supports optional filtering",
+        "Supports pagination if dataset can be large"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "Implement Update{{Name}} function",
+      "description": "Function to update an existing {{name_singular}}",
+      "acceptanceCriteria": [
+        "Update{{Name}} accepts ID and update data",
+        "Validates input before update",
+        "Returns updated {{name_singular}}",
+        "Returns error if not found"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-006",
+      "title": "Implement Delete{{Name}} function",
+      "description": "Function to delete a {{name_singular}}",
+      "acceptanceCriteria": [
+        "Delete{{Name}} accepts ID parameter",
+        "Removes {{name_singular}} from storage",
+        "Returns error if not found",
+        "Handles cascade/foreign key constraints if applicable"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-007",
+      "title": "Add {{Name}} CRUD tests",
+      "description": "Unit tests for all CRUD operations",
+      "acceptanceCriteria": [
+        "Tests for Create (success, validation error, duplicate)",
+        "Tests for Read (found, not found)",
+        "Tests for Update (success, not found, validation)",
+        "Tests for Delete (success, not found)"
+      ],
+      "verification": [
+        {"type": "unit", "cmd": "npm test 2>/dev/null || go test ./... 2>/dev/null || pytest 2>/dev/null || echo 'Configure test command'"}
+      ],
+      "dependsOn": ["US-002", "US-003", "US-004", "US-005", "US-006"],
+      "complexity": "junior",
+      "passes": false
+    }
+  ]
+}

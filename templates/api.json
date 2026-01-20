@@ -1,0 +1,109 @@
+{
+  "featureName": "{{Name}} REST API",
+  "branchName": "feature/{{name}}-api",
+  "description": "CRUD REST API for {{name}} resource",
+  "tasks": [
+    {
+      "id": "US-001",
+      "title": "Create {{Name}} model/schema",
+      "description": "Define the {{Name}} data structure with validation",
+      "acceptanceCriteria": [
+        "{{Name}} struct/type/class defined with appropriate fields",
+        "Validation rules implemented for required fields",
+        "JSON serialization configured"
+      ],
+      "verification": [
+        {"type": "pattern", "cmd": "grep -ri '{{name}}' src/ || grep -ri '{{name}}' internal/ || grep -ri '{{name}}' lib/"}
+      ],
+      "dependsOn": [],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Add GET /{{name}} endpoint (list all)",
+      "description": "Endpoint to retrieve all {{name}}",
+      "acceptanceCriteria": [
+        "GET /{{name}} returns array of {{name}}",
+        "Supports pagination (limit/offset or cursor)",
+        "Returns empty array if no {{name}} exist"
+      ],
+      "verification": [
+        {"type": "pattern", "cmd": "grep -ri 'GET.*{{name}}' src/ || grep -ri 'GET.*{{name}}' internal/ || true"}
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "Add GET /{{name}}/:id endpoint (get one)",
+      "description": "Endpoint to retrieve a single {{name_singular}} by ID",
+      "acceptanceCriteria": [
+        "GET /{{name}}/:id returns single {{name_singular}}",
+        "Returns 404 if {{name_singular}} not found",
+        "ID parameter is validated"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "Add POST /{{name}} endpoint (create)",
+      "description": "Endpoint to create a new {{name_singular}}",
+      "acceptanceCriteria": [
+        "POST /{{name}} creates new {{name_singular}}",
+        "Request body is validated",
+        "Returns 201 with created {{name_singular}} including ID",
+        "Returns 400 for invalid input"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "Add PUT /{{name}}/:id endpoint (update)",
+      "description": "Endpoint to update an existing {{name_singular}}",
+      "acceptanceCriteria": [
+        "PUT /{{name}}/:id updates existing {{name_singular}}",
+        "Returns 404 if {{name_singular}} not found",
+        "Request body is validated",
+        "Returns updated {{name_singular}}"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-006",
+      "title": "Add DELETE /{{name}}/:id endpoint",
+      "description": "Endpoint to delete a {{name_singular}}",
+      "acceptanceCriteria": [
+        "DELETE /{{name}}/:id removes {{name_singular}}",
+        "Returns 404 if {{name_singular}} not found",
+        "Returns 204 on successful deletion"
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-007",
+      "title": "Add {{Name}} API integration tests",
+      "description": "Test all {{Name}} CRUD operations",
+      "acceptanceCriteria": [
+        "Tests for all CRUD operations (create, read, update, delete)",
+        "Tests for error cases (404, 400 validation)",
+        "Tests for edge cases (empty list, duplicate handling)"
+      ],
+      "verification": [
+        {"type": "unit", "cmd": "npm test 2>/dev/null || go test ./... 2>/dev/null || pytest 2>/dev/null || echo 'Configure test command'"}
+      ],
+      "dependsOn": ["US-002", "US-003", "US-004", "US-005", "US-006"],
+      "complexity": "junior",
+      "passes": false
+    }
+  ]
+}

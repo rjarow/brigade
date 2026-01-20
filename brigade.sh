@@ -485,6 +485,7 @@ print_usage() {
   echo "  map [output.md]            Generate codebase map (default: brigade/codebase-map.md)"
   echo "  explore <question>         Research feasibility without generating PRD"
   echo "  iterate <description>     Quick tweak on completed PRD (creates micro-PRD)"
+  echo "  template [name] [resource] Generate PRD from template (no args = list templates)"
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
   echo "  validate <prd.json>        Validate PRD structure and dependencies"
   echo "  opencode-models            List available OpenCode models"
@@ -7163,6 +7164,223 @@ EOF
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PRD TEMPLATES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Convert string to capitalized (first letter uppercase)
+to_capitalized() {
+  local str="$1"
+  echo "$(echo "${str:0:1}" | tr '[:lower:]' '[:upper:]')${str:1}"
+}
+
+# Convert string to uppercase
+to_uppercase() {
+  echo "$1" | tr '[:lower:]' '[:upper:]'
+}
+
+# Simple singularization (handles common cases)
+to_singular() {
+  local str="$1"
+  # Handle common plural endings
+  if [[ "$str" =~ ies$ ]]; then
+    echo "${str%ies}y"
+  elif [[ "$str" =~ es$ ]] && [[ "$str" =~ [sx]es$ ]]; then
+    echo "${str%es}"
+  elif [[ "$str" =~ s$ ]] && [[ ! "$str" =~ ss$ ]]; then
+    echo "${str%s}"
+  else
+    echo "$str"
+  fi
+}
+
+# Find template file (project templates take precedence over built-in)
+find_template() {
+  local name="$1"
+
+  # Check project templates first
+  if [ -f "brigade/templates/${name}.json" ]; then
+    echo "brigade/templates/${name}.json"
+    return 0
+  fi
+
+  # Check built-in templates
+  if [ -f "$SCRIPT_DIR/templates/${name}.json" ]; then
+    echo "$SCRIPT_DIR/templates/${name}.json"
+    return 0
+  fi
+
+  return 1
+}
+
+# Check if template requires a resource name (has {{name}} placeholders)
+template_requires_resource() {
+  local template_file="$1"
+  grep -q '{{name}}' "$template_file" 2>/dev/null
+}
+
+# Get template description from first line comment or featureName
+get_template_description() {
+  local template_file="$1"
+  # Try to extract from description field, fall back to featureName
+  local desc=$(jq -r '.description // .featureName // "No description"' "$template_file" 2>/dev/null)
+  # Remove placeholders for display
+  echo "$desc" | sed 's/{{[^}]*}}/X/g'
+}
+
+# List all available templates
+list_templates() {
+  echo -e "${BOLD}Available Templates${NC}"
+  echo ""
+
+  local found=false
+
+  # List project templates
+  if [ -d "brigade/templates" ] && [ "$(ls -A brigade/templates/*.json 2>/dev/null)" ]; then
+    echo -e "${CYAN}Project templates (brigade/templates/):${NC}"
+    for template in brigade/templates/*.json; do
+      local name=$(basename "$template" .json)
+      local desc=$(get_template_description "$template")
+      local resource_note=""
+      template_requires_resource "$template" && resource_note=" ${GRAY}(requires resource name)${NC}"
+      echo -e "  ${GREEN}$name${NC} - $desc$resource_note"
+    done
+    echo ""
+    found=true
+  fi
+
+  # List built-in templates
+  if [ -d "$SCRIPT_DIR/templates" ] && [ "$(ls -A "$SCRIPT_DIR/templates"/*.json 2>/dev/null)" ]; then
+    echo -e "${CYAN}Built-in templates:${NC}"
+    for template in "$SCRIPT_DIR/templates"/*.json; do
+      local name=$(basename "$template" .json)
+      # Skip if overridden by project template
+      if [ -f "brigade/templates/${name}.json" ]; then
+        continue
+      fi
+      local desc=$(get_template_description "$template")
+      local resource_note=""
+      template_requires_resource "$template" && resource_note=" ${GRAY}(requires resource name)${NC}"
+      echo -e "  ${GREEN}$name${NC} - $desc$resource_note"
+    done
+    echo ""
+    found=true
+  fi
+
+  if [ "$found" != "true" ]; then
+    echo -e "${YELLOW}No templates found.${NC}"
+    echo ""
+    echo -e "Create templates in ${CYAN}brigade/templates/${NC} or ${CYAN}$SCRIPT_DIR/templates/${NC}"
+  fi
+
+  echo -e "${GRAY}Usage: ./brigade.sh template <name> [resource_name]${NC}"
+}
+
+# Interpolate template with resource name
+interpolate_template() {
+  local template_file="$1"
+  local resource="$2"
+
+  local content=$(cat "$template_file")
+
+  if [ -n "$resource" ]; then
+    local name="$resource"
+    local Name=$(to_capitalized "$resource")
+    local NAME=$(to_uppercase "$resource")
+    local name_singular=$(to_singular "$resource")
+    local Name_singular=$(to_capitalized "$name_singular")
+
+    # Replace all placeholder variants
+    content=$(echo "$content" | sed "s/{{name}}/$name/g")
+    content=$(echo "$content" | sed "s/{{Name}}/$Name/g")
+    content=$(echo "$content" | sed "s/{{NAME}}/$NAME/g")
+    content=$(echo "$content" | sed "s/{{name_singular}}/$name_singular/g")
+    content=$(echo "$content" | sed "s/{{Name_singular}}/$Name_singular/g")
+  fi
+
+  echo "$content"
+}
+
+cmd_template() {
+  local template_name="${1:-}"
+  local resource_name="${2:-}"
+
+  # No args = list templates
+  if [ -z "$template_name" ]; then
+    list_templates
+    return 0
+  fi
+
+  # Find template file
+  local template_file=$(find_template "$template_name")
+  if [ -z "$template_file" ]; then
+    echo -e "${RED}Error: Template not found: $template_name${NC}"
+    echo ""
+    list_templates
+    exit 1
+  fi
+
+  # Check if resource name is required
+  if template_requires_resource "$template_file" && [ -z "$resource_name" ]; then
+    echo -e "${RED}Error: Template '$template_name' requires a resource name${NC}"
+    echo ""
+    echo -e "Usage: ${CYAN}./brigade.sh template $template_name <resource_name>${NC}"
+    echo ""
+    echo "Examples:"
+    echo "  ./brigade.sh template $template_name users"
+    echo "  ./brigade.sh template $template_name products"
+    echo "  ./brigade.sh template $template_name orders"
+    exit 1
+  fi
+
+  # Determine output filename
+  local output_name="${resource_name:-$template_name}"
+  local output_path="brigade/tasks/prd-${output_name}.json"
+
+  # Check if output already exists
+  if [ -f "$output_path" ]; then
+    echo -e "${YELLOW}Warning: $output_path already exists${NC}"
+    read -p "Overwrite? (y/N) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo -e "${GRAY}Aborted.${NC}"
+      exit 0
+    fi
+  fi
+
+  # Ensure output directory exists
+  mkdir -p "$(dirname "$output_path")"
+
+  # Generate PRD from template
+  interpolate_template "$template_file" "$resource_name" > "$output_path"
+
+  # Validate the generated PRD
+  if ! jq empty "$output_path" 2>/dev/null; then
+    echo -e "${RED}Error: Generated invalid JSON. Template may have syntax errors.${NC}"
+    rm -f "$output_path"
+    exit 1
+  fi
+
+  local feature_name=$(jq -r '.featureName' "$output_path")
+  local task_count=$(jq '.tasks | length' "$output_path")
+
+  echo ""
+  echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${GREEN}║  PRD GENERATED FROM TEMPLATE                              ║${NC}"
+  echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "${BOLD}Feature:${NC}  $feature_name"
+  echo -e "${BOLD}Template:${NC} $template_name"
+  echo -e "${BOLD}Tasks:${NC}    $task_count"
+  echo -e "${BOLD}Output:${NC}   $output_path"
+  echo ""
+  echo -e "${GRAY}Next steps:${NC}"
+  echo -e "  Review:   ${CYAN}cat $output_path | jq${NC}"
+  echo -e "  Validate: ${CYAN}./brigade.sh validate $output_path${NC}"
+  echo -e "  Execute:  ${CYAN}./brigade.sh service $output_path${NC}"
+  echo -e "  Dry-run:  ${CYAN}./brigade.sh --dry-run service $output_path${NC}"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -7270,6 +7488,9 @@ main() {
       ;;
     "iterate")
       cmd_iterate "$@"
+      ;;
+    "template")
+      cmd_template "$@"
       ;;
     "opencode-models")
       cmd_opencode_models "$@"

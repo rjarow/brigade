@@ -1,0 +1,94 @@
+{
+  "featureName": "{{Name}} CLI Tool",
+  "branchName": "feature/{{name}}-cli",
+  "description": "Command-line tool: {{name}}",
+  "tasks": [
+    {
+      "id": "US-001",
+      "title": "Initialize {{name}} project structure",
+      "description": "Set up the basic project structure for {{name}} CLI",
+      "acceptanceCriteria": [
+        "Project directory structure created",
+        "Build configuration set up (Makefile, package.json, go.mod, etc.)",
+        "Basic .gitignore in place"
+      ],
+      "dependsOn": [],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Add CLI argument parsing",
+      "description": "Set up command-line argument and flag handling",
+      "acceptanceCriteria": [
+        "CLI framework configured (cobra, argparse, commander, etc.)",
+        "--help flag shows usage information",
+        "--version flag shows version",
+        "Subcommand structure in place (if applicable)"
+      ],
+      "verification": [
+        {"type": "smoke", "cmd": "go build -o {{name}} . 2>/dev/null && ./{{name}} --help || npm run build 2>/dev/null && node dist/index.js --help || echo 'Build and test manually'"}
+      ],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "Implement core {{name}} functionality",
+      "description": "Add the main business logic for {{name}}",
+      "acceptanceCriteria": [
+        "Primary command/function implemented",
+        "Input validation in place",
+        "Error handling with clear messages"
+      ],
+      "dependsOn": ["US-002"],
+      "complexity": "senior",
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "Add configuration file support",
+      "description": "Allow {{name}} to read settings from config file",
+      "acceptanceCriteria": [
+        "Config file location follows XDG spec or platform convention",
+        "Supports common format (YAML, TOML, or JSON)",
+        "CLI flags override config file values",
+        "Sensible defaults when no config exists"
+      ],
+      "dependsOn": ["US-002"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "Add output formatting options",
+      "description": "Support multiple output formats",
+      "acceptanceCriteria": [
+        "Default human-readable output",
+        "--json flag for JSON output",
+        "--quiet flag for minimal output",
+        "Colored output with --no-color override"
+      ],
+      "dependsOn": ["US-003"],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-006",
+      "title": "Add {{name}} tests",
+      "description": "Unit and integration tests for {{name}}",
+      "acceptanceCriteria": [
+        "Unit tests for core logic",
+        "Integration tests for CLI behavior",
+        "Tests for error cases and edge cases"
+      ],
+      "verification": [
+        {"type": "unit", "cmd": "go test ./... 2>/dev/null || npm test 2>/dev/null || pytest 2>/dev/null || echo 'Configure test command'"}
+      ],
+      "dependsOn": ["US-003", "US-004", "US-005"],
+      "complexity": "junior",
+      "passes": false
+    }
+  ]
+}
