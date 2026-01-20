@@ -50,13 +50,20 @@ Multi-model AI orchestration framework. Route tasks to the right AI based on com
 
 ## Philosophy
 
-The **Owner** (you) should be minimally disrupted:
+**Walkaway Development** - You should be minimally disrupted:
 
 1. **Interview once** - Director asks all the right questions upfront
 2. **Autonomous execution** - Team works without bothering you
 3. **Escalate only when necessary** - Scope changes, blockers, or decisions beyond their authority
 
 After the initial interview, you can walk away and come back to completed work.
+
+**Token Efficiency** - AI supervision should be lightweight:
+
+1. **Compact status** - `--brief` returns minimal JSON for polling
+2. **Event streaming** - Tail events file instead of repeated status calls
+3. **Fresh context per task** - No bloated conversation history
+4. **Targeted operations** - Workers get only what they need
 
 ## Quick Start
 
@@ -122,27 +129,53 @@ cat brigade/tasks/prd-add-user-authentication-with-jwt.json | jq
 ./brigade/brigade.sh service brigade/tasks/prd-add-user-authentication-with-jwt.json
 ```
 
-### Using Claude Code Skills
+### Using Claude Code (Recommended)
 
-Brigade includes Claude Code skills for interactive PRD generation.
+The easiest way to use Brigade is through Claude Code with the `/brigade` skill.
 
-**Install commands** (one-time, works across all projects):
+**Install the skill** (one-time):
 ```bash
 ./brigade/install-commands.sh
 ```
 
-**Updating:** Since these are symlinks, just `git pull` in `brigade/` to get updates. No re-installation needed.
-
-**Use skills** in Claude Code:
+**Build anything with one command:**
 ```
-/brigade-generate-prd Add user authentication with OAuth and JWT tokens
+You: /brigade plan "Build a REST API for managing todos with user auth"
+
+Claude: I'll help you plan this. Will this run unattended or will you monitor?
+
+You: I'll be around
+
+Claude: [Asks 3-4 clarifying questions]
+Claude: [Generates PRD with 12 tasks]
+        PRD saved. Ready to execute?
+
+You: yes
+
+Claude: [Executes, reports progress]
+        "4/12 done. Working on JWT middleware..."
+        "8/12 done. Tests passing..."
+        "Complete! 12/12 tasks in 45 minutes."
 ```
 
-The skill will:
-1. Ask clarifying questions about your requirements
-2. Explore your codebase to understand patterns
-3. Generate a properly structured PRD
-4. Save it to `brigade/tasks/` for execution
+**That's it.** Claude handles the interview, PRD generation, execution, monitoring, and reporting. You just answer questions and approve.
+
+**Available commands:**
+```
+/brigade              # Show options
+/brigade plan "X"     # Plan a feature (interview + PRD)
+/brigade run          # Execute a PRD
+/brigade status       # Check progress
+/brigade resume       # Handle failures
+/brigade update       # Modify existing PRD
+/brigade convert      # Convert text to PRD JSON
+```
+
+**Why this works:**
+- Claude supervises Brigade via Bash (no extra server needed)
+- Progress reported in natural language, not raw JSON
+- Failures explained with clear options (retry/skip/investigate)
+- Token-efficient: uses `--brief` status and event streaming
 
 ## Configuration (Optional)
 

@@ -227,35 +227,66 @@ Escalation History:
 
 Worker assignments show who will handle each pending task.
 
-## Using Claude Code Skills
+## Using Claude Code (Recommended)
 
-Brigade includes Claude Code skills for interactive PRD generation.
+The easiest way to use Brigade is through Claude Code with the `/brigade` skill. Claude becomes your supervisor - handling planning, execution, and progress reporting in natural language.
 
-### Install Commands
-
-Run the install script (one-time, works across all projects):
+### Install the Skill
 
 ```bash
 ./brigade/install-commands.sh
 ```
 
-This symlinks Brigade's commands to `~/.claude/commands/` where Claude Code discovers them.
+This symlinks Brigade's commands to `~/.claude/commands/`.
 
-**Updating:** Since these are symlinks, just `git pull` in `brigade/` to get updates. No re-installation needed.
-
-### Use Commands
-
-Now in Claude Code:
+### The Simplest Workflow
 
 ```
-/brigade-generate-prd Add user authentication with OAuth and JWT tokens
+You: /brigade plan "Add user authentication with JWT"
+
+Claude: I'll help you plan this feature. Will this run unattended
+        (walkaway mode) or will you be monitoring?
+
+You: walkaway - I want to run this overnight
+
+Claude: Walkaway mode means I'll run autonomously. I need to ask
+        thorough questions NOW. [Asks detailed questions about scope,
+        error handling, edge cases...]
+
+You: [Answer questions]
+
+Claude: PRD saved with 8 tasks. Ready to execute?
+
+You: yes
+
+Claude: Starting in walkaway mode. Brigade will handle decisions
+        autonomously. I'll report when it's done.
+
+        [Later...]
+
+        Complete! 8/8 tasks done in 45 minutes.
+        Branch `feature/auth` ready for review.
 ```
 
-The skill will:
-1. Ask you clarifying questions
-2. Explore your codebase (or detect greenfield)
-3. Generate and save the PRD
-4. Show you next steps
+### Available Commands
+
+| Command | What It Does |
+|---------|--------------|
+| `/brigade` | Show all options |
+| `/brigade plan "X"` | Plan a feature (interview + generate PRD) |
+| `/brigade run` | Execute a PRD |
+| `/brigade status` | Check progress in natural language |
+| `/brigade resume` | Handle failures (retry/skip/investigate) |
+| `/brigade update` | Modify an existing PRD |
+| `/brigade convert` | Convert markdown/text to PRD JSON |
+
+### Why This Works
+
+**Walkaway philosophy**: Interview thoroughly once, then autonomous execution. You shouldn't need to babysit.
+
+**Token efficiency**: Claude uses `--brief` status and event streaming. No bloated context, no repeated full status calls.
+
+**Natural language**: Progress reported as "5/8 done, working on auth middleware" not raw JSON.
 
 ## Commands Reference
 
