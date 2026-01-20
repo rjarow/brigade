@@ -303,45 +303,50 @@ This actually runs the feature and catches broken implementations.
 - **CLI commands**: `./binary command --help` and `./binary command --dry-run [args]`
 - **Libraries**: Unit tests that call the public API
 - **Services**: Health check or basic operation test
-- **TUI/UI code**: Integration test that exercises a full user flow (see below)
 
-#### UI/TUI Verification Requirements (CRITICAL)
+#### Match Test Type to Task Type (CRITICAL)
 
-UI and TUI code is particularly prone to integration bugs - components that work in isolation but break when combined. **Every UI/TUI task MUST include an integration test that exercises an actual user flow.**
+Different tasks need different test types. Unit tests catch logic bugs but miss wiring bugs. The key question: **does this task connect components that need to work together?**
 
-**Bad (unit tests only - components may not work together):**
+| Task Type | Required Tests | Why |
+|-----------|---------------|-----|
+| Add new function/component | Unit tests | Verify logic works |
+| Connect/integrate components | Integration tests | Verify wiring works |
+| User-facing feature | Smoke/E2E test | Verify flow works |
+
+**Bad (unit tests only for integration work):**
 ```json
-"verification": [
-  "go test ./internal/tui/...",
-  "grep -q 'type SearchView' internal/tui/search.go"
-]
+{
+  "title": "Connect search view to results view",
+  "verification": [
+    "go test ./internal/views/...",
+    "grep -q 'func HandleSearch' internal/views/search.go"
+  ]
+}
 ```
-This passes even if navigation between views is broken!
+Unit tests pass but navigation between views is broken!
 
-**Good (includes integration/flow test):**
+**Good (test type matches task type):**
 ```json
-"verification": [
-  "go test ./internal/tui/...",
-  "go test -run TestApp_SearchAndSelect ./internal/tui",
-  "go test -run TestApp_FullNavigationFlow ./internal/tui"
-]
+{
+  "title": "Connect search view to results view",
+  "verification": [
+    "go test ./internal/views/...",
+    "go test -run TestSearchToResultsFlow ./internal/app"
+  ]
+}
 ```
 
-**UI/TUI integration test patterns:**
-- `TestApp_FullNavigationFlow` - Navigate through multiple views without panic
-- `TestApp_SearchAndSelect` - Search → select item → verify state
-- `TestView_RenderWithRealData` - Render with actual (not mocked) model data
+**Rule of thumb:**
+- If the task title contains "add", "create", "implement" → unit tests
+- If the task title contains "connect", "integrate", "wire", "hook up" → integration tests
+- If the task title contains "flow", "workflow", "user can" → E2E/smoke tests
 
-**Common UI bugs that integration tests catch:**
-- Type assertion failures (pointer vs value receivers)
-- Nil pointer dereferences on navigation
-- State not propagating between views
-- Event handlers not wired correctly
-
-**For Bubble Tea specifically:**
-- Test that `Update()` returns correctly typed models
-- Test navigation between views with real key events
-- Verify model state after a sequence of updates
+**Integration tests should exercise:**
+- Data passing between components (not mocked)
+- State changes propagating through the system
+- Error conditions at component boundaries
+- The actual path a user/caller would take
 
 **Guidelines:**
 - Keep them fast (use `--dry-run`, mock data, or test fixtures)
