@@ -67,19 +67,32 @@ Then conduct exhaustive interview covering:
 - Failure Recovery
 
 #### For Greenfield Projects:
-1. **Tech stack**: "What language/framework? (or say 'you decide' and I'll recommend based on the feature)"
+1. **Tech stack**: "What language/framework? (or say 'you decide' and I'll figure it out)"
 2. **Project type**: "CLI, API, web app, library?"
 3. **Scope**: "What's the MVP? What's out of scope?"
 4. **Requirements**: "Database? Auth? External APIs?"
 
-**If user says "you decide" for tech stack**, recommend based on feature type:
-- **CLI tools** → Go (fast, single binary, great stdlib) or Rust (if performance-critical)
-- **REST APIs** → Go (simple, performant) or Node/Express (if team knows JS)
-- **Web apps** → Node + React/Next.js (ecosystem, hiring)
-- **Scripts/automation** → Python (readability, libraries)
-- **Libraries** → Match the target ecosystem
+**If user says "you decide" for tech stack**, don't just pick from a lookup table. Think it through:
 
-Explain your recommendation briefly, then confirm before proceeding.
+1. **Ask probing questions first:**
+   - "What's the expected scale? Personal tool, team use, or enterprise?"
+   - "Any deployment constraints? (containers, serverless, bare metal)"
+   - "Performance requirements? (latency-sensitive, high throughput, batch processing)"
+   - "Team background? (what languages are you comfortable maintaining)"
+   - "Ecosystem needs? (specific libraries, integrations, databases)"
+
+2. **Research if needed:**
+   - Check what similar tools use
+   - Consider the ecosystem for required integrations
+   - Think about long-term maintenance
+
+3. **Make a reasoned recommendation:**
+   - Explain the tradeoffs you considered
+   - Why this choice fits their specific needs
+   - What alternatives you considered and why not
+   - Confirm before proceeding
+
+The goal is a thoughtful decision, not a quick lookup. Take the time to get it right.
 
 #### For Existing Projects:
 1. **Scope**: "Should I include [related capability]?"
