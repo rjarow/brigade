@@ -290,6 +290,7 @@ VERIFICATION_ENABLED=true          # Run verification commands after COMPLETE si
 VERIFICATION_TIMEOUT=60            # Timeout per verification command in seconds
 TODO_SCAN_ENABLED=true             # Scan changed files for TODO/FIXME before marking complete
 VERIFICATION_WARN_GREP_ONLY=true   # Warn if PRD only has grep-based verification (no execution)
+MANUAL_VERIFICATION_ENABLED=false  # Prompt for human verification on tasks with manualVerification: true
 
 # Visibility defaults
 ACTIVITY_LOG=""                    # Path to activity heartbeat log (empty = disabled)
@@ -311,6 +312,7 @@ MAP_STALE_COMMITS=20               # Regenerate map if this many commits behind 
 LAST_REVIEW_FEEDBACK=""       # Feedback from failed executive review, passed to worker on retry
 LAST_VERIFICATION_FEEDBACK="" # Feedback from failed verification commands, passed to worker on retry
 LAST_TODO_WARNINGS=""         # Warnings from TODO scan, passed to worker on retry
+LAST_MANUAL_VERIFICATION_FEEDBACK=""  # Feedback from rejected manual verification
 CURRENT_TASK_START_TIME=0          # Epoch timestamp when current task started
 CURRENT_TASK_WARNING_SHOWN=false   # Whether timeout warning was shown for current task
 CURRENT_PRD_PATH=""                # Current PRD being processed (for visibility features)
@@ -2299,6 +2301,17 @@ $LAST_TODO_WARNINGS
 "
   fi
 
+  # Include manual verification feedback if previous attempt was rejected
+  local manual_verification_feedback_section=""
+  if [ -n "$LAST_MANUAL_VERIFICATION_FEEDBACK" ]; then
+    manual_verification_feedback_section="
+---
+⚠️ PREVIOUS ATTEMPT FAILED MANUAL VERIFICATION:
+$LAST_MANUAL_VERIFICATION_FEEDBACK
+---
+"
+  fi
+
   # Include verification commands if present (so worker knows what will be checked)
   local verification_section=""
   if [ "$VERIFICATION_ENABLED" == "true" ]; then
@@ -2317,7 +2330,7 @@ Tip: Run these yourself before signaling COMPLETE to ensure they pass.
 
   cat <<EOF
 $chef_prompt
-$learnings_section$review_feedback_section$verification_feedback_section$todo_feedback_section$verification_section
+$learnings_section$review_feedback_section$verification_feedback_section$todo_feedback_section$manual_verification_feedback_section$verification_section
 ---
 FEATURE: $feature_name
 PRD_FILE: $prd_path
@@ -2988,6 +3001,106 @@ These TODO/FIXME comments may indicate the implementation is not complete. Pleas
   return 0
 }
 
+# Check if task requires manual verification and prompt user
+# Returns 0 if verified (or not required), 1 if needs iteration (user rejected)
+# Sets: LAST_MANUAL_VERIFICATION_FEEDBACK
+check_manual_verification() {
+  local prd_path="$1"
+  local task_id="$2"
+
+  LAST_MANUAL_VERIFICATION_FEEDBACK=""
+
+  if [ "$MANUAL_VERIFICATION_ENABLED" != "true" ]; then
+    return 0
+  fi
+
+  # Check if task has manualVerification flag
+  local requires_manual
+  requires_manual=$(jq -r ".tasks[] | select(.id == \"$task_id\") | .manualVerification // false" "$prd_path")
+  if [ "$requires_manual" != "true" ]; then
+    return 0
+  fi
+
+  local display_id=$(format_task_id "$prd_path" "$task_id")
+  local task_title
+  task_title=$(jq -r ".tasks[] | select(.id == \"$task_id\") | .title" "$prd_path")
+  local criteria
+  criteria=$(jq -r ".tasks[] | select(.id == \"$task_id\") | .acceptanceCriteria | join(\"\n  - \")" "$prd_path")
+
+  echo ""
+  echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  log_event "VERIFY" "MANUAL VERIFICATION: $display_id"
+  echo -e "${CYAN}║  Manual verification required for this task               ║${NC}"
+  echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "${YELLOW}Task: $task_title${NC}"
+  echo ""
+  echo -e "Acceptance Criteria:"
+  echo -e "  - $criteria"
+  echo ""
+
+  # Build context for decision
+  local context
+  context=$(jq -n --arg task "$task_id" --arg title "$task_title" \
+    '{taskId: $task, title: $title, type: "manual_verification"}')
+
+  # In walkaway mode without supervisor, auto-approve (user opted into autonomous execution)
+  if [ "$WALKAWAY_MODE" == "true" ] && [ -z "$SUPERVISOR_CMD_FILE" ]; then
+    echo -e "${YELLOW}Walkaway mode: Auto-approving manual verification${NC}"
+    log_event "INFO" "Manual verification auto-approved (walkaway mode)"
+    return 0
+  fi
+
+  # With supervisor configured, emit attention event and wait for decision
+  if [ -n "$SUPERVISOR_CMD_FILE" ]; then
+    emit_supervisor_event "attention" "$display_id" "manual_verification" "Task requires manual verification"
+
+    local decision_id
+    decision_id=$(generate_decision_id)
+    emit_supervisor_event "decision_needed" "$display_id" "manual_verification" "$context"
+
+    wait_for_supervisor_command "$decision_id"
+    local result=$?
+
+    if [ $result -eq 0 ]; then
+      log_event "SUCCESS" "Manual verification approved: $display_id"
+      return 0
+    else
+      LAST_MANUAL_VERIFICATION_FEEDBACK="Manual verification rejected: $DECISION_REASON"
+      log_event "WARN" "Manual verification rejected: $display_id - $DECISION_REASON"
+      return 1
+    fi
+  fi
+
+  # Interactive mode: prompt user
+  echo -e "Please verify that the acceptance criteria are met."
+  echo -e "  ${GREEN}y${NC} - Verified, proceed to review"
+  echo -e "  ${RED}n${NC} - Not verified, iterate with feedback"
+  echo ""
+  read -p "Mark as verified? [y/n]: " response
+
+  case "$response" in
+    y|Y|yes|Yes)
+      log_event "SUCCESS" "Manual verification approved: $display_id"
+      return 0
+      ;;
+    n|N|no|No)
+      read -p "Feedback for worker (optional): " feedback
+      if [ -n "$feedback" ]; then
+        LAST_MANUAL_VERIFICATION_FEEDBACK="Manual verification rejected: $feedback"
+      else
+        LAST_MANUAL_VERIFICATION_FEEDBACK="Manual verification rejected by user"
+      fi
+      log_event "WARN" "Manual verification rejected: $display_id"
+      return 1
+      ;;
+    *)
+      echo -e "${YELLOW}Invalid input, defaulting to verified${NC}"
+      return 0
+      ;;
+  esac
+}
+
 # Check if PRD has any execution-based verification (not just grep/file existence checks)
 # Returns 0 if OK, 1 if warning (grep-only)
 check_verification_quality() {
@@ -3171,6 +3284,7 @@ executive_review() {
     LAST_REVIEW_FEEDBACK=""  # Clear any previous feedback
     LAST_VERIFICATION_FEEDBACK=""
     LAST_TODO_WARNINGS=""
+    LAST_MANUAL_VERIFICATION_FEEDBACK=""
     return 0
   else
     log_event "ERROR" "Executive Review FAILED: $display_id (${duration}s)"
@@ -4516,6 +4630,7 @@ cmd_ticket() {
   LAST_REVIEW_FEEDBACK=""
   LAST_VERIFICATION_FEEDBACK=""
   LAST_TODO_WARNINGS=""
+  LAST_MANUAL_VERIFICATION_FEEDBACK=""
 
   # Track task start time for timeout checking
   local task_start_epoch=$(date +%s)
@@ -4673,6 +4788,14 @@ cmd_ticket() {
         echo -e "${YELLOW}TODO scan found incomplete markers, continuing iterations...${NC}"
         update_state_task "$prd_path" "$task_id" "$worker" "todo_warnings"
         # Continue to next iteration - LAST_TODO_WARNINGS is set
+        continue
+      fi
+
+      # Check manual verification if required for this task
+      if ! check_manual_verification "$prd_path" "$task_id"; then
+        echo -e "${YELLOW}Manual verification failed, continuing iterations...${NC}"
+        update_state_task "$prd_path" "$task_id" "$worker" "manual_verification_failed"
+        # Continue to next iteration - LAST_MANUAL_VERIFICATION_FEEDBACK is set
         continue
       fi
 

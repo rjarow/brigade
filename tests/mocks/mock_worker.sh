@@ -82,6 +82,43 @@ case "$MOCK_BEHAVIOR" in
       exit 0
     fi
     ;;
+  review_pass)
+    # Executive review returning PASS
+    echo "Reviewing task $TASK_ID"
+    echo "All acceptance criteria appear to be met."
+    echo "Implementation follows established patterns."
+    echo "<review>PASS</review>"
+    echo "<reason>Implementation correctly addresses all acceptance criteria</reason>"
+    exit 0
+    ;;
+  review_fail)
+    # Executive review returning FAIL
+    echo "Reviewing task $TASK_ID"
+    echo "Found issues with implementation."
+    echo "<review>FAIL</review>"
+    echo "<reason>Missing error handling in main function</reason>"
+    exit 0
+    ;;
+  scope_question)
+    # Worker asking a scope question
+    echo "Working on $TASK_ID..."
+    echo "<scope-question>Should we use OAuth or JWT for authentication?</scope-question>"
+    exit 0
+    ;;
+  learning)
+    # Worker sharing a learning then completing
+    echo "Working on $TASK_ID..."
+    echo "<learning>Socket tests need unique paths per test to avoid conflicts</learning>"
+    echo "<promise>COMPLETE</promise>"
+    exit 0
+    ;;
+  absorbed_by)
+    # Task was absorbed by another task
+    echo "Checking $TASK_ID..."
+    echo "This work was already done by US-001"
+    echo "<promise>ABSORBED_BY:US-001</promise>"
+    exit 0
+    ;;
   auto|*)
     # Auto behavior based on task ID
     case "$TASK_ID" in

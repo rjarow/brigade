@@ -253,3 +253,133 @@ teardown() {
   # Should show tasks in order
   [[ "$output" == *"US-001"* ]] || [[ "$output" == *"dry"* ]] || [[ "$output" == *"Would execute"* ]]
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# End-to-end service loop tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@test "cmd_service completes all tasks in dependency order" {
+  export MOCK_BEHAVIOR=complete
+  export VERIFICATION_ENABLED=false
+  export TODO_SCAN_ENABLED=false
+
+  # Initialize state
+  init_state "$PRD_FILE"
+
+  # Run service
+  run cmd_service "$PRD_FILE"
+  [ "$status" -eq 0 ]
+
+  # All tasks should be complete
+  local us001=$(jq -r '.tasks[0].passes' "$PRD_FILE")
+  local us002=$(jq -r '.tasks[1].passes' "$PRD_FILE")
+  local us003=$(jq -r '.tasks[2].passes' "$PRD_FILE")
+
+  [ "$us001" == "true" ]
+  [ "$us002" == "true" ]
+  [ "$us003" == "true" ]
+}
+
+@test "cmd_service handles ALREADY_DONE signal" {
+  export MOCK_BEHAVIOR=already_done
+  export VERIFICATION_ENABLED=false
+  export TODO_SCAN_ENABLED=false
+
+  init_state "$PRD_FILE"
+
+  # Run service - ALREADY_DONE should mark task complete without tests/review
+  run cmd_service "$PRD_FILE"
+  [ "$status" -eq 0 ]
+
+  # Tasks should be marked complete
+  local us001=$(jq -r '.tasks[0].passes' "$PRD_FILE")
+  [ "$us001" == "true" ]
+
+  # History should show already_done
+  local last_status=$(jq -r '.taskHistory[-1].status' "$STATE_FILE")
+  [[ "$last_status" == *"already_done"* ]] || [[ "$last_status" == *"absorbed"* ]]
+}
+
+@test "cmd_service handles ABSORBED_BY signal" {
+  export MOCK_BEHAVIOR=absorbed_by
+  export VERIFICATION_ENABLED=false
+  export TODO_SCAN_ENABLED=false
+
+  init_state "$PRD_FILE"
+
+  run cmd_service "$PRD_FILE"
+  [ "$status" -eq 0 ]
+
+  # Task should be marked complete (absorbed by another)
+  local us001=$(jq -r '.tasks[0].passes' "$PRD_FILE")
+  [ "$us001" == "true" ]
+}
+
+@test "cmd_service handles BLOCKED and records escalation" {
+  # First iteration blocks, triggering escalation
+  export MOCK_BEHAVIOR=blocked
+  export ESCALATION_ENABLED=true
+  export ESCALATION_AFTER=1
+  export VERIFICATION_ENABLED=false
+  export TODO_SCAN_ENABLED=false
+
+  init_state "$PRD_FILE"
+
+  # Run with timeout since BLOCKED keeps escalating
+  run timeout 5 cmd_service "$PRD_FILE" || true
+
+  # Should have recorded an escalation
+  local esc_count=$(jq '.escalations | length' "$STATE_FILE")
+  [ "$esc_count" -ge 1 ]
+}
+
+@test "cmd_service with learning signal captures learning" {
+  export MOCK_BEHAVIOR=learning
+  export VERIFICATION_ENABLED=false
+  export TODO_SCAN_ENABLED=false
+
+  # Create learnings file location
+  export KNOWLEDGE_SHARING=true
+  local learnings_file="$TEST_TMPDIR/brigade-learnings.md"
+  touch "$learnings_file"
+
+  init_state "$PRD_FILE"
+
+  run cmd_service "$PRD_FILE"
+  [ "$status" -eq 0 ]
+
+  # Task should complete (learning signal includes COMPLETE)
+  local us001=$(jq -r '.tasks[0].passes' "$PRD_FILE")
+  [ "$us001" == "true" ]
+}
+
+@test "cmd_service respects MAX_PARALLEL=1 for sequential execution" {
+  export MOCK_BEHAVIOR=complete
+  export MAX_PARALLEL=1
+  export VERIFICATION_ENABLED=false
+  export TODO_SCAN_ENABLED=false
+
+  init_state "$PRD_FILE"
+
+  run cmd_service "$PRD_FILE"
+  [ "$status" -eq 0 ]
+
+  # All tasks should complete
+  local complete_count=$(jq '[.tasks[] | select(.passes == true)] | length' "$PRD_FILE")
+  [ "$complete_count" -eq 3 ]
+}
+
+@test "cmd_service records task history for each task" {
+  export MOCK_BEHAVIOR=complete
+  export VERIFICATION_ENABLED=false
+  export TODO_SCAN_ENABLED=false
+
+  init_state "$PRD_FILE"
+
+  run cmd_service "$PRD_FILE"
+  [ "$status" -eq 0 ]
+
+  # Should have history entries for all 3 tasks
+  local history_count=$(jq '.taskHistory | length' "$STATE_FILE")
+  [ "$history_count" -ge 3 ]
+}

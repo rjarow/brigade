@@ -403,6 +403,130 @@ TASK_TIMEOUT_WARNING_JUNIOR=10  # minutes
 TASK_TIMEOUT_WARNING_SENIOR=20
 ```
 
+## Autonomous Execution Modes
+
+Brigade supports three levels of autonomy, which can be combined:
+
+| Mode | Who Decides | Best For |
+|------|-------------|----------|
+| **Interactive** (default) | Human at terminal | Active development, debugging |
+| **Walkaway** | Executive Chef AI | Overnight runs, fire-and-forget |
+| **Supervisor** | External AI (Claude, etc.) | AI-managed pipelines, TUI tools |
+
+### Interactive Mode (Default)
+
+Brigade prompts you at the terminal when decisions are needed:
+- Task fails after max iterations → "Retry, skip, or abort?"
+- Worker asks scope question → Shows question, waits for answer
+- Resume after interruption → "Retry or skip the failed task?"
+
+### Walkaway Mode
+
+Brigade's built-in Executive Chef makes decisions autonomously:
+
+```bash
+./brigade.sh --walkaway service prd.json
+# Or set in PRD: "walkaway": true
+```
+
+**What happens:**
+- Task fails → Exec Chef analyzes error context, decides retry/skip/abort
+- Scope question → Exec Chef makes judgment call based on PRD context
+- All decisions logged to state file (`walkawayDecisions`, `scopeDecisions`)
+
+**Safety rails:**
+- `WALKAWAY_MAX_SKIPS=3` - Aborts if too many consecutive skips (prevents runaway)
+- Decisions recorded for human review later
+
+**Example:** You start Brigade before bed, wake up to completed PRD or a clear stopping point.
+
+### Supervisor Mode
+
+An external AI (or tool) monitors Brigade and sends commands:
+
+```bash
+# In brigade.config:
+SUPERVISOR_STATUS_FILE="brigade/tasks/status.json"   # Compact status JSON
+SUPERVISOR_EVENTS_FILE="brigade/tasks/events.jsonl"  # Event stream (tail -f)
+SUPERVISOR_CMD_FILE="brigade/tasks/cmd.json"         # Command ingestion
+```
+
+**How it works:**
+1. Brigade writes events to `events.jsonl` (task starts, completions, failures)
+2. Supervisor tails the event stream
+3. When `decision_needed` event appears, supervisor writes command to `cmd.json`
+4. Brigade reads command and continues
+
+**Example supervisor setup with Claude:**
+```bash
+# Terminal 1: Start Brigade with supervisor config
+SUPERVISOR_EVENTS_FILE=events.jsonl SUPERVISOR_CMD_FILE=cmd.json \
+  ./brigade.sh service prd.json
+
+# Terminal 2: Claude monitors and decides
+claude "Monitor events.jsonl. When you see decision_needed events,
+        analyze the context and write your decision to cmd.json.
+        Format: {\"decision\":\"d-XXX\",\"action\":\"retry|skip\",\"reason\":\"...\"}"
+```
+
+### Combining Modes
+
+Walkaway and Supervisor work together with **supervisor taking priority**:
+
+```bash
+# Supervisor handles decisions when available, walkaway as fallback
+SUPERVISOR_CMD_FILE="cmd.json" ./brigade.sh --walkaway service prd.json
+```
+
+**Decision priority:**
+1. If supervisor configured → Wait for supervisor command (with timeout)
+2. If walkaway mode → Exec Chef decides
+3. Otherwise → Prompt human interactively
+
+**Use case:** Supervisor AI handles most decisions, but if it crashes or times out, walkaway mode keeps things moving.
+
+### Choosing a Mode
+
+| Scenario | Recommended Mode |
+|----------|------------------|
+| Active development | Interactive |
+| Overnight run, simple PRD | Walkaway |
+| Overnight run, complex PRD | Walkaway + review decisions next day |
+| AI-managed pipeline | Supervisor |
+| AI pipeline with fallback | Supervisor + Walkaway |
+| TUI/dashboard monitoring | Supervisor (events for display) |
+
+## Worker Health & Timeouts
+
+Workers are killed if they exceed timeout (prevents overnight hangs):
+
+| Worker | Default Timeout |
+|--------|----------------|
+| Junior (Line Cook) | 15 minutes |
+| Senior (Sous Chef) | 30 minutes |
+| Executive Chef | 60 minutes |
+
+Crashed workers (vs timed out) trigger immediate escalation. Configure in `brigade.config`:
+```bash
+TASK_TIMEOUT_JUNIOR=900   # seconds
+WORKER_HEALTH_CHECK_INTERVAL=5  # seconds between PID checks
+```
+
+## Manual Verification Gate
+
+For UI/TUI work where automated tests can't verify visual behavior:
+
+```json
+{
+  "id": "US-005",
+  "title": "Add settings modal",
+  "manualVerification": true,
+  "acceptanceCriteria": ["Modal opens on click", "Settings save correctly"]
+}
+```
+
+Set `MANUAL_VERIFICATION_ENABLED=true` to prompt for human confirmation. In walkaway mode without supervisor, this auto-approves.
+
 ## Context Isolation
 
 Each worker starts with **fresh context** - no pollution from previous tasks. This prevents:
@@ -418,6 +542,8 @@ Knowledge is shared explicitly via the learnings file, not implicitly via conver
 - [How It Works](docs/how-it-works.md)
 - [Configuration](docs/configuration.md)
 - [Writing PRDs](docs/writing-prds.md)
+- [Architecture](docs/architecture.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
 ## License
 

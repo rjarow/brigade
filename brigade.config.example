@@ -206,6 +206,13 @@ TODO_SCAN_ENABLED=true
 # Grep-only verification lets broken implementations pass
 VERIFICATION_WARN_GREP_ONLY=true
 
+# Enable manual verification gate for tasks with "manualVerification": true in PRD
+# When enabled, prompts user to confirm acceptance criteria are met before review
+# Critical for UI/TUI work where automated tests can't verify visual behavior
+# In walkaway mode without supervisor: auto-approves (user opted into autonomous)
+# With supervisor configured: emits attention event and waits for decision
+MANUAL_VERIFICATION_ENABLED=false
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ESCALATION
 # ═══════════════════════════════════════════════════════════════════════════════
