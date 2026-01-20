@@ -1,6 +1,7 @@
-US-003: Third task parallel - COMPLETE
+US-003: Third task depends on second - COMPLETE
 
 Criterion 3: Met
 Completed at: 2026-01-19
+Depends on: US-002 (completed)
 
-This marker file demonstrates successful execution of the third task, which runs in parallel with US-001.
+This marker file demonstrates successful execution of the third task, which depends on US-002 being complete.
