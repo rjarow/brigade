@@ -392,6 +392,41 @@ Customize worker behavior by editing:
 
 These are Markdown files that get prepended to task details.
 
+## Modules
+
+Enable optional extensions that hook into Brigade's event system:
+
+```bash
+# Comma-separated list of modules to enable
+MODULES="telegram,cost_tracking"
+
+# Max time (seconds) for module event handlers
+MODULE_TIMEOUT=5
+```
+
+### Available Modules
+
+| Module | Description | Config |
+|--------|-------------|--------|
+| `telegram` | Send notifications to Telegram | `MODULE_TELEGRAM_BOT_TOKEN`, `MODULE_TELEGRAM_CHAT_ID` |
+| `cost_tracking` | Log task durations to CSV | `MODULE_COST_TRACKING_OUTPUT` |
+| `example` | Template module for reference | None |
+
+### Module-Specific Configuration
+
+```bash
+# Telegram notifications
+MODULE_TELEGRAM_BOT_TOKEN="your-bot-token"
+MODULE_TELEGRAM_CHAT_ID="your-chat-id"
+
+# Cost tracking output file (default: brigade/costs.csv)
+MODULE_COST_TRACKING_OUTPUT="brigade/costs.csv"
+```
+
+### Writing Custom Modules
+
+Create `modules/mymodule.sh` - see `docs/modules.md` for full documentation.
+
 ## Config Validation
 
 Brigade validates configuration values on load:

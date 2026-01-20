@@ -152,6 +152,21 @@ SUPERVISOR_CMD_POLL_INTERVAL=2
 SUPERVISOR_CMD_TIMEOUT=300
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# MODULES
+# ═══════════════════════════════════════════════════════════════════════════════
+# Comma-separated list of modules to enable (loaded from modules/<name>.sh)
+# Available: telegram, cost_tracking, example
+MODULES=""
+
+# Max time (seconds) for module event handlers before they're killed
+MODULE_TIMEOUT=5
+
+# Module-specific configuration (namespaced by module name):
+# MODULE_TELEGRAM_BOT_TOKEN=""
+# MODULE_TELEGRAM_CHAT_ID=""
+# MODULE_COST_TRACKING_OUTPUT="brigade/costs.csv"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # CODEBASE MAP
 # ═══════════════════════════════════════════════════════════════════════════════
 

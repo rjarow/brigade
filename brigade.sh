@@ -40,6 +40,7 @@ cleanup_on_interrupt() {
     kill -9 $children 2>/dev/null
   fi
 
+  cleanup_modules
   cleanup_temp_files
   echo -e "${YELLOW}Cleanup complete. Run './brigade.sh resume' to continue.${NC}"
   exit 130  # Standard exit code for Ctrl+C
@@ -320,6 +321,11 @@ CURRENT_TASK_ID=""                 # Current task being worked (for visibility f
 CURRENT_WORKER=""                  # Current worker (for visibility features)
 LAST_HEARTBEAT_TIME=0              # Last time heartbeat was written
 
+# Module system defaults
+MODULES=""                         # Comma-separated list of modules to enable
+MODULE_TIMEOUT=5                   # Seconds before killing hung module handler
+BRIGADE_LOADED_MODULES=""          # Runtime: space-separated list of loaded modules
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # LOGGING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -591,6 +597,9 @@ load_config() {
 
   # Validate config values
   validate_config "$quiet"
+
+  # Load enabled modules
+  load_modules "$quiet"
 }
 
 validate_config() {
@@ -654,6 +663,121 @@ validate_config() {
   esac
 
   return 0
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODULE SYSTEM
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Load enabled modules from modules/ directory
+load_modules() {
+  BRIGADE_LOADED_MODULES=""
+
+  [ -z "$MODULES" ] && return 0
+
+  local module_dir="$SCRIPT_DIR/modules"
+  [ ! -d "$module_dir" ] && return 0
+
+  local quiet="${1:-false}"
+
+  IFS=',' read -ra module_list <<< "$MODULES"
+  for module in "${module_list[@]}"; do
+    module=$(echo "$module" | xargs)  # Trim whitespace
+    [ -z "$module" ] && continue
+
+    local module_file="$module_dir/${module}.sh"
+
+    if [ ! -f "$module_file" ]; then
+      [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: Module not found: $module${NC}" >&2
+      continue
+    fi
+
+    # Source module
+    if ! source "$module_file" 2>/dev/null; then
+      [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: Module $module failed to source${NC}" >&2
+      continue
+    fi
+
+    # Check for required events function
+    local events_fn="module_${module}_events"
+    if ! declare -f "$events_fn" > /dev/null 2>&1; then
+      [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: Module $module missing ${events_fn}()${NC}" >&2
+      continue
+    fi
+
+    # Call init if present
+    local init_fn="module_${module}_init"
+    if declare -f "$init_fn" > /dev/null 2>&1; then
+      if ! "$init_fn" 2>/dev/null; then
+        [ "$quiet" != "true" ] && echo -e "${YELLOW}Warning: Module $module init failed${NC}" >&2
+        continue
+      fi
+    fi
+
+    # Register module and cache its events
+    BRIGADE_LOADED_MODULES="$BRIGADE_LOADED_MODULES $module"
+    local events=$("$events_fn")
+    local module_upper=$(echo "$module" | tr '[:lower:]' '[:upper:]')
+    eval "BRIGADE_MODULE_${module_upper}_EVENTS=\"$events\""
+
+    [ "${BRIGADE_DEBUG:-false}" == "true" ] && \
+      echo "[DEBUG] Loaded module: $module (events: $events)" >&2
+  done
+
+  BRIGADE_LOADED_MODULES=$(echo "$BRIGADE_LOADED_MODULES" | xargs)
+
+  if [ -n "$BRIGADE_LOADED_MODULES" ] && [ "$quiet" != "true" ]; then
+    echo -e "${GRAY}Modules loaded: $BRIGADE_LOADED_MODULES${NC}"
+  fi
+}
+
+# Check if module is registered for an event
+module_registered_for_event() {
+  local module="$1"
+  local event="$2"
+  local module_upper=$(echo "$module" | tr '[:lower:]' '[:upper:]')
+  local events_var="BRIGADE_MODULE_${module_upper}_EVENTS"
+  local events="${!events_var}"
+  [[ " $events " == *" $event "* ]]
+}
+
+# Dispatch event to all registered modules
+dispatch_to_modules() {
+  local event_type="$1"
+  shift
+
+  # Skip if no modules loaded
+  [ -z "$BRIGADE_LOADED_MODULES" ] && return 0
+
+  for module in $BRIGADE_LOADED_MODULES; do
+    # Check if module registered for this event
+    if module_registered_for_event "$module" "$event_type"; then
+      local handler="module_${module}_on_${event_type}"
+      if declare -f "$handler" > /dev/null 2>&1; then
+        # Run handler in subshell (non-blocking, isolated)
+        # The subshell inherits functions so we can call the handler directly
+        (
+          "$handler" "$@"
+        ) 2>/dev/null &
+
+        [ "${BRIGADE_DEBUG:-false}" == "true" ] && \
+          echo "[DEBUG] Dispatched $event_type to $module" >&2
+      fi
+    fi
+  done
+
+  # Don't wait - modules run async
+  return 0
+}
+
+# Cleanup modules on exit
+cleanup_modules() {
+  for module in $BRIGADE_LOADED_MODULES; do
+    local cleanup_fn="module_${module}_cleanup"
+    if declare -f "$cleanup_fn" > /dev/null 2>&1; then
+      "$cleanup_fn" 2>/dev/null || true
+    fi
+  done
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1407,6 +1531,9 @@ emit_supervisor_event() {
       printf '{"ts":"%s","event":"%s"}\n' "$ts" "$event_type"
       ;;
   esac >> "$SUPERVISOR_EVENTS_FILE"
+
+  # Dispatch to modules (runs async in background)
+  dispatch_to_modules "$event_type" "$@"
 }
 
 # Generate unique decision ID
