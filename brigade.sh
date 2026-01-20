@@ -206,6 +206,8 @@ STATE_FILE="brigade-state.json"
 KNOWLEDGE_SHARING=true
 LEARNINGS_FILE="brigade-learnings.md"
 BACKLOG_FILE="brigade-backlog.md"
+LEARNINGS_MAX=50                   # Max learnings per file (0 = unlimited, prunes oldest when exceeded)
+LEARNINGS_ARCHIVE=true             # Archive learnings on PRD completion
 
 # Parallel execution defaults
 MAX_PARALLEL=3
@@ -225,6 +227,9 @@ WORKER_LOG_DIR=""                  # Directory for per-task worker logs (empty =
 STATUS_WATCH_INTERVAL=30           # Seconds between status refreshes in watch mode
 SUPERVISOR_STATUS_FILE=""          # Write compact status JSON on state changes (empty = disabled)
 SUPERVISOR_EVENTS_FILE=""          # Append-only JSONL event stream (empty = disabled)
+
+# Codebase map defaults
+MAP_STALE_COMMITS=20               # Regenerate map if this many commits behind HEAD (0 = disable)
 
 # Runtime state (set during execution)
 LAST_REVIEW_FEEDBACK=""       # Feedback from failed executive review, passed to worker on retry
@@ -1343,6 +1348,84 @@ get_learnings() {
   fi
 }
 
+# Prune oldest learnings if file exceeds LEARNINGS_MAX
+prune_learnings() {
+  local prd_path="$1"
+
+  # Skip if disabled (0 = unlimited)
+  [ "$LEARNINGS_MAX" -eq 0 ] 2>/dev/null && return
+  [ "$LEARNINGS_MAX" -lt 1 ] 2>/dev/null && return
+
+  local learnings_path=$(get_learnings_path "$prd_path")
+  [ ! -f "$learnings_path" ] && return
+
+  # Count learning entries
+  local count=$(grep -c '^## \[' "$learnings_path" 2>/dev/null || echo "0")
+
+  # Prune oldest entries until we're at the limit
+  while [ "$count" -gt "$LEARNINGS_MAX" ]; do
+    # Find the line number of the first learning entry (after header)
+    local first_learning_line=$(grep -n '^## \[' "$learnings_path" | head -1 | cut -d: -f1)
+    [ -z "$first_learning_line" ] && break
+
+    # Find the line number of the next --- after this learning
+    local end_line=$(tail -n +"$first_learning_line" "$learnings_path" | grep -n '^---$' | head -1 | cut -d: -f1)
+    [ -z "$end_line" ] && break
+
+    # Calculate absolute line number of end
+    end_line=$((first_learning_line + end_line - 1))
+
+    # Remove the learning section (from first_learning_line to end_line, inclusive)
+    local tmp_file=$(brigade_mktemp)
+    sed "${first_learning_line},${end_line}d" "$learnings_path" > "$tmp_file"
+    mv "$tmp_file" "$learnings_path"
+
+    # Recount
+    count=$(grep -c '^## \[' "$learnings_path" 2>/dev/null || echo "0")
+  done
+}
+
+# Archive learnings file on PRD completion
+archive_learnings() {
+  local prd_path="$1"
+
+  # Skip if disabled
+  [ "$LEARNINGS_ARCHIVE" != "true" ] && return
+
+  local learnings_path=$(get_learnings_path "$prd_path")
+  [ ! -f "$learnings_path" ] && return
+
+  # Check if there are any learnings to archive
+  local count=$(grep -c '^## \[' "$learnings_path" 2>/dev/null || echo "0")
+  [ "$count" -eq 0 ] && return
+
+  # Create archive directory
+  local prd_dir=$(dirname "$prd_path")
+  local archive_dir="$prd_dir/archive"
+  mkdir -p "$archive_dir"
+
+  # Generate archive filename: learnings-{prd-prefix}-{date}.md
+  local prd_prefix=$(get_prd_prefix "$prd_path")
+  local archive_date=$(date "+%Y%m%d-%H%M%S")
+  local archive_file="$archive_dir/learnings-${prd_prefix}-${archive_date}.md"
+
+  # Copy learnings to archive
+  cp "$learnings_path" "$archive_file"
+  echo -e "${GRAY}📚 Learnings archived: $archive_file ($count entries)${NC}"
+
+  # Reset learnings file (keep header, remove entries)
+  local feature_name=$(jq -r '.featureName' "$prd_path" 2>/dev/null || echo "Unknown")
+  cat > "$learnings_path" <<EOF
+# Brigade Learnings: $feature_name
+
+This file contains learnings shared between workers. Each worker can read this
+to learn from previous attempts and share knowledge with the team.
+
+---
+
+EOF
+}
+
 add_learning() {
   local prd_path="$1"
   local task_id="$2"
@@ -1375,6 +1458,9 @@ $content
 
 ---
 EOF
+
+  # Prune oldest if we exceed the limit
+  prune_learnings "$prd_path"
 }
 
 extract_learnings_from_output() {
@@ -2869,6 +2955,29 @@ output_status_json() {
       is_current: (.id == $current)
     }]' "$prd_path")
 
+  # Get phase reviews from state
+  local phase_reviews_json="[]"
+  local phase_review_count=0
+  local last_phase_review="null"
+  if [ -f "$state_path" ]; then
+    phase_review_count=$(jq '(.phaseReviews // []) | length' "$state_path" 2>/dev/null || echo 0)
+    [ -z "$phase_review_count" ] && phase_review_count=0
+    if [ "$phase_review_count" -gt 0 ]; then
+      phase_reviews_json=$(jq -c '[(.phaseReviews // [])[] | {
+        completed_tasks: .completedTasks,
+        total_tasks: .totalTasks,
+        status: .status,
+        timestamp: .timestamp
+      }]' "$state_path")
+      last_phase_review=$(jq -c '(.phaseReviews // []) | last | {
+        completed_tasks: .completedTasks,
+        total_tasks: .totalTasks,
+        status: .status,
+        timestamp: .timestamp
+      }' "$state_path")
+    fi
+  fi
+
   # Output JSON
   jq -n \
     --arg feature "$feature_name" \
@@ -2883,6 +2992,9 @@ output_status_json() {
     --argjson needs_attention "$needs_attention" \
     --arg attention_reason "$attention_reason" \
     --argjson tasks "$tasks_json" \
+    --argjson phase_review_count "$phase_review_count" \
+    --argjson last_phase_review "$last_phase_review" \
+    --argjson phase_reviews "$phase_reviews_json" \
     '{
       feature_name: $feature,
       prd_path: $prd,
@@ -2895,6 +3007,11 @@ output_status_json() {
         status: $current_status
       } end),
       escalations: $escalations,
+      phase_reviews: {
+        count: $phase_review_count,
+        last: $last_phase_review,
+        history: $phase_reviews
+      },
       needs_attention: $needs_attention,
       attention_reason: (if $attention_reason == "" then null else $attention_reason end),
       tasks: $tasks
@@ -3225,6 +3342,34 @@ cmd_status() {
       echo -e "${BOLD}Absorbed Tasks:${NC}"
       jq -r --argjson ids "$prd_task_ids" \
         '(.absorptions // [])[] | select(.taskId as $tid | $ids | index($tid)) | "  \(.taskId) ← absorbed by \(.absorbedBy)"' "$state_path"
+    fi
+
+    # Phase reviews summary
+    local phase_review_count=$(jq '(.phaseReviews // []) | length' "$state_path" 2>/dev/null || echo 0)
+    [ -z "$phase_review_count" ] && phase_review_count=0
+    if [ "$phase_review_count" -gt 0 ]; then
+      echo ""
+      echo -e "${BOLD}Phase Reviews:${NC} $phase_review_count"
+
+      if [ "$show_all_escalations" = "true" ]; then
+        # Show all phase reviews with --all flag
+        jq -r '.phaseReviews // [] | to_entries[] |
+          .value as $r |
+          ($r.timestamp | split("T") | .[0] + " " + (.[1] | split("+")[0] | split("-")[0] | .[0:5])) as $time |
+          (if $r.status == "CONTINUE" then "\u001b[32m✓\u001b[0m" else "\u001b[33m⏸\u001b[0m" end) as $icon |
+          "  \($icon) \($time) [\($r.completedTasks)/\($r.totalTasks) tasks] \($r.status)"' "$state_path"
+      else
+        # Show only the last phase review
+        jq -r '.phaseReviews // [] | last |
+          (if . == null then empty else
+            (.timestamp | split("T") | .[0] + " " + (.[1] | split("+")[0] | split("-")[0] | .[0:5])) as $time |
+            (if .status == "CONTINUE" then "\u001b[32m✓\u001b[0m" else "\u001b[33m⏸\u001b[0m" end) as $icon |
+            "  Last: \($icon) \($time) [\(.completedTasks)/\(.totalTasks) tasks] \(.status)"
+          end)' "$state_path"
+        if [ "$phase_review_count" -gt 1 ]; then
+          echo -e "  ${GRAY}(use --all to see all $phase_review_count reviews)${NC}"
+        fi
+      fi
     fi
   fi
 
@@ -4159,6 +4304,9 @@ $task_id"
     review_pass=$(jq '[(.reviews // [])[] | select(.result == "PASS")] | length' "$state_path" 2>/dev/null || echo 0)
   fi
 
+  # Archive learnings from this PRD run
+  archive_learnings "$prd_path"
+
   echo ""
   echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
   echo -e "${GREEN}║                    🎉 PRD COMPLETE 🎉                     ║${NC}"
@@ -4309,8 +4457,27 @@ cmd_plan() {
 "
   fi
 
-  # Include codebase map if available
+  # Include codebase map if available, checking for staleness
   local codebase_map=""
+  check_map_staleness "brigade/codebase-map.md"
+  local staleness=$?
+
+  if [ $staleness -eq 2 ]; then
+    # No map exists - remind user
+    echo -e "${GRAY}Tip: Run './brigade.sh map' to generate a codebase map for better planning context.${NC}"
+    echo ""
+  elif [ $staleness -eq 1 ]; then
+    # Map is stale - auto-regenerate
+    if [ "$MAP_COMMITS_BEHIND" -eq -1 ]; then
+      echo -e "${YELLOW}Codebase map exists but has no commit tracking (old format). Regenerating...${NC}"
+    else
+      echo -e "${YELLOW}Codebase map is ${MAP_COMMITS_BEHIND} commits behind HEAD. Regenerating...${NC}"
+    fi
+    echo ""
+    cmd_map "brigade/codebase-map.md"
+    echo ""
+  fi
+
   if [ -f "brigade/codebase-map.md" ]; then
     codebase_map="
 ---
@@ -4788,6 +4955,48 @@ cmd_summary() {
   fi
 }
 
+# Check if codebase map is stale (too many commits behind HEAD)
+# Returns: 0 = fresh, 1 = stale, 2 = no map exists
+# Sets MAP_COMMITS_BEHIND to the number of commits behind
+check_map_staleness() {
+  local map_file="${1:-brigade/codebase-map.md}"
+  MAP_COMMITS_BEHIND=0
+
+  # No map exists
+  if [ ! -f "$map_file" ]; then
+    return 2
+  fi
+
+  # Staleness check disabled
+  if [ "$MAP_STALE_COMMITS" -eq 0 ] 2>/dev/null; then
+    return 0
+  fi
+
+  # Extract commit hash from map file (40 hex chars)
+  local map_commit=$(grep -oE '[a-f0-9]{40}' "$map_file" 2>/dev/null | head -1)
+
+  # No commit hash found (old format map)
+  if [ -z "$map_commit" ]; then
+    MAP_COMMITS_BEHIND=-1  # Unknown, treat as stale
+    return 1
+  fi
+
+  # Count commits since map was generated
+  MAP_COMMITS_BEHIND=$(git rev-list --count "$map_commit"..HEAD 2>/dev/null || echo "-1")
+
+  # Git command failed (commit no longer in history?)
+  if [ "$MAP_COMMITS_BEHIND" -eq -1 ]; then
+    return 1
+  fi
+
+  # Check if stale
+  if [ "$MAP_COMMITS_BEHIND" -ge "$MAP_STALE_COMMITS" ]; then
+    return 1
+  fi
+
+  return 0
+}
+
 cmd_map() {
   local output_file="${1:-brigade/codebase-map.md}"
 
@@ -4845,7 +5054,13 @@ Output the result as markdown that can be saved to a file."
     local map_content=$(sed -n '/^#/,$p' "$temp_output")
 
     if [ -n "$map_content" ]; then
-      echo "$map_content" > "$output_file"
+      # Embed commit hash for staleness tracking
+      local commit_hash=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+      {
+        echo "$map_content"
+        echo ""
+        echo "<!-- Generated at commit: $commit_hash -->"
+      } > "$output_file"
       echo ""
       echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
       echo -e "${GREEN}║  Codebase map generated: $output_file${NC}"

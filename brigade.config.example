@@ -138,6 +138,14 @@ SUPERVISOR_STATUS_FILE=""  # e.g., "brigade/tasks/status.json"
 SUPERVISOR_EVENTS_FILE=""  # e.g., "brigade/tasks/events.jsonl"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# CODEBASE MAP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Regenerate codebase map if this many commits behind HEAD during planning
+# Set to 0 to disable staleness checking
+MAP_STALE_COMMITS=20
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GIT
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -265,6 +273,13 @@ LEARNINGS_FILE="brigade-learnings.md"
 # Backlog file for out-of-scope discoveries (relative to PRD directory)
 # Workers can log items with: <backlog>Description</backlog>
 BACKLOG_FILE="brigade-backlog.md"
+
+# Maximum learnings per file (0 = unlimited)
+# When exceeded, oldest learnings are pruned
+LEARNINGS_MAX=50
+
+# Archive learnings to {prd-dir}/archive/ on PRD completion
+LEARNINGS_ARCHIVE=true
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PARALLEL EXECUTION
