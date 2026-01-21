@@ -1168,96 +1168,128 @@ Next steps:
 
 # /brigade supervise
 
-Act as supervisor for a running Brigade service. Monitor progress, intervene when needed, keep things moving.
+You are now the **Supervisor** for Brigade. Your job is to actively monitor and guide the kitchen - NOT implement tasks yourself.
 
-## When to Use
+## IMMEDIATE ACTIONS - DO THIS NOW
 
-- Brigade is running with `--walkaway` or in background
-- You want to monitor and guide without implementing yourself
-- User asked you to "watch" or "supervise" the kitchen
-
-## Supervisor Role
-
-You are NOT a worker. You don't implement tasks. You:
-
-1. **Monitor** - Check status periodically
-2. **Intervene** - When Brigade signals it needs help
-3. **Guide** - Give stuck workers hints
-4. **Report** - Keep the user informed
-
-## Setup
-
-Make sure supervisor files are configured in `brigade.config`:
-
+### Step 1: Check Current Status
 ```bash
-SUPERVISOR_STATUS_FILE="brigade/tasks/status.json"
-SUPERVISOR_EVENTS_FILE="brigade/tasks/events.jsonl"
-SUPERVISOR_CMD_FILE="brigade/tasks/cmd.json"
-```
-
-## Monitoring Commands
-
-```bash
-# Quick status (poll every 30-60s)
 ./brigade.sh status --brief
+```
+This returns JSON like: `{"done":3,"total":8,"current":"US-004","worker":"sous","elapsed":125,"attention":false}`
 
-# Detailed status
-./brigade.sh status --json
+### Step 2: Report to User
+Tell the user what's happening in plain English:
+> "Kitchen is cooking. 3/8 tasks done, Sous Chef working on US-004 (2m elapsed)."
 
-# Watch events in real-time
-tail -f brigade/tasks/events.jsonl
+### Step 3: Enter Monitoring Loop
+Check status every 30-60 seconds. Look for:
+- `"attention": true` - **STOP and intervene immediately**
+- Task taking too long (>15min for junior, >30min for senior)
+- Multiple failures on same task
+
+## HOW TO INTERVENE
+
+When Brigade needs help (`attention: true` or `decision_needed` event), you MUST write a command to `brigade/tasks/cmd.json`:
+
+```bash
+# Using Write tool or echo:
+echo '{"decision":"d-123","action":"retry","reason":"Transient failure","guidance":"Try mocking the external API"}' > brigade/tasks/cmd.json
 ```
 
-## Intervening
+### Actions You Can Take
 
-When you see `decision_needed` or `attention` events, write to cmd.json:
+| Action | When | Example Guidance |
+|--------|------|------------------|
+| `retry` | Temporary failure, worth another shot | "Check the OpenAPI spec at docs/api.md" |
+| `skip` | Task is blocked, move on | "Dependency issue, will fix manually later" |
+| `abort` | Something fundamentally wrong | "Missing credentials, cannot proceed" |
+| `pause` | Need to investigate before continuing | "Reviewing worker logs" |
 
-```json
-{"decision":"d-123","action":"retry","reason":"Transient error","guidance":"Check the API docs for auth headers"}
+### Guidance Tips
+When retrying, give the worker specific hints:
+- Point to specific files: "Pattern is in src/auth/middleware.ts:45"
+- Clarify requirements: "The API expects Bearer token, not Basic auth"
+- Suggest approaches: "Try using the existing UserService instead of raw queries"
+
+## WHAT TO MONITOR
+
+### Check Status (every 30-60s)
+```bash
+./brigade.sh status --brief    # Quick JSON
+./brigade.sh status --json     # Full details
 ```
 
-### Available Actions
+### Watch Events (for real-time monitoring)
+```bash
+tail -20 brigade/tasks/events.jsonl
+```
 
-| Action | When to Use |
-|--------|-------------|
-| `retry` | Worth another attempt (add guidance to help) |
-| `skip` | Task is blocked, move on |
-| `abort` | Something fundamentally wrong |
-| `pause` | Need to investigate |
+Events you'll see:
+- `task_start` / `task_complete` - Normal flow, no action needed
+- `escalation` - Worker handed off to senior, watch but don't intervene yet
+- `attention` - **INTERVENE NOW**
+- `decision_needed` - **RESPOND via cmd.json**
+- `service_complete` - Done! Report to user.
 
-## When to Intervene
+### Check Worker Logs (when debugging)
+```bash
+ls -la brigade/logs/
+cat brigade/logs/<latest-log>.log
+```
 
-**Always intervene:**
-- `attention` events
-- `decision_needed` events
-- Multiple consecutive failures
-- Task running way longer than expected
+## WHEN TO INTERVENE vs LET IT RUN
 
-**Let it run:**
-- Normal task_start / task_complete flow
+**INTERVENE:**
+- `attention: true` in status
+- `decision_needed` event
+- Same task failed 3+ times
+- Task running 2x expected time
+
+**LET IT RUN:**
+- Normal task_start → task_complete flow
 - Single escalation (Line Cook → Sous Chef is normal)
-- Brief delays
+- Brief pauses between tasks (<2 min)
 
-## Supervisor Loop
+## REPORTING TO USER
+
+Keep the user informed with concise updates:
+
+**While running:**
+> "Kitchen cooking. 5/8 done, Sous Chef on US-006 (JWT middleware), 4m elapsed."
+
+**When you intervene:**
+> "US-005 hit a snag - couldn't find the validation pattern. I told the worker to check src/validators/. Retrying."
+
+**When done:**
+> "Order up! 8/8 tasks complete in 32 minutes. Branch `feature/auth` ready for review."
+
+## YOUR RESPONSIBILITIES
+
+1. ✓ Check status regularly (every 30-60s)
+2. ✓ Intervene when `attention: true` or `decision_needed`
+3. ✓ Provide helpful guidance when retrying
+4. ✓ Report progress to the user
+5. ✗ Do NOT implement tasks yourself
+6. ✗ Do NOT intervene on normal escalations
+7. ✗ Do NOT abort on first failure (escalation is normal)
+
+## COMPLETE SUPERVISOR LOOP
 
 ```
-1. Check status (./brigade.sh status --brief)
-2. If attention=true, read events, understand issue
-3. Write decision to cmd.json
-4. Wait 30-60s
-5. Repeat until service_complete
+REPEAT until service_complete:
+  1. ./brigade.sh status --brief
+  2. IF attention=true:
+       - Read events: tail -20 brigade/tasks/events.jsonl
+       - Understand the issue
+       - Write decision: echo '{"decision":"...","action":"..."}' > brigade/tasks/cmd.json
+  3. Report to user if significant change
+  4. Wait 30-60 seconds
 ```
 
-## Reporting to User
+## REFERENCE
 
-Keep updates concise:
-- "Kitchen cooking. 3/8 done, Sous Chef on US-004."
-- "Hit snag on US-005. Told worker to check the OpenAPI spec. Retrying."
-- "Done! 8/8 complete. Branch ready."
-
-## Full Instructions
-
-For complete supervisor guidance, read: `chef/supervisor.md`
+Full supervisor documentation: `chef/supervisor.md`
 
 ---
 
