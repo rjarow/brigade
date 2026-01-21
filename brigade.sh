@@ -6164,6 +6164,8 @@ $task_id"
 
         for task_id in $parallel_tasks; do
           (
+            # Disable set -e in subshell to ensure clean exit handling
+            set +e
             cmd_ticket "$prd_path" "$task_id"
             exit $?
           ) &
@@ -6175,15 +6177,33 @@ $task_id"
         done
 
         # Wait for all parallel tasks
+        # IMPORTANT: Disable set -e to ensure we wait for ALL pids even if some fail
+        set +e
         local all_success=true
         local failed_tasks=""
+        local waited_count=0
+        local total_parallel=${#task_pid_map}
+
+        if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+          echo "[DEBUG] Parallel wait: expecting to wait for $(echo $task_pid_map | wc -w) tasks" >&2
+        fi
+
         for mapping in $task_pid_map; do
           local task_id=$(echo "$mapping" | cut -d: -f1)
           local pid=$(echo "$mapping" | cut -d: -f2)
           local parallel_display_id=$(format_task_id "$prd_path" "$task_id")
 
+          if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+            echo "[DEBUG] Parallel wait: waiting for $task_id (PID: $pid)" >&2
+          fi
+
           wait "$pid"
           local exit_code=$?
+          waited_count=$((waited_count + 1))
+
+          if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+            echo "[DEBUG] Parallel wait: $task_id (PID: $pid) exited with $exit_code ($waited_count waited)" >&2
+          fi
 
           # Exit codes: 0=COMPLETE, 33=ALREADY_DONE, 34=ABSORBED_BY - all are success
           if [ $exit_code -eq 0 ] || [ $exit_code -eq 33 ] || [ $exit_code -eq 34 ]; then
@@ -6195,6 +6215,11 @@ $task_id"
             failed_tasks="$failed_tasks $task_id"
           fi
         done
+        set -e
+
+        if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+          echo "[DEBUG] Parallel wait complete: waited for $waited_count tasks" >&2
+        fi
 
         if [ "$all_success" != "true" ]; then
           echo -e "${RED}Some parallel tasks failed${NC}"
