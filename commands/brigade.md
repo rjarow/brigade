@@ -411,6 +411,22 @@ Every task MUST have execution-based verification, not just grep:
 
 Save to `brigade/tasks/prd-{feature-name}.json` and offer to execute.
 
+### Supervisor Handoff (Optional)
+
+If someone else will supervise execution (e.g., a different Claude session), leave notes:
+
+```bash
+# Write to brigade/tasks/supervisor-notes.md
+```
+
+Include:
+- Key decisions made during planning and why
+- Potential trouble spots ("US-004 might struggle with the legacy API")
+- Important context not in the PRD ("user prefers functional style")
+- Files the supervisor should know about ("auth patterns in src/middleware/")
+
+This helps the supervisor give better guidance when workers get stuck.
+
 ---
 
 # /brigade convert
@@ -1170,26 +1186,50 @@ Next steps:
 
 You are now the **Supervisor** for Brigade. Your job is to actively monitor and guide the kitchen - NOT implement tasks yourself.
 
-## FIRST: READ THE DOCUMENTATION
+## STEP 1: LEARN HOW TO SUPERVISE
 
-**Before doing anything else**, read these files to understand your full capabilities:
+**Read the Brigade supervisor documentation:**
 
 ```bash
-# REQUIRED - Read these now:
-cat chef/supervisor.md        # Full supervisor instructions, intervention patterns, event types
-cat CLAUDE.md                 # Look for "Supervisor Integration" and "Autonomy Hierarchy" sections
+cat chef/supervisor.md        # Full supervisor guide - events, commands, intervention patterns
+cat CLAUDE.md                 # Find "Supervisor Integration" and "Autonomy Hierarchy" sections
 ```
 
-These docs contain:
-- **Events system** - How to watch `events.jsonl` for real-time task updates
-- **Command file** - How to send decisions and guidance to workers via `cmd.json`
-- **Status formats** - `--brief` vs `--json` vs `--watch` options
+These docs explain:
+- **Events system** - `events.jsonl` for real-time task updates
+- **Command file** - Send decisions and guidance to workers via `cmd.json`
+- **Status formats** - `--brief` vs `--json` vs `--watch`
 - **Intervention patterns** - When to retry, skip, abort, or pause
-- **Guidance techniques** - How to help stuck workers with specific hints
+- **Guidance techniques** - How to help stuck workers
 
-**Do not skip this step.** The docs are the source of truth and may have capabilities not listed here.
+## STEP 2: UNDERSTAND THE PROJECT
 
-## THEN: START MONITORING
+**Load project context so you can give useful guidance:**
+
+```bash
+# 1. Check for codebase map
+if [ -f "brigade/codebase-map.md" ]; then
+  cat brigade/codebase-map.md    # Project structure, patterns, key files
+else
+  echo "No codebase map found. Generating..."
+  ./brigade.sh map               # Creates brigade/codebase-map.md
+  cat brigade/codebase-map.md
+fi
+
+# 2. Read project-specific instructions
+cat CLAUDE.md                    # Project conventions and instructions
+
+# 3. Find and read active PRDs
+ls brigade/tasks/prd-*.json      # List PRDs
+cat brigade/tasks/prd-*.json     # Read what's being built
+
+# 4. Check for handoff notes from planning Claude (optional)
+[ -f "brigade/tasks/supervisor-notes.md" ] && cat brigade/tasks/supervisor-notes.md
+```
+
+**Why this matters:** When a worker is stuck, you need to give specific guidance like "check src/auth/middleware.ts:45 for the pattern" - not vague hints. The codebase map tells you where things are.
+
+## STEP 3: START MONITORING
 
 ### Step 1: Check Current Status
 ```bash
@@ -1318,9 +1358,13 @@ REPEAT until service_complete:
 |------|----------|
 | `chef/supervisor.md` | Complete supervisor guide, intervention patterns, all event types |
 | `CLAUDE.md` | "Supervisor Integration" section - file formats, event types, config |
-| `docs/architecture.md` | System overview, state files, worker signals |
+| `brigade/codebase-map.md` | Project structure, key files, patterns (generate with `./brigade.sh map`) |
+| `brigade/tasks/prd-*.json` | Active PRDs - what's being built, acceptance criteria |
+| `brigade/tasks/supervisor-notes.md` | Optional handoff notes from planning Claude |
 
 **These docs are authoritative.** If something isn't working as expected, re-read the docs - they may have been updated with new capabilities or fixes.
+
+**Giving good guidance requires project knowledge.** Don't just say "check the auth code" - say "check src/auth/middleware.ts:45 for the JWT validation pattern". The codebase map helps you give specific, actionable guidance.
 
 ---
 
