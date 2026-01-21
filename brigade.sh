@@ -472,17 +472,33 @@ get_worker_log_path() {
 
 print_banner() {
   echo ""
-  echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}║${NC}  ${BOLD}Brigade${NC} - Multi-model AI Orchestration              ${CYAN}║${NC}"
-  echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo -e "🍳 ${CYAN}═══════════════════════════════════════════════════════════${NC}"
+  echo -e "   ${BOLD}Brigade Kitchen${NC} - AI Chefs at Your Service"
+  echo -e "   ${CYAN}═══════════════════════════════════════════════════════════${NC}"
   echo ""
 }
 
 print_usage() {
+  echo -e "🍳 ${BOLD}Brigade Kitchen${NC} - Quick Reference"
+  echo ""
+  echo "Commands:"
+  echo "  plan <description>     Plan a new feature (Executive Chef)"
+  echo "  service [prd.json]     Cook all dishes in a PRD"
+  echo "  status                 Check kitchen status"
+  echo "  resume                 Continue after interruption"
+  echo ""
+  echo "Getting Started:"
+  echo "  init                   Guided setup wizard"
+  echo "  demo                   Try a demo (dry-run)"
+  echo ""
+  echo "Run './brigade.sh help --all' for the full menu."
+}
+
+print_usage_full() {
   echo "Usage: ./brigade.sh [options] <command> [args]"
   echo ""
   echo "Commands:"
-  echo "  plan <description>         Generate PRD from feature description (Director/Opus)"
+  echo "  plan <description>         Generate PRD from feature description (Executive Chef)"
   echo "  service [prd.json]         Run full service (defaults to brigade/tasks/latest.json)"
   echo "  resume [prd.json] [action] Resume after interruption (action: retry|skip)"
   echo "  ticket <prd.json> <id>     Run single ticket"
@@ -499,6 +515,10 @@ print_usage() {
   echo "  analyze <prd.json>         Analyze tasks and suggest routing"
   echo "  validate <prd.json>        Validate PRD structure and dependencies"
   echo "  opencode-models            List available OpenCode models"
+  echo ""
+  echo "Getting Started:"
+  echo "  init                       Guided setup wizard"
+  echo "  demo                       Try a demo (dry-run mode)"
   echo ""
   echo "Options:"
   echo "  --max-iterations <n>       Max iterations per task (default: 50)"
@@ -524,6 +544,67 @@ print_usage() {
   echo "  ./brigade.sh --skip US-007 service prd.json          # Skip a task"
   echo "  ./brigade.sh --from US-003 service prd.json          # Start from task"
   echo "  ./brigade.sh --dry-run --only US-001 service prd.json # Preview filtered plan"
+}
+
+# First-run welcome message for new users
+print_welcome() {
+  echo ""
+  echo -e "🍳 ${BOLD}Welcome to Brigade Kitchen!${NC}"
+  echo ""
+  echo "Looks like this is your first time here. Let's get cooking!"
+  echo ""
+  echo "  Quick start:"
+  echo -e "    ${CYAN}./brigade.sh plan \"Add user authentication\"${NC}"
+  echo ""
+  echo "  Or try a demo:"
+  echo -e "    ${CYAN}./brigade.sh demo${NC}"
+  echo ""
+  echo "  Need setup help?"
+  echo -e "    ${CYAN}./brigade.sh init${NC}"
+  echo ""
+}
+
+# Kitchen-themed error messages
+# Usage: kitchen_error <type> <details>
+kitchen_error() {
+  local type="$1"
+  local details="$2"
+
+  case "$type" in
+    "blocked")
+      echo ""
+      echo -e "🔥 ${RED}Kitchen fire!${NC} $details"
+      echo ""
+      echo "   Options:"
+      echo -e "     ${CYAN}./brigade.sh resume${NC}        - Let the next chef try"
+      echo -e "     ${CYAN}./brigade.sh resume skip${NC}   - Skip this dish"
+      echo ""
+      ;;
+    "no_prd")
+      echo ""
+      echo -e "🍽️ ${YELLOW}Empty plate!${NC} No PRD found."
+      echo ""
+      echo -e "   Start with: ${CYAN}./brigade.sh plan \"your feature\"${NC}"
+      echo ""
+      ;;
+    "verification_failed")
+      echo ""
+      echo -e "🔥 ${RED}Kitchen fire!${NC} $details didn't pass the taste test."
+      echo ""
+      echo -e "   Run '${CYAN}./brigade.sh resume${NC}' to try again."
+      echo ""
+      ;;
+    "timeout")
+      echo ""
+      echo -e "⏰ ${YELLOW}Order taking too long!${NC} $details"
+      echo ""
+      echo -e "   The kitchen will try a more experienced chef."
+      echo ""
+      ;;
+    *)
+      echo -e "${RED}Error:${NC} $details"
+      ;;
+  esac
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2803,8 +2884,8 @@ fire_ticket() {
 
   echo ""
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
-  log_event "START" "TASK: $display_id - $task_title"
-  echo -e "${GRAY}Worker: $worker_name (agent: $worker_agent)${NC}"
+  log_event "START" "🔪 Prepping $display_id - $task_title"
+  echo -e "${GRAY}Chef: $worker_name${NC}"
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
   echo ""
 
@@ -3006,12 +3087,12 @@ fire_ticket() {
   # 33 = ALREADY_DONE
   # 34 = ABSORBED_BY
   if grep -q "<promise>COMPLETE</promise>" "$output_file" 2>/dev/null; then
-    log_event "SUCCESS" "Task $display_id signaled COMPLETE (${duration}s)"
+    log_event "SUCCESS" "🍽️ $display_id plated! (${duration}s)"
     emit_supervisor_event "task_complete" "$task_id" "$worker" "$duration"
     rm -f "$output_file"
     return 0
   elif grep -q "<promise>ALREADY_DONE</promise>" "$output_file" 2>/dev/null; then
-    log_event "SUCCESS" "Task $display_id signaled ALREADY_DONE - completed by prior task (${duration}s)"
+    log_event "SUCCESS" "🍽️ $display_id already on the pass! (${duration}s)"
     emit_supervisor_event "task_already_done" "$task_id"
     rm -f "$output_file"
     return 33  # ALREADY_DONE (distinct from jq exit code 3)
@@ -3070,7 +3151,7 @@ run_verification() {
   local display_id=$(format_task_id "$prd_path" "$task_id")
   echo ""
   echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
-  log_event "INFO" "VERIFICATION: Running $cmd_count check(s) for $display_id"
+  log_event "INFO" "🧪 Taste testing $display_id ($cmd_count check(s))..."
   echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
 
   local failed_cmds=""
@@ -3146,13 +3227,13 @@ run_verification() {
   echo ""
 
   if [ "$fail_count" -gt 0 ]; then
-    log_event "ERROR" "VERIFICATION FAILED: $fail_count of $cmd_count check(s) failed"
+    log_event "ERROR" "🔥 Taste test failed! $fail_count of $cmd_count check(s) didn't pass"
     LAST_VERIFICATION_FEEDBACK="Verification commands failed:${failed_cmds}
 
 Please fix these issues and ensure all verification commands pass before signaling COMPLETE."
     return 1
   else
-    log_event "SUCCESS" "VERIFICATION PASSED: $pass_count of $cmd_count check(s)"
+    log_event "SUCCESS" "✅ Taste test passed! $pass_count of $cmd_count check(s)"
     LAST_VERIFICATION_FEEDBACK=""
     return 0
   fi
@@ -4022,7 +4103,7 @@ executive_review() {
   record_review "$prd_path" "$task_id" "$review_result" "$review_reason"
 
   if [ "$review_result" == "PASS" ]; then
-    log_event "SUCCESS" "Executive Review PASSED: $display_id (${duration}s)"
+    log_event "SUCCESS" "👨‍🍳 Executive Chef approves $display_id! (${duration}s)"
     echo -e "${GRAY}Reason: $review_reason${NC}"
     LAST_REVIEW_FEEDBACK=""  # Clear any previous feedback
     LAST_VERIFICATION_FEEDBACK=""
@@ -4030,7 +4111,7 @@ executive_review() {
     LAST_MANUAL_VERIFICATION_FEEDBACK=""
     return 0
   else
-    log_event "ERROR" "Executive Review FAILED: $display_id (${duration}s)"
+    log_event "ERROR" "👨‍🍳 Executive Chef sent $display_id back to the kitchen (${duration}s)"
     echo -e "${GRAY}Reason: $review_reason${NC}"
     # Store feedback so it can be passed to worker on retry
     LAST_REVIEW_FEEDBACK="$review_reason"
@@ -5403,7 +5484,7 @@ cmd_ticket() {
 
       echo ""
       echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
-      log_event "ESCALATE" "ESCALATING $display_id: Line Cook → Sous Chef"
+      log_event "ESCALATE" "📢 Calling in the Sous Chef for $display_id"
       echo -e "${YELLOW}║  Reason: $ESCALATION_AFTER iterations without completion            ║${NC}"
       echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
       echo ""
@@ -5422,7 +5503,7 @@ cmd_ticket() {
 
       echo ""
       echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
-      log_event "ESCALATE" "ESCALATING $display_id: Sous Chef → Executive Chef (rare)"
+      log_event "ESCALATE" "📢 Calling in the Executive Chef for $display_id (rare)"
       echo -e "${RED}║  Reason: $ESCALATION_TO_EXEC_AFTER iterations without completion            ║${NC}"
       echo -e "${RED}║  This is unusual - Executive Chef stepping in             ║${NC}"
       echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
@@ -5448,7 +5529,7 @@ cmd_ticket() {
         if [ "$worker" == "line" ] && [ "$escalation_tier" -eq 0 ]; then
           echo ""
           echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
-          log_event "ESCALATE" "ESCALATING $display_id: Line Cook → Sous Chef (timeout)"
+          log_event "ESCALATE" "⏰ Line Cook timed out - calling Sous Chef for $display_id"
           echo -e "${YELLOW}║  Reason: Task timeout (${elapsed_mins}m > ${timeout_mins}m limit)          ║${NC}"
           echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
           echo ""
@@ -5461,7 +5542,7 @@ cmd_ticket() {
         elif [ "$worker" == "sous" ] && [ "$ESCALATION_TO_EXEC" == "true" ] && [ "$escalation_tier" -lt 2 ]; then
           echo ""
           echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
-          log_event "ESCALATE" "ESCALATING $display_id: Sous Chef → Executive Chef (timeout)"
+          log_event "ESCALATE" "⏰ Sous Chef timed out - calling Executive Chef for $display_id"
           echo -e "${RED}║  Reason: Task timeout (${elapsed_mins}m > ${timeout_mins}m limit)          ║${NC}"
           echo -e "${RED}║  This is unusual - Executive Chef stepping in             ║${NC}"
           echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
@@ -5633,7 +5714,7 @@ cmd_ticket() {
 
         echo ""
         echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
-        log_event "ESCALATE" "ESCALATING $display_id: Line Cook → Sous Chef (blocked)"
+        log_event "ESCALATE" "🔥 Line Cook blocked - calling Sous Chef for $display_id"
         echo -e "${YELLOW}║  Reason: Task blocked                                     ║${NC}"
         echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
         echo ""
@@ -5652,7 +5733,7 @@ cmd_ticket() {
 
         echo ""
         echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${NC}"
-        log_event "ESCALATE" "ESCALATING $display_id: Sous Chef → Executive Chef (blocked)"
+        log_event "ESCALATE" "🔥 Sous Chef blocked - calling Executive Chef for $display_id"
         echo -e "${RED}║  Reason: Sous Chef blocked - calling in Executive         ║${NC}"
         echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${NC}"
         echo ""
@@ -5996,9 +6077,9 @@ $task_id"
     fi
   fi
 
-  log_event "START" "SERVICE STARTED: $feature_name"
+  log_event "START" "🍳 Firing up the kitchen for: $feature_name"
   emit_supervisor_event "service_start" "$(basename "$prd_path")" "$total"
-  echo -e "Total tickets: $total"
+  echo -e "📋 Menu: $total dishes to prepare"
   echo -e "${GRAY}Escalation: $([ "$ESCALATION_ENABLED" == "true" ] && echo "ON (after $ESCALATION_AFTER iterations)" || echo "OFF")${NC}"
   echo -e "${GRAY}Executive Review: $([ "$REVIEW_ENABLED" == "true" ] && echo "ON" || echo "OFF")${NC}"
   echo -e "${GRAY}Knowledge Sharing: $([ "$KNOWLEDGE_SHARING" == "true" ] && echo "ON" || echo "OFF")${NC}"
@@ -6274,21 +6355,21 @@ EOF
 
   echo ""
   echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${GREEN}║                    🎉 PRD COMPLETE 🎉                     ║${NC}"
+  echo -e "${GREEN}║              ✅ Order Up! Kitchen Clean! ✅               ║${NC}"
   echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
   echo ""
   echo -e "${BOLD}Feature:${NC}     $feature_name"
   [ -n "$branch_name" ] && echo -e "${BOLD}Branch:${NC}      $branch_name"
   echo ""
   echo -e "${BOLD}Summary:${NC}"
-  echo -e "  Tasks completed:   $completed/$total_tasks"
-  echo -e "  Time taken:        ${hours}h ${minutes}m"
+  echo -e "  Dishes served:     $completed/$total_tasks"
+  echo -e "  Time in kitchen:   ${hours}h ${minutes}m"
   echo -e "  Escalations:       $escalation_count"
   echo -e "  Absorptions:       $absorption_count"
   [ "$review_count" -gt 0 ] && echo -e "  Reviews:           $review_pass/$review_count passed"
   echo ""
 
-  log_event "SUCCESS" "SERVICE COMPLETE: $feature_name - $completed tasks in ${hours}h ${minutes}m"
+  log_event "SUCCESS" "✅ Order up! $completed dishes served, kitchen clean."
   local failed_tasks=$((total_tasks - completed))
   emit_supervisor_event "service_complete" "$completed" "$failed_tasks" "$duration"
 
@@ -7799,6 +7880,211 @@ interpolate_template() {
   echo "$content"
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ONBOARDING COMMANDS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Interactive setup wizard for new users
+cmd_init() {
+  echo ""
+  echo -e "🍳 ${BOLD}Welcome to Brigade Kitchen Setup!${NC}"
+  echo ""
+  echo "Let's get your kitchen ready for cooking."
+  echo ""
+
+  # Check for Claude CLI
+  echo -e "${BOLD}Step 1: Checking for AI tools...${NC}"
+  local claude_found=false
+  local opencode_found=false
+
+  if command -v claude &>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} Claude CLI found"
+    claude_found=true
+  else
+    echo -e "  ${YELLOW}○${NC} Claude CLI not found"
+  fi
+
+  if command -v opencode &>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} OpenCode CLI found"
+    opencode_found=true
+  else
+    echo -e "  ${GRAY}○${NC} OpenCode CLI not found (optional - for cost savings)"
+  fi
+
+  echo ""
+
+  if [ "$claude_found" != "true" ] && [ "$opencode_found" != "true" ]; then
+    echo -e "${RED}No AI tools found!${NC}"
+    echo ""
+    echo "Brigade needs at least one AI CLI tool to work."
+    echo ""
+    echo "Install Claude CLI:"
+    echo -e "  ${CYAN}npm install -g @anthropic-ai/claude-code${NC}"
+    echo ""
+    echo "Or OpenCode:"
+    echo -e "  ${CYAN}go install github.com/sst/opencode@latest${NC}"
+    echo ""
+    return 1
+  fi
+
+  # Create config file
+  echo -e "${BOLD}Step 2: Creating configuration...${NC}"
+
+  if [ -f "brigade.config" ]; then
+    echo -e "  ${YELLOW}!${NC} brigade.config already exists"
+    read -p "  Overwrite? (y/N) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo -e "  ${GRAY}Keeping existing config.${NC}"
+    else
+      create_default_config
+    fi
+  else
+    create_default_config
+  fi
+
+  # Create directories
+  echo ""
+  echo -e "${BOLD}Step 3: Setting up directories...${NC}"
+  mkdir -p brigade/tasks
+  echo -e "  ${GREEN}✓${NC} Created brigade/tasks/"
+
+  # Final message
+  echo ""
+  echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${GREEN}║              🍳 Kitchen is ready to cook! 🍳              ║${NC}"
+  echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo "Next steps:"
+  echo ""
+  echo -e "  Try a demo:    ${CYAN}./brigade.sh demo${NC}"
+  echo -e "  Plan a feature: ${CYAN}./brigade.sh plan \"Add user login\"${NC}"
+  echo ""
+}
+
+# Helper function to create default config
+create_default_config() {
+  cat > brigade.config << 'EOF'
+# Brigade Kitchen Configuration
+# See brigade.config.example for all options
+
+# Quiet mode: suppress worker conversation output
+QUIET_WORKERS=false
+
+# Executive review: have Opus review completed work
+REVIEW_ENABLED=true
+
+# Escalation: promote tasks to higher tiers on failure
+ESCALATION_ENABLED=true
+ESCALATION_AFTER=3
+EOF
+  echo -e "  ${GREEN}✓${NC} Created brigade.config"
+}
+
+# Demo command: show what Brigade can do without actually running
+cmd_demo() {
+  echo ""
+  echo -e "🍳 ${BOLD}Brigade Kitchen Demo${NC}"
+  echo ""
+  echo "Let's see how Brigade would cook up a feature!"
+  echo ""
+
+  # Check for example PRD
+  local example_prd=""
+  if [ -f "examples/prd-example.json" ]; then
+    example_prd="examples/prd-example.json"
+  elif [ -f "$SCRIPT_DIR/examples/prd-example.json" ]; then
+    example_prd="$SCRIPT_DIR/examples/prd-example.json"
+  fi
+
+  if [ -z "$example_prd" ]; then
+    echo -e "${YELLOW}Demo PRD not found.${NC}"
+    echo ""
+    echo "Let's create a simple one for the demo..."
+    echo ""
+
+    # Create a minimal demo PRD
+    mkdir -p brigade/tasks
+    cat > brigade/tasks/prd-demo.json << 'EOF'
+{
+  "featureName": "Hello World Demo",
+  "branchName": "demo/hello-world",
+  "tasks": [
+    {
+      "id": "US-001",
+      "title": "Create greeting function",
+      "acceptanceCriteria": ["Function returns 'Hello, World!'"],
+      "dependsOn": [],
+      "complexity": "junior",
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Add tests for greeting",
+      "acceptanceCriteria": ["Test verifies greeting output"],
+      "dependsOn": ["US-001"],
+      "complexity": "junior",
+      "passes": false
+    }
+  ]
+}
+EOF
+    example_prd="brigade/tasks/prd-demo.json"
+    echo -e "${GREEN}✓${NC} Created demo PRD: $example_prd"
+    echo ""
+  fi
+
+  local feature_name=$(jq -r '.featureName' "$example_prd")
+  local task_count=$(jq '.tasks | length' "$example_prd")
+
+  echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║  Demo: $feature_name"
+  echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+
+  echo -e "📋 ${BOLD}Tonight's menu:${NC} $task_count dishes"
+  echo ""
+
+  # Show tasks
+  local tasks=$(jq -r '.tasks[] | "\(.id)|\(.title)|\(.complexity)"' "$example_prd")
+  while IFS='|' read -r id title complexity; do
+    local chef_emoji="🔪"
+    local chef_name="Line Cook"
+    if [ "$complexity" == "senior" ]; then
+      chef_emoji="👨‍🍳"
+      chef_name="Sous Chef"
+    fi
+    echo -e "  $chef_emoji $id: $title ${GRAY}($chef_name)${NC}"
+  done <<< "$tasks"
+
+  echo ""
+  echo -e "${BOLD}How it works:${NC}"
+  echo ""
+  echo "  1. 🔪 Line Cook handles simple tasks (tests, CRUD, boilerplate)"
+  echo "  2. 👨‍🍳 Sous Chef handles complex tasks (architecture, security)"
+  echo "  3. 👔 Executive Chef reviews work and handles escalations"
+  echo ""
+  echo "  If a chef struggles, the task escalates to a more senior chef."
+  echo ""
+
+  echo -e "${BOLD}Running in dry-run mode...${NC}"
+  echo ""
+
+  # Run dry-run service
+  DRY_RUN=true cmd_service "$example_prd"
+
+  echo ""
+  echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${GREEN}║                   Demo Complete!                          ║${NC}"
+  echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo "Ready to cook for real? Try:"
+  echo ""
+  echo -e "  Plan a feature:  ${CYAN}./brigade.sh plan \"your feature idea\"${NC}"
+  echo -e "  Run the example: ${CYAN}./brigade.sh service $example_prd${NC}"
+  echo ""
+}
+
 cmd_template() {
   local template_name="${1:-}"
   local resource_name="${2:-}"
@@ -7997,8 +8283,27 @@ main() {
     "opencode-models")
       cmd_opencode_models "$@"
       ;;
-    "help"|"--help"|"-h"|"")
-      print_usage
+    "init")
+      cmd_init "$@"
+      ;;
+    "demo")
+      cmd_demo "$@"
+      ;;
+    "help"|"--help"|"-h")
+      # Check for --all flag for full help
+      if [ "${1:-}" == "--all" ]; then
+        print_usage_full
+      else
+        print_usage
+      fi
+      ;;
+    "")
+      # Empty command: check for first-run scenario
+      if [ ! -d "brigade/tasks" ] && [ ! -f "brigade.config" ]; then
+        print_welcome
+      else
+        print_usage
+      fi
       ;;
     *)
       echo -e "${RED}Unknown command: $command${NC}"
