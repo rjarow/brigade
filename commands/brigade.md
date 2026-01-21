@@ -147,8 +147,9 @@ Run the CLI setup wizard:
 This will:
 1. Check for AI tools (Claude CLI, OpenCode)
 2. Create `brigade.config` with sensible defaults
-3. Create `brigade/tasks/` directory
-4. Show next steps
+3. Create directories (`brigade/tasks/`, `brigade/notes/`, `brigade/logs/`)
+4. Check/setup `.gitignore` to exclude `brigade/` working directory
+5. Show next steps
 
 ## Example
 
@@ -159,8 +160,6 @@ Claude: Running setup wizard...
 
 🍳 Welcome to Brigade Kitchen Setup!
 
-Let's get your kitchen ready for cooking.
-
 Step 1: Checking for AI tools...
   ✓ Claude CLI found
   ○ OpenCode CLI not found (optional)
@@ -170,6 +169,11 @@ Step 2: Creating configuration...
 
 Step 3: Setting up directories...
   ✓ Created brigade/tasks/
+  ✓ Created brigade/notes/
+  ✓ Created brigade/logs/
+
+Step 4: Checking .gitignore...
+  ✓ Added brigade/ to .gitignore
 
 🍳 Kitchen is ready to cook!
 
@@ -265,6 +269,28 @@ After the initial interview, the owner should be able to walk away and come back
 - **Line Cook** (Junior/GLM): Routine tasks, tests, boilerplate, simple CRUD, documentation
 
 ## Process
+
+### Phase 0: Check Setup
+
+Before planning, ensure Brigade is set up in this project:
+
+```bash
+# Check if brigade is initialized
+if [ ! -d "brigade/tasks" ]; then
+  echo "Brigade not initialized. Running setup..."
+  ./brigade.sh init
+fi
+
+# Verify .gitignore includes brigade/
+if [ -f ".gitignore" ]; then
+  if ! grep -q "^brigade" .gitignore; then
+    echo "Warning: brigade/ not in .gitignore"
+    echo "brigade/" >> .gitignore
+  fi
+fi
+```
+
+If Brigade isn't set up, run `./brigade.sh init` first - it handles everything including gitignore.
 
 ### Phase 1: Project Detection
 First, check if this is a **greenfield** (new/empty) or **existing** project:
