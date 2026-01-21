@@ -1,3 +1,25 @@
+# User configuration
 brigade.config
 CLAUDE.md
+
+# Handoff files (session notes, not for repo)
 HANDOFF.md
+HANDOFF-*.md
+docs/HANDOFF-*.md
+
+# Working directories
+brigade/tasks/
+brigade/logs/
+brigade/test-output/
+
+# Test artifacts
+.test-*
+test-*.txt
+
+# Editor/OS
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
