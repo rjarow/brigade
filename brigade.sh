@@ -7980,7 +7980,52 @@ cmd_init() {
   echo ""
   echo -e "${BOLD}Step 3: Setting up directories...${NC}"
   mkdir -p brigade/tasks
+  mkdir -p brigade/notes
+  mkdir -p brigade/logs
   echo -e "  ${GREEN}✓${NC} Created brigade/tasks/"
+  echo -e "  ${GREEN}✓${NC} Created brigade/notes/"
+  echo -e "  ${GREEN}✓${NC} Created brigade/logs/"
+
+  # Check/update .gitignore
+  echo ""
+  echo -e "${BOLD}Step 4: Checking .gitignore...${NC}"
+
+  if [ -f ".gitignore" ]; then
+    # Check if brigade/ is already ignored
+    if grep -q "^brigade/" .gitignore 2>/dev/null || grep -q "^brigade$" .gitignore 2>/dev/null; then
+      echo -e "  ${GREEN}✓${NC} brigade/ already in .gitignore"
+    else
+      echo -e "  ${YELLOW}!${NC} brigade/ not in .gitignore"
+      echo ""
+      echo "  The brigade/ directory contains working files (PRDs, state, logs)"
+      echo "  that shouldn't be committed to your repo."
+      echo ""
+      read -p "  Add 'brigade/' to .gitignore? (Y/n) " -n 1 -r
+      echo ""
+      if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        echo "" >> .gitignore
+        echo "# Brigade working directory" >> .gitignore
+        echo "brigade/" >> .gitignore
+        echo -e "  ${GREEN}✓${NC} Added brigade/ to .gitignore"
+      else
+        echo -e "  ${YELLOW}!${NC} Skipped. Remember to add manually:"
+        echo -e "      ${CYAN}echo 'brigade/' >> .gitignore${NC}"
+      fi
+    fi
+  else
+    echo -e "  ${YELLOW}!${NC} No .gitignore found"
+    echo ""
+    read -p "  Create .gitignore with brigade/? (Y/n) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+      echo "# Brigade working directory" > .gitignore
+      echo "brigade/" >> .gitignore
+      echo -e "  ${GREEN}✓${NC} Created .gitignore with brigade/"
+    else
+      echo -e "  ${YELLOW}!${NC} Skipped. Remember to add manually:"
+      echo -e "      ${CYAN}echo 'brigade/' >> .gitignore${NC}"
+    fi
+  fi
 
   # Final message
   echo ""
