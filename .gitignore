@@ -11,6 +11,7 @@ docs/HANDOFF-*.md
 # Working directories
 brigade/tasks/
 brigade/logs/
+brigade/notes/
 brigade/test-output/
 
 # Test artifacts

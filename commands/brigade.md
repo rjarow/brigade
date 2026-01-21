@@ -416,7 +416,8 @@ Save to `brigade/tasks/prd-{feature-name}.json` and offer to execute.
 If someone else will supervise execution (e.g., a different Claude session), leave notes:
 
 ```bash
-# Write to brigade/tasks/supervisor-notes.md
+mkdir -p brigade/notes
+# Write to brigade/notes/supervisor-notes.md
 ```
 
 Include:
@@ -1224,7 +1225,7 @@ ls brigade/tasks/prd-*.json      # List PRDs
 cat brigade/tasks/prd-*.json     # Read what's being built
 
 # 4. Check for handoff notes from planning Claude (optional)
-[ -f "brigade/tasks/supervisor-notes.md" ] && cat brigade/tasks/supervisor-notes.md
+[ -f "brigade/notes/supervisor-notes.md" ] && cat brigade/notes/supervisor-notes.md
 ```
 
 **Why this matters:** When a worker is stuck, you need to give specific guidance like "check src/auth/middleware.ts:45 for the pattern" - not vague hints. The codebase map tells you where things are.
@@ -1360,7 +1361,7 @@ REPEAT until service_complete:
 | `CLAUDE.md` | "Supervisor Integration" section - file formats, event types, config |
 | `brigade/codebase-map.md` | Project structure, key files, patterns (generate with `./brigade.sh map`) |
 | `brigade/tasks/prd-*.json` | Active PRDs - what's being built, acceptance criteria |
-| `brigade/tasks/supervisor-notes.md` | Optional handoff notes from planning Claude |
+| `brigade/notes/supervisor-notes.md` | Optional handoff notes from planning Claude |
 
 **These docs are authoritative.** If something isn't working as expected, re-read the docs - they may have been updated with new capabilities or fixes.
 
