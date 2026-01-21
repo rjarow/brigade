@@ -23,6 +23,9 @@ without modifying core behavior.
 | Module | Description | Config |
 |--------|-------------|--------|
 | `telegram` | Send notifications to Telegram | `MODULE_TELEGRAM_BOT_TOKEN`, `MODULE_TELEGRAM_CHAT_ID` |
+| `desktop` | Desktop notifications (macOS/Linux) | None (auto-detects) |
+| `terminal` | Terminal bell + colored banners | `MODULE_TERMINAL_BELL` (default: `true`) |
+| `webhook` | Webhooks for Slack/Discord/custom | `MODULE_WEBHOOK_URL`, `MODULE_WEBHOOK_FORMAT` |
 | `cost_tracking` | Log task durations to CSV | `MODULE_COST_TRACKING_OUTPUT` (default: `brigade/costs.csv`) |
 | `example` | Template module for reference | None |
 
@@ -66,6 +69,7 @@ module_mymodule_on_task_complete() {
 | `task_blocked` | task_id, worker | Task hit blocker |
 | `task_absorbed` | task_id, absorbed_by | Task absorbed by another |
 | `task_already_done` | task_id | Task was already completed |
+| `task_slow` | task_id, worker, elapsed_mins, threshold | Task exceeds expected duration |
 | `escalation` | task_id, from_worker, to_worker | Task escalated |
 | `review` | task_id, result | Executive review completed |
 | `verification` | task_id, result | Verification check completed |
@@ -142,3 +146,68 @@ Enable with:
 MODULES="slack"
 MODULE_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 ```
+
+## Proactive Update Modules
+
+These modules push notifications instead of requiring polling.
+
+### Desktop Notifications
+
+Native desktop notifications on macOS and Linux:
+
+```bash
+MODULES="desktop"
+# No additional config needed - auto-detects platform
+```
+
+- **macOS**: Uses `osascript` with sound
+- **Linux**: Uses `notify-send` (requires display)
+- Gracefully disables over SSH without X forwarding
+
+Events: `attention`, `escalation`, `task_slow`, `service_complete`
+
+### Terminal Alerts
+
+Bell notifications and colored banners that work over SSH:
+
+```bash
+MODULES="terminal"
+MODULE_TERMINAL_BELL=true  # Ring bell on alerts (default: true)
+```
+
+- Works over SSH connections (bell notifications)
+- Colored banners: red (attention), yellow (escalation/slow), green (complete)
+
+Events: `attention`, `escalation`, `task_slow`, `service_complete`
+
+### Webhook Notifications
+
+Send notifications to Slack, Discord, or custom webhooks:
+
+```bash
+MODULES="webhook"
+MODULE_WEBHOOK_URL="https://hooks.slack.com/services/..."
+MODULE_WEBHOOK_FORMAT="slack"  # Options: slack, discord, json
+```
+
+**Formats:**
+- `slack`: Slack-style with emoji (`:rotating_light:`, `:hourglass:`, etc.)
+- `discord`: Discord embeds with colors
+- `json`: Raw JSON for custom integrations
+
+Events: `attention`, `escalation`, `task_slow`, `service_complete`
+
+### Combining Modules
+
+Enable multiple notification channels:
+
+```bash
+MODULES="desktop,terminal,webhook"
+MODULE_WEBHOOK_URL="https://hooks.slack.com/services/..."
+MODULE_WEBHOOK_FORMAT="slack"
+```
+
+This gives you:
+- Desktop popup when Brigade needs attention
+- Terminal bell over SSH
+- Slack message for remote monitoring

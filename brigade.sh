@@ -436,6 +436,9 @@ check_task_timeout_warning() {
       echo "[$ts] ⚠️ $display_id running ${elapsed_mins}m (expected ~${warning_threshold}m for $worker_name)" >> "$ACTIVITY_LOG"
     fi
 
+    # Emit task_slow event for proactive notification modules
+    emit_supervisor_event "task_slow" "$task_id" "$worker" "$elapsed_mins" "$warning_threshold"
+
     CURRENT_TASK_WARNING_SHOWN=true
   fi
 }

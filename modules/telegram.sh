@@ -3,7 +3,7 @@
 # Config: MODULE_TELEGRAM_BOT_TOKEN, MODULE_TELEGRAM_CHAT_ID
 
 module_telegram_events() {
-  echo "task_complete escalation attention service_complete"
+  echo "task_complete escalation attention task_slow service_complete"
 }
 
 module_telegram_init() {
@@ -35,6 +35,11 @@ module_telegram_on_escalation() {
 module_telegram_on_attention() {
   local task_id="$1" reason="$2"
   _telegram_send "Task *$task_id* needs attention: $reason"
+}
+
+module_telegram_on_task_slow() {
+  local task_id="$1" worker="$2" elapsed="$3" threshold="$4"
+  _telegram_send "⏱️ Task *$task_id* running ${elapsed}m (expected ~${threshold}m for $worker)"
 }
 
 module_telegram_on_service_complete() {

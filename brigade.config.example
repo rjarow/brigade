@@ -155,7 +155,7 @@ SUPERVISOR_CMD_TIMEOUT=300
 # MODULES
 # ═══════════════════════════════════════════════════════════════════════════════
 # Comma-separated list of modules to enable (loaded from modules/<name>.sh)
-# Available: telegram, cost_tracking, example
+# Available: telegram, desktop, terminal, webhook, cost_tracking, example
 MODULES=""
 
 # Max time (seconds) for module event handlers before they're killed
@@ -165,6 +165,26 @@ MODULE_TIMEOUT=5
 # MODULE_TELEGRAM_BOT_TOKEN=""
 # MODULE_TELEGRAM_CHAT_ID=""
 # MODULE_COST_TRACKING_OUTPUT="brigade/costs.csv"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROACTIVE UPDATES (Module Config)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Push notifications instead of polling. Enable the modules above, then configure.
+
+# Desktop notifications (macOS osascript / Linux notify-send)
+# Auto-detects platform, gracefully disables over SSH without display
+# Events: attention, escalation, task_slow, service_complete
+# MODULES="desktop"  # Just enable - no config needed
+
+# Terminal alerts (bell + colored banners)
+# Works over SSH with bell notifications
+# Events: attention, escalation, task_slow, service_complete
+MODULE_TERMINAL_BELL=true  # Ring terminal bell on alerts
+
+# Webhook notifications (Slack, Discord, or custom)
+# Events: attention, escalation, task_slow, service_complete
+# MODULE_WEBHOOK_URL=""                    # Required: webhook URL
+# MODULE_WEBHOOK_FORMAT="slack"            # Options: slack, discord, json
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COST ESTIMATION

@@ -4,7 +4,7 @@
 
 # REQUIRED: Declare which events this module handles
 # Available: service_start, task_start, task_complete, task_blocked,
-#            task_absorbed, task_already_done, escalation, review,
+#            task_absorbed, task_already_done, task_slow, escalation, review,
 #            verification, attention, decision_needed, decision_received,
 #            scope_decision, service_complete
 module_example_events() {
