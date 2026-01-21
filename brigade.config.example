@@ -203,6 +203,23 @@ COST_RATE_EXECUTIVE=0.30   # $/minute for Executive Chef (planning, review)
 COST_WARN_THRESHOLD=""     # e.g., "10.00" to warn if PRD exceeds $10
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# RISK ASSESSMENT
+# ═══════════════════════════════════════════════════════════════════════════════
+# Pre-execution risk analysis. Run `./brigade.sh risk [prd]` for detailed report.
+
+# Show brief risk summary before service execution
+RISK_REPORT_ENABLED=true
+
+# Include historical escalation patterns in risk analysis
+# When enabled, scans state files for past escalation patterns
+RISK_HISTORY_SCAN=false
+
+# Warning threshold - warn if PRD risk level meets or exceeds this
+# Options: low, medium, high (leave empty to disable)
+# Risk levels: LOW (0-5 pts), MEDIUM (6-12), HIGH (13-20), CRITICAL (21+)
+RISK_WARN_THRESHOLD=""     # e.g., "medium" to warn on medium+ risk
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # CODEBASE MAP
 # ═══════════════════════════════════════════════════════════════════════════════
 

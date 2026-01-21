@@ -315,6 +315,11 @@ COST_RATE_SOUS=0.15                # $/minute for Sous Chef
 COST_RATE_EXECUTIVE=0.30           # $/minute for Executive Chef
 COST_WARN_THRESHOLD=""             # Warn if PRD exceeds this cost (empty = disabled)
 
+# Risk assessment defaults (P9)
+RISK_REPORT_ENABLED=true           # Show risk summary before service execution
+RISK_HISTORY_SCAN=false            # Include historical escalation patterns
+RISK_WARN_THRESHOLD=""             # Warn at this risk level: low, medium, high (empty = disabled)
+
 # Runtime state (set during execution)
 LAST_REVIEW_FEEDBACK=""       # Feedback from failed executive review, passed to worker on retry
 LAST_VERIFICATION_FEEDBACK="" # Feedback from failed verification commands, passed to worker on retry
@@ -485,6 +490,8 @@ print_usage() {
   echo "                              Options: --all (show all escalations), --watch/-w (auto-refresh)"
   echo "  summary [prd.json] [file]  Generate markdown summary report from state"
   echo "  cost [prd.json]            Show estimated cost breakdown (duration-based)"
+  echo "  risk [options] [prd.json]  Assess PRD risk and complexity"
+  echo "                              Options: --history (include historical escalation patterns)"
   echo "  map [output.md]            Generate codebase map (default: brigade/codebase-map.md)"
   echo "  explore <question>         Research feasibility without generating PRD"
   echo "  iterate <description>     Quick tweak on completed PRD (creates micro-PRD)"
@@ -3340,6 +3347,328 @@ check_prd_verification_coverage() {
   return $warnings
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# RISK ASSESSMENT (P9)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Risk scoring weights (points per factor)
+RISK_WEIGHT_AUTH=3          # Auth/security keywords
+RISK_WEIGHT_PAYMENT=3       # Payment/billing keywords
+RISK_WEIGHT_EXTERNAL=2      # External integrations
+RISK_WEIGHT_DATA=2          # Data operations
+RISK_WEIGHT_NO_VERIFY=2     # Missing verification
+RISK_WEIGHT_GREP_ONLY=1     # Pattern-only verification
+RISK_WEIGHT_SENIOR=1        # Senior complexity
+RISK_WEIGHT_AUTO=1          # Auto complexity (uncertain)
+RISK_WEIGHT_HIGH_DEPS=1     # More than 3 dependencies
+
+# Calculate risk score for a single task
+# Usage: calculate_task_risk <prd_path> <task_id>
+# Returns: risk score (integer)
+calculate_task_risk() {
+  local prd_path="$1"
+  local task_id="$2"
+  local score=0
+
+  local task_json=$(jq --arg id "$task_id" '.tasks[] | select(.id == $id)' "$prd_path")
+  local title=$(echo "$task_json" | jq -r '.title // ""')
+  local title_lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+  local complexity=$(echo "$task_json" | jq -r '.complexity // "auto"')
+  local deps_count=$(echo "$task_json" | jq '.dependsOn | length // 0')
+  local verification=$(echo "$task_json" | jq '.verification // []')
+
+  # Auth/security keywords (3 points each occurrence)
+  # Match partial words: "authentication" matches "auth", "authorize" matches "auth"
+  local auth_matches=$(echo "$title_lower" | grep -oiE '(auth|password|token|jwt|oauth|credential|login|session|permission|access.control|secure|encrypt)' | wc -l)
+  score=$((score + auth_matches * RISK_WEIGHT_AUTH))
+
+  # Payment/billing keywords (3 points each)
+  local payment_matches=$(echo "$title_lower" | grep -oiE '(payment|billing|stripe|transaction|checkout|refund|subscription|pricing|invoice|charge)' | wc -l)
+  score=$((score + payment_matches * RISK_WEIGHT_PAYMENT))
+
+  # External integrations (2 points each)
+  local external_matches=$(echo "$title_lower" | grep -oiE '(api|webhook|third.party|external|integrat|sdk|oauth|sso|connect)' | wc -l)
+  score=$((score + external_matches * RISK_WEIGHT_EXTERNAL))
+
+  # Data operations (2 points each)
+  local data_matches=$(echo "$title_lower" | grep -oiE '(migrat|delete|drop|database|schema|backup|restore|seed|purge|truncate)' | wc -l)
+  score=$((score + data_matches * RISK_WEIGHT_DATA))
+
+  # Missing verification (2 points)
+  local verify_len=$(echo "$verification" | jq 'length')
+  if [ "$verify_len" -eq 0 ]; then
+    score=$((score + RISK_WEIGHT_NO_VERIFY))
+  else
+    # Check for grep-only verification (1 point)
+    local has_execution=false
+    local i=0
+    while [ $i -lt "$verify_len" ]; do
+      local item=$(echo "$verification" | jq ".[$i]")
+      local item_type=$(echo "$item" | jq -r 'type')
+      local cmd=""
+      if [ "$item_type" == "string" ]; then
+        cmd=$(echo "$item" | jq -r '.')
+      else
+        cmd=$(echo "$item" | jq -r '.cmd // ""')
+      fi
+      # Check if it's an execution test (not just grep/test)
+      if ! echo "$cmd" | grep -qE '^[[:space:]]*(grep|egrep|fgrep|test|stat|\[|ls[[:space:]])'; then
+        has_execution=true
+        break
+      fi
+      i=$((i + 1))
+    done
+    if [ "$has_execution" == "false" ]; then
+      score=$((score + RISK_WEIGHT_GREP_ONLY))
+    fi
+  fi
+
+  # Complexity (1 point for senior or auto)
+  if [ "$complexity" == "senior" ]; then
+    score=$((score + RISK_WEIGHT_SENIOR))
+  elif [ "$complexity" == "auto" ]; then
+    score=$((score + RISK_WEIGHT_AUTO))
+  fi
+
+  # High dependencies (1 point if more than 3)
+  if [ "$deps_count" -gt 3 ]; then
+    score=$((score + RISK_WEIGHT_HIGH_DEPS))
+  fi
+
+  echo "$score"
+}
+
+# Get human-readable risk factors for a task
+# Usage: get_task_risk_factors <prd_path> <task_id>
+# Returns: comma-separated list of factors
+get_task_risk_factors() {
+  local prd_path="$1"
+  local task_id="$2"
+  local factors=""
+
+  local task_json=$(jq --arg id "$task_id" '.tasks[] | select(.id == $id)' "$prd_path")
+  local title=$(echo "$task_json" | jq -r '.title // ""')
+  local title_lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+  local complexity=$(echo "$task_json" | jq -r '.complexity // "auto"')
+  local deps_count=$(echo "$task_json" | jq '.dependsOn | length // 0')
+  local verification=$(echo "$task_json" | jq '.verification // []')
+
+  # Auth/security
+  if echo "$title_lower" | grep -qiE '(auth|password|token|jwt|oauth|credential|login|session|permission|access.control|secure|encrypt)'; then
+    factors="${factors}authentication code, "
+  fi
+
+  # Payment
+  if echo "$title_lower" | grep -qiE '(payment|billing|stripe|transaction|checkout|refund|subscription|pricing|invoice|charge)'; then
+    factors="${factors}payment processing, "
+  fi
+
+  # External
+  if echo "$title_lower" | grep -qiE '(api|webhook|third.party|external|integrat|sdk|sso|connect)'; then
+    factors="${factors}external integration, "
+  fi
+
+  # Data
+  if echo "$title_lower" | grep -qiE '(migrat|delete|drop|database|schema|backup|restore|seed|purge|truncate)'; then
+    factors="${factors}data operation, "
+  fi
+
+  # Missing verification
+  local verify_len=$(echo "$verification" | jq 'length')
+  if [ "$verify_len" -eq 0 ]; then
+    factors="${factors}no verification, "
+  else
+    # Check for grep-only
+    local has_execution=false
+    local i=0
+    while [ $i -lt "$verify_len" ]; do
+      local item=$(echo "$verification" | jq ".[$i]")
+      local item_type=$(echo "$item" | jq -r 'type')
+      local cmd=""
+      if [ "$item_type" == "string" ]; then
+        cmd=$(echo "$item" | jq -r '.')
+      else
+        cmd=$(echo "$item" | jq -r '.cmd // ""')
+      fi
+      if ! echo "$cmd" | grep -qE '^[[:space:]]*(grep|egrep|fgrep|test|stat|\[|ls[[:space:]])'; then
+        has_execution=true
+        break
+      fi
+      i=$((i + 1))
+    done
+    if [ "$has_execution" == "false" ]; then
+      factors="${factors}pattern-only verification, "
+    fi
+  fi
+
+  # Complexity
+  if [ "$complexity" == "senior" ]; then
+    factors="${factors}senior complexity, "
+  elif [ "$complexity" == "auto" ]; then
+    factors="${factors}auto complexity, "
+  fi
+
+  # High deps
+  if [ "$deps_count" -gt 3 ]; then
+    factors="${factors}high dependencies, "
+  fi
+
+  # Trim trailing comma and space
+  echo "$factors" | sed 's/, $//'
+}
+
+# Calculate aggregate PRD risk score
+# Usage: calculate_prd_risk <prd_path>
+# Returns: total risk score
+calculate_prd_risk() {
+  local prd_path="$1"
+  local total=0
+
+  local all_ids=$(jq -r '.tasks[].id' "$prd_path")
+  for task_id in $all_ids; do
+    local task_score=$(calculate_task_risk "$prd_path" "$task_id")
+    total=$((total + task_score))
+  done
+
+  echo "$total"
+}
+
+# Get risk level label from score
+# Usage: get_risk_level <score>
+# Returns: LOW, MEDIUM, HIGH, or CRITICAL
+get_risk_level() {
+  local score="$1"
+  if [ "$score" -le 5 ]; then
+    echo "LOW"
+  elif [ "$score" -le 12 ]; then
+    echo "MEDIUM"
+  elif [ "$score" -le 20 ]; then
+    echo "HIGH"
+  else
+    echo "CRITICAL"
+  fi
+}
+
+# Get flagged tasks (tasks with risk score > 0)
+# Usage: get_flagged_tasks <prd_path>
+# Returns: space-separated list of task IDs with score > 0
+get_flagged_tasks() {
+  local prd_path="$1"
+  local flagged=""
+
+  local all_ids=$(jq -r '.tasks[].id' "$prd_path")
+  for task_id in $all_ids; do
+    local task_score=$(calculate_task_risk "$prd_path" "$task_id")
+    if [ "$task_score" -gt 0 ]; then
+      flagged="$flagged $task_id"
+    fi
+  done
+
+  echo "$flagged" | xargs
+}
+
+# Analyze historical escalation patterns from state files
+# Usage: analyze_historical_escalations [prd_path]
+# Returns: JSON with escalation patterns
+analyze_historical_escalations() {
+  local target_dir="${1:-brigade/tasks}"
+  local state_files=$(find "$target_dir" -name "*.state.json" 2>/dev/null)
+
+  if [ -z "$state_files" ]; then
+    echo '{"escalations":[],"patterns":{}}'
+    return
+  fi
+
+  local auth_escalations=0
+  local payment_escalations=0
+  local integration_escalations=0
+  local data_escalations=0
+  local other_escalations=0
+
+  for state_file in $state_files; do
+    [ ! -f "$state_file" ] && continue
+
+    # Get associated PRD (same name without .state)
+    local prd_file="${state_file%.state.json}.json"
+    [ ! -f "$prd_file" ] && continue
+
+    # Get escalations from state
+    local escalations=$(jq -r '.escalations // {} | to_entries[] | .key' "$state_file" 2>/dev/null)
+    for task_id in $escalations; do
+      local title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title // ""' "$prd_file" 2>/dev/null)
+      local title_lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+
+      if echo "$title_lower" | grep -qE '\b(auth|password|token|jwt|oauth|credential|login|session)\b'; then
+        auth_escalations=$((auth_escalations + 1))
+      elif echo "$title_lower" | grep -qE '\b(payment|billing|stripe|transaction|checkout)\b'; then
+        payment_escalations=$((payment_escalations + 1))
+      elif echo "$title_lower" | grep -qE '\b(api|webhook|third-party|external|integration|sdk)\b'; then
+        integration_escalations=$((integration_escalations + 1))
+      elif echo "$title_lower" | grep -qE '\b(migration|delete|drop|database|schema)\b'; then
+        data_escalations=$((data_escalations + 1))
+      else
+        other_escalations=$((other_escalations + 1))
+      fi
+    done
+  done
+
+  # Build JSON output
+  jq -n \
+    --argjson auth "$auth_escalations" \
+    --argjson payment "$payment_escalations" \
+    --argjson integration "$integration_escalations" \
+    --argjson data "$data_escalations" \
+    --argjson other "$other_escalations" \
+    '{
+      patterns: {
+        auth: $auth,
+        payment: $payment,
+        integration: $integration,
+        data: $data,
+        other: $other
+      },
+      total: ($auth + $payment + $integration + $data + $other)
+    }'
+}
+
+# Print brief risk summary (for pre-flight display)
+# Usage: print_risk_summary <prd_path>
+print_risk_summary() {
+  local prd_path="$1"
+
+  if [ "$RISK_REPORT_ENABLED" != "true" ]; then
+    return
+  fi
+
+  local total_score=$(calculate_prd_risk "$prd_path")
+  local level=$(get_risk_level "$total_score")
+  local flagged=$(get_flagged_tasks "$prd_path")
+  local flagged_count=$(echo "$flagged" | wc -w | xargs)
+
+  # Color based on level
+  local color="$GREEN"
+  local symbol="✓"
+  case "$level" in
+    MEDIUM) color="$YELLOW"; symbol="⚠" ;;
+    HIGH)   color="$YELLOW"; symbol="⚠" ;;
+    CRITICAL) color="$RED"; symbol="⚠" ;;
+  esac
+
+  echo -e "${color}${symbol} Risk: $level (score: $total_score)${NC}"
+  if [ "$flagged_count" -gt 0 ]; then
+    echo -e "  ${GRAY}Flagged tasks: $flagged${NC}"
+  fi
+
+  # Warn if threshold exceeded
+  if [ -n "$RISK_WARN_THRESHOLD" ]; then
+    case "$RISK_WARN_THRESHOLD" in
+      low)     [ "$level" != "LOW" ] && echo -e "${YELLOW}⚠ Risk level exceeds threshold ($RISK_WARN_THRESHOLD)${NC}" ;;
+      medium)  [[ "$level" == "HIGH" || "$level" == "CRITICAL" ]] && echo -e "${YELLOW}⚠ Risk level exceeds threshold ($RISK_WARN_THRESHOLD)${NC}" ;;
+      high)    [ "$level" == "CRITICAL" ] && echo -e "${YELLOW}⚠ Risk level exceeds threshold ($RISK_WARN_THRESHOLD)${NC}" ;;
+    esac
+  fi
+}
+
 # Scan git-changed files for TODO/FIXME/HACK comments that may indicate incomplete work
 # Returns 0 if no concerning TODOs found, 1 if found (sets LAST_TODO_WARNINGS)
 scan_todos_in_changes() {
@@ -5674,6 +6003,10 @@ $task_id"
   echo -e "${GRAY}Executive Review: $([ "$REVIEW_ENABLED" == "true" ] && echo "ON" || echo "OFF")${NC}"
   echo -e "${GRAY}Knowledge Sharing: $([ "$KNOWLEDGE_SHARING" == "true" ] && echo "ON" || echo "OFF")${NC}"
   echo -e "${GRAY}Parallel Workers: $([ "$MAX_PARALLEL" -gt 1 ] && echo "$MAX_PARALLEL" || echo "OFF")${NC}"
+
+  # Show risk summary if enabled
+  print_risk_summary "$prd_path"
+
   echo ""
 
   local service_start=$(date +%s)
@@ -6739,6 +7072,169 @@ cmd_cost() {
   fi
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# RISK ASSESSMENT COMMAND
+# ═══════════════════════════════════════════════════════════════════════════════
+
+cmd_risk() {
+  local include_history=false
+  local prd_path=""
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --history|-h)
+        include_history=true
+        shift
+        ;;
+      *)
+        if [ -z "$prd_path" ]; then
+          prd_path="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  # Default to latest PRD
+  if [ -z "$prd_path" ]; then
+    prd_path=$(find_active_prd)
+    if [ -z "$prd_path" ]; then
+      prd_path="brigade/tasks/latest.json"
+    fi
+  fi
+
+  # Validate PRD exists
+  if [ ! -f "$prd_path" ]; then
+    echo -e "${RED}PRD not found: $prd_path${NC}"
+    exit 1
+  fi
+
+  local feature_name=$(jq -r '.featureName // "Unknown"' "$prd_path")
+  local prd_prefix=$(get_prd_prefix "$prd_path")
+  local total_score=$(calculate_prd_risk "$prd_path")
+  local level=$(get_risk_level "$total_score")
+
+  # Color based on level
+  local level_color="$GREEN"
+  case "$level" in
+    MEDIUM) level_color="$YELLOW" ;;
+    HIGH) level_color="$YELLOW" ;;
+    CRITICAL) level_color="$RED" ;;
+  esac
+
+  echo ""
+  echo -e "${BOLD}Risk Assessment: $prd_prefix${NC}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo -e "Feature: $feature_name"
+  echo ""
+  echo -e "Overall Risk: ${level_color}$level${NC} (score: $total_score)"
+  echo ""
+  echo -e "${BOLD}Task Risk Breakdown:${NC}"
+  echo ""
+
+  # Header
+  printf "  ${GRAY}%-10s %-45s %5s  %-s${NC}\n" "Task" "Title" "Score" "Factors"
+  printf "  ${GRAY}%-10s %-45s %5s  %-s${NC}\n" "────" "─────" "─────" "───────"
+
+  # Task rows
+  local all_ids=$(jq -r '.tasks[].id' "$prd_path")
+  local flagged_tasks=""
+
+  for task_id in $all_ids; do
+    local title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title // ""' "$prd_path")
+    local task_score=$(calculate_task_risk "$prd_path" "$task_id")
+    local factors=$(get_task_risk_factors "$prd_path" "$task_id")
+
+    # Truncate title if too long
+    if [ ${#title} -gt 42 ]; then
+      title="${title:0:39}..."
+    fi
+
+    # Color high-risk tasks
+    local score_color=""
+    if [ "$task_score" -ge 5 ]; then
+      score_color="$YELLOW"
+      flagged_tasks="$flagged_tasks $task_id"
+    elif [ "$task_score" -ge 3 ]; then
+      score_color="$YELLOW"
+      flagged_tasks="$flagged_tasks $task_id"
+    fi
+
+    if [ -n "$score_color" ]; then
+      printf "  ${score_color}%-10s %-45s %5s${NC}  %s\n" "$task_id" "$title" "$task_score" "$factors"
+    else
+      printf "  %-10s %-45s %5s  %s\n" "$task_id" "$title" "$task_score" "$factors"
+    fi
+  done
+
+  # Flagged tasks detail
+  flagged_tasks=$(echo "$flagged_tasks" | xargs)
+  if [ -n "$flagged_tasks" ]; then
+    echo ""
+    echo -e "${BOLD}Flagged Tasks (require attention):${NC}"
+    for task_id in $flagged_tasks; do
+      local title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title // ""' "$prd_path")
+      local factors=$(get_task_risk_factors "$prd_path" "$task_id")
+      echo -e "  ${YELLOW}⚠ $task_id: $title${NC}"
+      # Print each factor on its own line
+      IFS=', ' read -ra factor_array <<< "$factors"
+      for factor in "${factor_array[@]}"; do
+        [ -n "$factor" ] && echo -e "    ${GRAY}• $factor${NC}"
+      done
+    done
+  fi
+
+  # Historical analysis
+  if [ "$include_history" == "true" ]; then
+    echo ""
+    echo -e "${BOLD}Historical Escalation Patterns:${NC}"
+    local prd_dir=$(dirname "$prd_path")
+    local history=$(analyze_historical_escalations "$prd_dir")
+    local total_esc=$(echo "$history" | jq '.total')
+
+    if [ "$total_esc" -eq 0 ]; then
+      echo -e "  ${GRAY}No historical escalation data available.${NC}"
+    else
+      local auth_esc=$(echo "$history" | jq '.patterns.auth')
+      local payment_esc=$(echo "$history" | jq '.patterns.payment')
+      local integration_esc=$(echo "$history" | jq '.patterns.integration')
+      local data_esc=$(echo "$history" | jq '.patterns.data')
+      local other_esc=$(echo "$history" | jq '.patterns.other')
+
+      echo -e "  Total escalations: $total_esc"
+      [ "$auth_esc" -gt 0 ] && echo -e "  ${YELLOW}⚠ Auth tasks: $auth_esc escalations${NC}"
+      [ "$payment_esc" -gt 0 ] && echo -e "  ${YELLOW}⚠ Payment tasks: $payment_esc escalations${NC}"
+      [ "$integration_esc" -gt 0 ] && echo -e "  ${YELLOW}⚠ Integration tasks: $integration_esc escalations${NC}"
+      [ "$data_esc" -gt 0 ] && echo -e "  ${YELLOW}⚠ Data tasks: $data_esc escalations${NC}"
+      [ "$other_esc" -gt 0 ] && echo -e "  ${GRAY}Other: $other_esc escalations${NC}"
+    fi
+  fi
+
+  # Recommendations
+  echo ""
+  echo -e "${BOLD}Recommendations:${NC}"
+  case "$level" in
+    LOW)
+      echo -e "  ${GREEN}✓ Low risk. Straightforward execution expected.${NC}"
+      ;;
+    MEDIUM)
+      echo -e "  ${YELLOW}⚠ Some complexity detected.${NC}"
+      echo -e "  ${GRAY}Consider: monitoring flagged tasks during execution.${NC}"
+      ;;
+    HIGH)
+      echo -e "  ${YELLOW}⚠ Significant complexity detected.${NC}"
+      echo -e "  ${GRAY}Consider: review flagged tasks, ensure integration tests.${NC}"
+      ;;
+    CRITICAL)
+      echo -e "  ${RED}⚠ Complex PRD with multiple risk factors.${NC}"
+      echo -e "  ${GRAY}Recommend: attended execution, consider breaking into smaller PRDs.${NC}"
+      ;;
+  esac
+
+  echo ""
+}
+
 # Check if codebase map is stale (too many commits behind HEAD)
 # Returns: 0 = fresh, 1 = stale, 2 = no map exists
 # Sets MAP_COMMITS_BEHIND to the number of commits behind
@@ -7482,6 +7978,9 @@ main() {
       ;;
     "cost")
       cmd_cost "$@"
+      ;;
+    "risk")
+      cmd_risk "$@"
       ;;
     "map")
       cmd_map "$@"
