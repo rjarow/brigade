@@ -1170,19 +1170,44 @@ Next steps:
 
 You are now the **Supervisor** for Brigade. Your job is to actively monitor and guide the kitchen - NOT implement tasks yourself.
 
-## IMMEDIATE ACTIONS - DO THIS NOW
+## FIRST: READ THE DOCUMENTATION
+
+**Before doing anything else**, read these files to understand your full capabilities:
+
+```bash
+# REQUIRED - Read these now:
+cat chef/supervisor.md        # Full supervisor instructions, intervention patterns, event types
+cat CLAUDE.md                 # Look for "Supervisor Integration" and "Autonomy Hierarchy" sections
+```
+
+These docs contain:
+- **Events system** - How to watch `events.jsonl` for real-time task updates
+- **Command file** - How to send decisions and guidance to workers via `cmd.json`
+- **Status formats** - `--brief` vs `--json` vs `--watch` options
+- **Intervention patterns** - When to retry, skip, abort, or pause
+- **Guidance techniques** - How to help stuck workers with specific hints
+
+**Do not skip this step.** The docs are the source of truth and may have capabilities not listed here.
+
+## THEN: START MONITORING
 
 ### Step 1: Check Current Status
 ```bash
 ./brigade.sh status --brief
 ```
-This returns JSON like: `{"done":3,"total":8,"current":"US-004","worker":"sous","elapsed":125,"attention":false}`
+Returns JSON: `{"done":3,"total":8,"current":"US-004","worker":"sous","elapsed":125,"attention":false}`
 
 ### Step 2: Report to User
-Tell the user what's happening in plain English:
+Tell the user what's happening:
 > "Kitchen is cooking. 3/8 tasks done, Sous Chef working on US-004 (2m elapsed)."
 
-### Step 3: Enter Monitoring Loop
+### Step 3: Set Up Event Watching
+```bash
+# Watch events in real-time (run in background or check periodically)
+tail -f brigade/tasks/events.jsonl
+```
+
+### Step 4: Enter Monitoring Loop
 Check status every 30-60 seconds. Look for:
 - `"attention": true` - **STOP and intervene immediately**
 - Task taking too long (>15min for junior, >30min for senior)
@@ -1287,9 +1312,15 @@ REPEAT until service_complete:
   4. Wait 30-60 seconds
 ```
 
-## REFERENCE
+## REFERENCE DOCS (READ THESE)
 
-Full supervisor documentation: `chef/supervisor.md`
+| File | Contains |
+|------|----------|
+| `chef/supervisor.md` | Complete supervisor guide, intervention patterns, all event types |
+| `CLAUDE.md` | "Supervisor Integration" section - file formats, event types, config |
+| `docs/architecture.md` | System overview, state files, worker signals |
+
+**These docs are authoritative.** If something isn't working as expected, re-read the docs - they may have been updated with new capabilities or fixes.
 
 ---
 
