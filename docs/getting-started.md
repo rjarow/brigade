@@ -28,8 +28,29 @@ git init
 # Add Brigade
 git clone https://github.com/yourusername/brigade.git
 
+# Run the setup wizard (recommended for first-timers)
+./brigade/brigade.sh init
+
+# Or try a demo to see how it works
+./brigade/brigade.sh demo
+
 # Start planning - Brigade will ask about language, framework, everything
 ./brigade/brigade.sh plan "Build a CLI tool that does X"
+```
+
+**What you'll see:**
+```
+🍳 Welcome to Brigade Kitchen Setup!
+
+Let's get your kitchen ready for cooking.
+
+Step 1: Checking for AI tools...
+  ✓ Claude CLI found
+
+Step 2: Creating configuration...
+  ✓ Created brigade.config
+
+🍳 Kitchen is ready to cook!
 ```
 
 That's it. No config file needed. Brigade uses Claude for all workers by default.
@@ -272,13 +293,15 @@ Claude: Starting in walkaway mode. Brigade will handle decisions
 
 | Command | What It Does |
 |---------|--------------|
-| `/brigade` | Show all options |
+| `/brigade` | Show options (or welcome for new users) |
+| `/brigade init` | Guided setup wizard |
+| `/brigade demo` | Try a demo in dry-run mode |
 | `/brigade plan "X"` | Plan a feature (interview + generate PRD) |
 | `/brigade run` | Execute a PRD |
 | `/brigade status` | Check progress in natural language |
 | `/brigade resume` | Handle failures (retry/skip/investigate) |
-| `/brigade update` | Modify an existing PRD |
-| `/brigade convert` | Convert markdown/text to PRD JSON |
+| `/brigade quick "X"` | Single task without PRD ceremony |
+| `/brigade explore "X"` | Research feasibility |
 
 ### Why This Works
 
@@ -291,6 +314,10 @@ Claude: Starting in walkaway mode. Brigade will handle decisions
 ## Commands Reference
 
 ```bash
+# First-time setup
+./brigade.sh init                # Guided setup wizard
+./brigade.sh demo                # Try a demo (dry-run)
+
 # Plan a feature (Director generates PRD)
 ./brigade.sh plan "Add feature description here"
 

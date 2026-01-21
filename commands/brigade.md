@@ -6,7 +6,9 @@ You are orchestrating Brigade, a multi-model AI task execution framework. This s
 
 | Command | Action |
 |---------|--------|
-| `/brigade` | Show options |
+| `/brigade` | Show options (or first-run welcome) |
+| `/brigade init` | Guided setup wizard for new users |
+| `/brigade demo` | Try Brigade with a demo PRD (dry-run) |
 | `/brigade plan "feature"` | Generate a PRD via interactive interview |
 | `/brigade convert` | Convert markdown/text to PRD JSON |
 | `/brigade update` | Modify an existing PRD |
@@ -21,6 +23,186 @@ You are orchestrating Brigade, a multi-model AI task execution framework. This s
 | `/brigade template [name]` | Generate PRD from template |
 
 Aliases: `build` = `plan`, `service` = `run`, `execute` = `run`
+
+## /brigade (no subcommand)
+
+Detect the project state and show appropriate message:
+
+### 1. Existing Brigade project
+Has `brigade/tasks/` or `brigade.config` → show quick reference:
+
+```
+🍳 Brigade Kitchen - What would you like to do?
+
+  /brigade plan "feature"   - Plan a new feature
+  /brigade run              - Execute a PRD
+  /brigade status           - Check progress
+  /brigade resume           - Continue after failure
+
+  /brigade quick "task"     - Quick single task (no PRD)
+  /brigade explore "idea"   - Research feasibility
+
+Run /brigade help for all commands.
+```
+
+### 2. Existing codebase, new to Brigade
+No `brigade/` but has source files (package.json, go.mod, src/, *.py, etc.) → acknowledge the codebase:
+
+```
+🍳 Welcome to Brigade Kitchen!
+
+I see you have an existing codebase. Let's set up Brigade to help manage it.
+
+  Set up Brigade:
+    /brigade init
+
+  Or jump straight in:
+    /brigade plan "Add user authentication"
+
+  Want to understand the codebase first?
+    ./brigade.sh map
+```
+
+### 3. Greenfield (empty project)
+No `brigade/` and no source files → full welcome:
+
+```
+🍳 Welcome to Brigade Kitchen!
+
+Looks like a fresh start. Let's get cooking!
+
+  Quick start:
+    /brigade plan "Build a REST API for users"
+
+  Or try a demo first:
+    /brigade demo
+
+  Need setup help?
+    /brigade init
+```
+
+**Detection hints:**
+- Source files: `package.json`, `go.mod`, `Cargo.toml`, `requirements.txt`, `*.py`, `*.ts`, `*.go`, `src/`, `lib/`
+- Brigade setup: `brigade/tasks/`, `brigade.config`
+
+---
+
+# /brigade init
+
+Guided setup wizard for new users.
+
+## When to Use
+
+- First time using Brigade
+- Setting up Brigade in a new project
+- Checking that required tools are installed
+
+## Workflow
+
+Run the CLI setup wizard:
+
+```bash
+./brigade.sh init
+```
+
+This will:
+1. Check for AI tools (Claude CLI, OpenCode)
+2. Create `brigade.config` with sensible defaults
+3. Create `brigade/tasks/` directory
+4. Show next steps
+
+## Example
+
+```
+User: /brigade init
+
+Claude: Running setup wizard...
+
+🍳 Welcome to Brigade Kitchen Setup!
+
+Let's get your kitchen ready for cooking.
+
+Step 1: Checking for AI tools...
+  ✓ Claude CLI found
+  ○ OpenCode CLI not found (optional)
+
+Step 2: Creating configuration...
+  ✓ Created brigade.config
+
+Step 3: Setting up directories...
+  ✓ Created brigade/tasks/
+
+🍳 Kitchen is ready to cook!
+
+Next steps:
+  Try a demo:     /brigade demo
+  Plan a feature: /brigade plan "Add user login"
+```
+
+---
+
+# /brigade demo
+
+Try Brigade with a demo PRD in dry-run mode. Shows what would happen without actually executing.
+
+## When to Use
+
+- First time trying Brigade
+- Understanding how the workflow works
+- Testing your setup
+
+## Workflow
+
+```bash
+./brigade.sh demo
+```
+
+This will:
+1. Load the example PRD (User Authentication)
+2. Show the task breakdown with chef assignments
+3. Run in dry-run mode to show the execution plan
+4. Explain how escalation works
+
+## Example
+
+```
+User: /brigade demo
+
+Claude: Running demo...
+
+🍳 Brigade Kitchen Demo
+
+Let's see how Brigade would cook up a feature!
+
+╔═══════════════════════════════════════════════════════════╗
+║  Demo: User Authentication
+╚═══════════════════════════════════════════════════════════╝
+
+📋 Tonight's menu: 5 dishes
+
+  👨‍🍳 US-001: Add User model (Sous Chef)
+  🔪 US-002: Add User model tests (Line Cook)
+  👨‍🍳 US-003: Add login endpoint (Sous Chef)
+  🔪 US-004: Add login CLI flag (Line Cook)
+  🔪 US-005: Add login endpoint tests (Line Cook)
+
+How it works:
+
+  1. 🔪 Line Cook handles simple tasks (tests, CRUD, boilerplate)
+  2. 👨‍🍳 Sous Chef handles complex tasks (architecture, security)
+  3. 👔 Executive Chef reviews work and handles escalations
+
+  If a chef struggles, the task escalates to a more senior chef.
+
+Running in dry-run mode...
+[Shows execution plan without running]
+
+Demo Complete!
+
+Ready to cook for real? Try:
+  Plan a feature:  /brigade plan "your feature idea"
+  Run the example: /brigade run examples/prd-example.json
+```
 
 ---
 

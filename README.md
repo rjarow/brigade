@@ -81,17 +81,29 @@ git init
 # Add Brigade
 git clone https://github.com/yourusername/brigade.git
 
+# First time? Run the setup wizard
+./brigade/brigade.sh init
+
+# Or try a demo first
+./brigade/brigade.sh demo
+
 # Start the interview - Brigade asks about tech stack, requirements, everything
 ./brigade/brigade.sh plan "Build a CLI tool that syncs files to S3"
 
-# Brigade will:
-# 1. Ask what language/framework you want
-# 2. Ask about scope and requirements
-# 3. Generate PRD with setup tasks (project init, test framework) + feature tasks
-# 4. Execute everything autonomously
-
 # Run it
 ./brigade/brigade.sh service brigade/tasks/prd-*.json
+```
+
+**What you'll see:**
+```
+🍳 Firing up the kitchen for: S3 Sync CLI
+📋 Menu: 8 dishes to prepare
+
+🔪 Prepping US-001 - Initialize project structure
+🍽️ US-001 plated! (45s)
+👨‍🍳 Executive Chef approves US-001!
+...
+✅ Order up! 8 dishes served, kitchen clean.
 ```
 
 No config file needed. Brigade uses Claude for all workers by default.
@@ -162,13 +174,15 @@ Claude: [Executes, reports progress]
 
 **Available commands:**
 ```
-/brigade              # Show options
+/brigade              # Show options (or welcome for new users)
+/brigade init         # Guided setup wizard
+/brigade demo         # Try a demo (dry-run)
 /brigade plan "X"     # Plan a feature (interview + PRD)
 /brigade run          # Execute a PRD
 /brigade status       # Check progress
 /brigade resume       # Handle failures
-/brigade update       # Modify existing PRD
-/brigade convert      # Convert text to PRD JSON
+/brigade quick "X"    # Single task without PRD ceremony
+/brigade explore "X"  # Research feasibility
 ```
 
 **Why this works:**
@@ -230,6 +244,10 @@ MAX_PARALLEL=3
 ## Commands
 
 ```bash
+# First-time setup
+./brigade.sh init                # Guided setup wizard
+./brigade.sh demo                # Try a demo (dry-run)
+
 # Plan a feature (Director generates PRD)
 ./brigade.sh plan "Add feature description here"
 
