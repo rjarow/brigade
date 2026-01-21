@@ -1,459 +1,137 @@
 # How Brigade Works
 
-Brigade is a multi-model AI orchestration framework that routes tasks to different AI models based on complexity, with automatic escalation, executive review, and state tracking.
+The kitchen runs itself. Here's what's happening behind the scenes.
 
-## Philosophy: Minimal Owner Disruption
-
-The **Owner** (human user) should be minimally interrupted:
-
-| Principle | What It Means |
-|-----------|---------------|
-| **Interview once** | Director asks thorough questions upfront |
-| **Autonomous execution** | Team works without bothering the owner |
-| **Internal escalation** | Worker failures escalate within the team, not to owner |
-| **Owner escalation only when necessary** | Scope changes, missing access, blocking decisions |
-
-### When the Owner Gets Interrupted
-
-**YES - Escalate to Owner:**
-- Scope needs to increase beyond what was agreed
-- Missing credentials or access
-- Fundamental blockers requiring business decisions
-- Multiple valid approaches where owner preference matters
-
-**NO - Handle Internally:**
-- Technical implementation details
-- Which worker handles what
-- Code patterns (analyze and match)
-- Task ordering and dependencies
-- Worker failures (escalate Line Cook → Sous Chef)
-
-## The Kitchen Metaphor
-
-Brigade uses kitchen terminology because the workflow mirrors a professional kitchen:
-
-| Kitchen | Brigade | Description |
-|---------|---------|-------------|
-| Executive Chef | Opus | Plans features, reviews work, makes judgment calls |
-| Sous Chef | Sonnet | Handles complex dishes (tasks) |
-| Line Cook | GLM/local | Handles routine prep work |
-| Ticket | Task | Individual unit of work |
-| The Pass | Review | Quality check before completion |
-| Service | Full run | Complete execution of all tasks |
-| 86'd | Blocked | Task cannot be completed |
-| Fire | Start | Begin working on a task |
-| Escalate | Promote | Move task to higher tier |
-
-## Complete Flow
+## The Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     1. PLANNING PHASE                           │
-│                     (Executive Chef / Opus)                     │
-│                                                                 │
-│  User Request ──► Interview ──► Codebase Analysis ──► PRD      │
-│                                                                 │
-│  ./brigade.sh plan "Add user authentication"                   │
-│  or: /brigade-generate-prd Add user authentication                     │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     2. EXECUTION PHASE                          │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ For each task (in dependency order):                      │  │
-│  │                                                           │  │
-│  │              ┌───────────────┐                            │  │
-│  │              │ Pre-flight    │ Run tests first - skip if  │  │
-│  │              │ Check         │ already passing            │  │
-│  │              └───────┬───────┘                            │  │
-│  │                      ▼                                    │  │
-│  │  ┌─────────────┐  escalate   ┌─────────────┐  escalate   │  │
-│  │  │ LINE COOK   │───────────► │ SOUS CHEF   │───────────► │  │
-│  │  │ (junior)    │ N fails or  │ (senior)    │ N fails or  │  │
-│  │  │             │ timeout     │             │ timeout     │  │
-│  │  └──────┬──────┘ or blocked  └──────┬──────┘ or blocked  │  │
-│  │         │                           │                     │  │
-│  │         │    ┌─────────────┐        │                     │  │
-│  │         │    │ EXEC CHEF   │◄───────┘                     │  │
-│  │         │    │ (rare)      │                              │  │
-│  │         │    └──────┬──────┘                              │  │
-│  │         └───────────┼───────────────────────────┘         │  │
-│  │                     ▼                                     │  │
-│  │              ┌───────────────┐                            │  │
-│  │              │ Run Tests     │ (if TEST_CMD configured)   │  │
-│  │              └───────┬───────┘                            │  │
-│  │                      ▼                                    │  │
-│  │              ┌───────────────┐                            │  │
-│  │              │ EXEC REVIEW   │ (if REVIEW_ENABLED)        │  │
-│  │              │ (Opus)        │                            │  │
-│  │              └───────┬───────┘                            │  │
-│  │                      ▼                                    │  │
-│  │              ┌───────────────┐                            │  │
-│  │              │ Mark Complete │                            │  │
-│  │              └───────────────┘                            │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+You: "Add user authentication"
+          ↓
+   ┌──────────────────────────┐
+   │  PLANNING (Executive Chef) │
+   │  Interview → Analyze → PRD │
+   └────────────┬─────────────┘
+                ↓
+   ┌──────────────────────────┐
+   │  EXECUTION (per task)     │
+   │                           │
+   │  Line Cook tries it       │
+   │       ↓ (stuck?)          │
+   │  Sous Chef takes over     │
+   │       ↓ (still stuck?)    │
+   │  Executive Chef steps in  │
+   │       ↓                   │
+   │  Tests run → Review       │
+   └────────────┬─────────────┘
+                ↓
+         ✅ Order up!
 ```
 
-## Phase 1: Planning
+## Planning Phase
 
-When you run `./brigade.sh plan "..."` or use `/brigade-generate-prd`:
+When you run `./brigade.sh plan "..."`:
 
-### 1.1 Interview
+1. **Interview** - Executive Chef asks clarifying questions upfront
+2. **Analysis** - Explores your codebase (structure, patterns, stack)
+3. **PRD** - Generates tasks with acceptance criteria and dependencies
 
-The Executive Chef (Opus) asks clarifying questions:
+Each task gets:
+- Clear scope and acceptance criteria
+- Complexity assignment (junior/senior)
+- Dependencies on other tasks
+- Verification commands
 
-- What's the scope of this feature?
-- Are there specific requirements or constraints?
-- Any preferred approaches or patterns to follow?
-- What should be prioritized?
+## Execution Phase
 
-This ensures the generated PRD matches your actual intent.
+### Task Routing
 
-### 1.2 Codebase Analysis
+| Complexity | Who Cooks | Best For |
+|------------|-----------|----------|
+| `junior` | Line Cook | Tests, CRUD, boilerplate |
+| `senior` | Sous Chef | Architecture, security, judgment calls |
+| `auto` | Kitchen decides | Analyzes task to pick |
 
-The Director explores your project:
+### Automatic Escalation
 
-- **Structure**: Where do models go? Controllers? Tests?
-- **Patterns**: How is error handling done? What's the naming convention?
-- **Stack**: What frameworks and libraries are in use?
-- **Tests**: What testing patterns exist?
-
-This ensures tasks fit your existing codebase.
-
-### 1.3 PRD Generation
-
-The Director creates a structured PRD:
-
-```json
-{
-  "featureName": "User Authentication",
-  "tasks": [
-    {
-      "id": "US-001",
-      "title": "Add User model",
-      "complexity": "senior",    // Architectural decision
-      "acceptanceCriteria": [
-        "User model has id, email, password_hash fields",
-        "Unit tests for validation logic"
-      ],
-      "dependsOn": []
-    },
-    {
-      "id": "US-002",
-      "title": "Add User model tests",
-      "complexity": "junior",    // Follows patterns
-      "acceptanceCriteria": [
-        "Test user creation with valid data",
-        "Test email validation rejects invalid formats"
-      ],
-      "dependsOn": ["US-001"]
-    }
-  ]
-}
-```
-
-Tasks are:
-- Atomic and well-scoped
-- Properly assigned complexity
-- Ordered by dependencies
-- Have specific acceptance criteria
-- **Include test requirements** (both in acceptance criteria AND as dedicated test tasks)
-
-## Phase 2: Execution
-
-### 2.1 Task Routing
-
-Each task is routed based on complexity:
-
-| Complexity | Worker | Characteristics |
-|------------|--------|-----------------|
-| `junior` | Line Cook (GLM) | Clear requirements, existing patterns |
-| `senior` | Sous Chef (Sonnet) | Judgment calls, architecture, security |
-| `auto` | Heuristics | Brigade decides based on task |
-
-### 2.2 Firing a Ticket
-
-When a task is fired:
-
-1. Worker receives:
-   - Chef prompt (`chef/sous.md` or `chef/line.md`)
-   - Task details (title, description, acceptance criteria)
-   - Verification commands (if defined)
-   - Relevant learnings from previous tasks
-   - Any feedback from failed review/verification attempts
-
-2. Worker implements the task
-
-3. Worker signals completion:
-   - `<promise>COMPLETE</promise>` - Task done
-   - `<promise>BLOCKED</promise>` - Cannot proceed
-
-**Important**: Each worker starts with **fresh context**. There's no conversation history from previous tasks - only explicit knowledge sharing via learnings.
-
-### 2.2.1 Context Isolation
-
-Why fresh context matters:
-
-| Problem | How Brigade Solves It |
-|---------|----------------------|
-| Context overflow | Each task gets full context window |
-| Confusion from prior work | No stale information bleeds through |
-| Hallucinations | Workers can't reference non-existent prior "conversation" |
-| Cost accumulation | Only relevant learnings included, not full history |
-
-Knowledge is shared explicitly:
-- `<learning>...</learning>` tags add to shared learnings file
-- Learnings are searched by keyword relevance for each new task
-- Only matched learnings are included in the prompt
-
-### 2.3 Automatic Escalation
-
-Brigade has a three-tier escalation system. All thresholds are configurable (defaults shown):
-
-**Tier 1: Line Cook → Sous Chef**
-```
-Line Cook attempts task
-         ↓ (after 3 fails OR 15m timeout OR BLOCKED signal)
-    ESCALATION
-         ↓
-Sous Chef takes over
-```
-
-**Tier 2: Sous Chef → Executive Chef** (rare)
-```
-Sous Chef attempts task
-         ↓ (after 5 fails OR 30m timeout OR BLOCKED signal)
-    ESCALATION
-         ↓
-Executive Chef takes over
-```
-
-Escalation also triggers immediately on BLOCKED signal:
-```
-Worker: <promise>BLOCKED</promise>
-         ↓
-    IMMEDIATE ESCALATION to next tier
-```
-
-Configuration:
-```bash
-# Iteration-based escalation
-ESCALATION_ENABLED=true
-ESCALATION_AFTER=3                 # Line Cook → Sous Chef after N fails
-ESCALATION_TO_EXEC=true            # Enable Sous Chef → Executive Chef
-ESCALATION_TO_EXEC_AFTER=5         # Sous Chef → Exec Chef after N fails
-
-# Time-based escalation (independent of iterations)
-TASK_TIMEOUT_JUNIOR=900            # 15 minutes for Line Cook
-TASK_TIMEOUT_SENIOR=1800           # 30 minutes for Sous Chef
-TASK_TIMEOUT_EXECUTIVE=3600        # 60 minutes for Executive Chef
-```
-
-Timer resets when a task escalates to a new tier.
-
-### 2.4 Verification Commands
-
-If the task has a `verification` array in the PRD:
+Workers escalate within the team, not to you:
 
 ```
-Task signals COMPLETE
-         ↓
- Run verification commands
-         ↓
-   ┌─────┴─────┐
-   │           │
-All Pass    Any Fail
-   │           │
-   ▼           ▼
-Continue    Iterate (with feedback)
+Line Cook fails 3x (or times out, or says BLOCKED)
+    → Sous Chef takes over
+
+Sous Chef fails 5x (or times out, or says BLOCKED)
+    → Executive Chef steps in
 ```
 
-Verification commands are simple shell commands that must return exit code 0:
-- `grep -q 'pattern' file.ts` - Check for expected code patterns
-- `npm test -- --grep 'specific'` - Run targeted tests
+Thresholds are configurable. Timer resets when escalating.
 
-Workers see these commands in their prompt and can run them before signaling COMPLETE.
+### Fresh Context
 
-### 2.5 Test Verification
+Each task starts clean - no conversation history bleeding through. Knowledge is shared explicitly via `<learning>` tags that get stored and retrieved for relevant future tasks.
 
-If `TEST_CMD` is configured:
+### Completion Signals
 
-```
-Task signals COMPLETE
-         ↓
-    Run tests
-         ↓
-   ┌─────┴─────┐
-   │           │
- Pass        Fail
-   │           │
-   ▼           ▼
-Continue    Iterate
-```
+Workers signal status with special tags:
 
-This ensures the task actually works, not just that the AI thinks it does.
+| Signal | Meaning |
+|--------|---------|
+| `COMPLETE` | Done, run tests and review |
+| `BLOCKED` | Can't proceed, escalate me |
+| `ALREADY_DONE` | Prior task did this, skip tests |
+| `ABSORBED_BY:US-XXX` | Another task covered this |
 
-### 2.6 Executive Review
+### Verification
 
-If `REVIEW_ENABLED=true`:
+If the PRD has verification commands, they run after `COMPLETE`:
+- All pass → continue to review
+- Any fail → worker iterates with feedback
 
-After a task completes (and tests pass), the Executive Chef reviews:
+If `TEST_CMD` is configured, tests run the same way.
 
-1. Were all acceptance criteria met?
-2. Does the code follow project patterns?
-3. Are there obvious bugs or issues?
+### Executive Review
 
-```
-Task + Tests Pass
-         ↓
- Executive Review
-         ↓
-   ┌─────┴─────┐
-   │           │
- PASS        FAIL
-   │           │
-   ▼           ▼
-Complete    Iterate
-```
+If `REVIEW_ENABLED=true`, Executive Chef reviews completed work:
+- Were acceptance criteria met?
+- Does it follow project patterns?
+- Any obvious issues?
 
-Configuration:
-```bash
-REVIEW_ENABLED=true
-REVIEW_JUNIOR_ONLY=true  # Only review Line Cook work
-```
+Failed review → worker iterates with feedback.
 
 ## State Management
 
-Brigade tracks state in per-PRD state files. Each PRD gets its own state file:
-- `prd-feature.json` → `prd-feature.state.json`
+Each PRD gets its own state file: `prd-feature.json` → `prd-feature.state.json`
 
-Example state file:
+Contains:
+- Session timing
+- Task history (who did what, when)
+- Escalations and reviews
+- Current task (for resume)
 
-```json
-{
-  "sessionId": "1705512345-1234",
-  "startedAt": "2025-01-17T10:00:00Z",
-  "lastStartTime": "2025-01-18T14:30:00Z",
-  "currentTask": null,
-  "taskHistory": [
-    {"taskId": "US-001", "worker": "sous", "status": "completed", "timestamp": "..."},
-    {"taskId": "US-002", "worker": "line", "status": "completed", "timestamp": "..."}
-  ],
-  "escalations": [
-    {"taskId": "US-002", "from": "line", "to": "sous", "reason": "...", "timestamp": "..."}
-  ],
-  "reviews": [
-    {"taskId": "US-002", "result": "PASS", "reason": "All criteria met"}
-  ],
-  "absorptions": [
-    {"taskId": "US-005", "absorbedBy": "US-003", "timestamp": "..."}
-  ],
-  "phaseReviews": [
-    {"completedTasks": 5, "totalTasks": 12, "status": "on_track", "content": "...", "timestamp": "..."}
-  ]
-}
-```
+View with `./brigade.sh status`.
 
-- **startedAt**: When the state file was first created (total time)
-- **lastStartTime**: When the current run started (current run time)
-- **currentTask**: Set during execution, cleared on completion (used by `resume`)
-- **absorptions**: Tasks that were absorbed by other tasks
-- **phaseReviews**: Periodic Executive Chef reviews (when `PHASE_REVIEW_ENABLED=true`)
+## Interrupts
 
-View with:
+Ctrl+C anytime. Brigade:
+1. Kills worker processes gracefully
+2. Cleans up temp files
+3. Saves state for resume
+
+Run `./brigade.sh resume` to pick up where you left off.
+
+## Configuration
+
+See [Configuration](configuration.md) for all the knobs. Key ones:
+
 ```bash
-./brigade.sh status brigade/tasks/prd.json      # Current PRD stats
-./brigade.sh status --all                       # Show all PRD state files
+# In brigade.config
+ESCALATION_AFTER=3           # Line Cook → Sous Chef threshold
+TASK_TIMEOUT_JUNIOR=900      # 15 min before timeout escalation
+REVIEW_ENABLED=true          # Executive Chef reviews work
+QUIET_WORKERS=true           # Spinner instead of conversation output
 ```
 
-Each state file is validated on load - corrupted JSON is backed up and reset.
+## Next Steps
 
-## Routing Logic
-
-### Complexity Levels
-
-Each task can have a `complexity` field:
-
-- **`junior`** or **`line`**: Route to Line Cook
-- **`senior`** or **`sous`**: Route to Sous Chef
-- **`auto`** (default): Use heuristics to decide
-
-### Auto-Routing Heuristics
-
-When complexity is `auto`, Brigade analyzes the task:
-
-**Route to Line Cook if:**
-- Title contains "test", "boilerplate", "simple", "add flag"
-- 3 or fewer acceptance criteria
-- Task follows clear patterns
-
-**Route to Sous Chef if:**
-- Title contains "architecture", "design", "complex", "refactor"
-- 4+ acceptance criteria
-- Task requires judgment calls
-
-## Worker Prompts
-
-Each worker type has a prompt template in `chef/`:
-
-- `chef/executive.md` - Director/reviewer instructions
-- `chef/sous.md` - Senior developer instructions
-- `chef/line.md` - Junior developer instructions
-
-These prompts are prepended to the task details when firing a ticket.
-
-## Completion Signals
-
-Workers signal completion status via special tags:
-
-```
-<promise>COMPLETE</promise>           - Task finished successfully
-<promise>BLOCKED</promise>            - Task cannot proceed (triggers escalation)
-<promise>ALREADY_DONE</promise>       - Task was already completed (skips tests/review)
-<promise>ABSORBED_BY:US-XXX</promise> - Work was done by another task (credits that task)
-```
-
-**ALREADY_DONE** is used when:
-- A prior task already implemented this functionality
-- The acceptance criteria are already satisfied
-- No new code changes are needed
-
-**ABSORBED_BY** is used when:
-- Another specific task did this work as part of its implementation
-- Credits the absorbing task for tracking purposes
-
-Brigade also detects **empty git diffs** - if a worker signals COMPLETE but made no changes, it's automatically treated as ALREADY_DONE.
-
-If no signal is found, Brigade iterates again (up to MAX_ITERATIONS).
-
-## Dependency Management
-
-Tasks can depend on other tasks:
-
-```json
-{
-  "id": "US-003",
-  "dependsOn": ["US-001", "US-002"]
-}
-```
-
-Brigade will not start a task until all dependencies have `passes: true`.
-
-## PRD Persistence
-
-Task completion is saved directly to the PRD JSON file:
-
-```json
-{
-  "id": "US-001",
-  "passes": true  // Updated when task completes
-}
-```
-
-This means:
-- You can stop and resume at any time
-- Progress survives crashes
-- You can manually mark tasks complete/incomplete
+- **[Configuration](configuration.md)** - Tune the kitchen
+- **[Writing PRDs](writing-prds.md)** - Manual PRD creation
+- **[Troubleshooting](troubleshooting.md)** - When things go wrong
