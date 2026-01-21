@@ -4721,19 +4721,26 @@ output_status_brief() {
     fi
   fi
 
+  # Count iterations for current task
+  local iteration=0
+  if [ -n "$current" ] && [ -f "$state_path" ]; then
+    iteration=$(jq --arg task "$current" \
+      '[.taskHistory[] | select(.taskId == $task)] | length' "$state_path" 2>/dev/null || echo 0)
+  fi
+
   # Build compact JSON (single line, no pretty-printing)
   if [ "$attention" = "true" ]; then
-    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"attention":true,"reason":"%s"}\n' \
+    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"iteration":%d,"attention":true,"reason":"%s"}\n' \
       "$done" "$total" \
       "$([ -n "$current" ] && echo "\"$current\"" || echo "null")" \
       "$([ -n "$worker" ] && echo "\"$worker\"" || echo "null")" \
-      "$elapsed" "$reason"
+      "$elapsed" "$iteration" "$reason"
   else
-    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"attention":false}\n' \
+    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"iteration":%d,"attention":false}\n' \
       "$done" "$total" \
       "$([ -n "$current" ] && echo "\"$current\"" || echo "null")" \
       "$([ -n "$worker" ] && echo "\"$worker\"" || echo "null")" \
-      "$elapsed"
+      "$elapsed" "$iteration"
   fi
 }
 
@@ -5014,10 +5021,14 @@ cmd_status() {
           local task_title=$(jq -r --arg id "$current_task" '.tasks[] | select(.id == $id) | .title' "$prd_path")
           local worker_name=$(get_worker_name "$worker")
 
+          # Count iterations for this task
+          local iteration_count=$(jq --arg task "$current_task" \
+            '[.taskHistory[] | select(.taskId == $task)] | length' "$state_path")
+
           echo ""
           echo -e "${YELLOW}🔥 CURRENTLY COOKING:${NC}"
           echo -e "   ${BOLD}$current_task${NC}: $task_title"
-          echo -e "   ${GRAY}Worker: $worker_name${NC}"
+          echo -e "   ${GRAY}Worker: $worker_name | Iteration: $iteration_count${NC}"
 
           # Calculate running time if we have a start timestamp
           if [ -n "$started_at" ]; then
@@ -5056,27 +5067,35 @@ cmd_status() {
   echo -e "${BOLD}Tasks:${NC}"
   local current_task_id=""
   local current_worker=""
+  local current_iteration=0
   local absorptions_json="[]"
   local escalations_json="[]"
   local worked_tasks_json="[]"
+  local iterations_json="{}"
   if [ -f "$state_path" ]; then
     current_task_id=$(jq -r '.currentTask // empty' "$state_path")
     absorptions_json=$(jq -c '.absorptions // []' "$state_path")
     escalations_json=$(jq -c '.escalations // []' "$state_path")
     # Get unique task IDs that have been worked on
     worked_tasks_json=$(jq -c '[.taskHistory[].taskId] | unique' "$state_path")
+    # Get iteration counts per task
+    iterations_json=$(jq -c '[.taskHistory[].taskId] | group_by(.) | map({(.[0]): length}) | add // {}' "$state_path")
     # Get current worker from last history entry
     if [ -n "$current_task_id" ]; then
       current_worker=$(jq -r --arg task "$current_task_id" \
         '[.taskHistory[] | select(.taskId == $task)] | last | .worker // "line"' "$state_path")
+      current_iteration=$(jq --arg task "$current_task_id" \
+        '[.taskHistory[] | select(.taskId == $task)] | length' "$state_path")
     fi
   fi
 
-  jq -r --arg current "$current_task_id" --arg current_worker "$current_worker" \
+  jq -r --arg current "$current_task_id" --arg current_worker "$current_worker" --argjson current_iter "$current_iteration" \
       --argjson absorptions "$absorptions_json" --argjson escalations "$escalations_json" \
-      --argjson worked "$worked_tasks_json" '.tasks[] |
+      --argjson worked "$worked_tasks_json" --argjson iterations "$iterations_json" '.tasks[] |
     .id as $id |
     .complexity as $complexity |
+    # Get iteration count for this task
+    ($iterations[$id] // 0) as $iter_count |
     # Check if this task was absorbed
     ($absorptions | map(select(.taskId == $id)) | first // null) as $absorption |
     # Check escalation status - get the highest tier this task reached
@@ -5092,14 +5111,16 @@ cmd_status() {
     (if $last_esc != null then " ⬆" else "" end) as $esc_indicator |
     # Check if task has been worked on (has history)
     ($worked | index($id) != null) as $has_history |
+    # Iteration display (only show if > 1)
+    (if $iter_count > 1 then " (iter \($iter_count))" else "" end) as $iter_display |
     if .passes == true and $absorption != null then
       "  \u001b[32m✓\u001b[0m \(.id): \(.title) \u001b[90m(absorbed by \($absorption.absorbedBy))\u001b[0m"
     elif .passes == true then
-      "  \u001b[32m✓\u001b[0m \(.id): \(.title)"
+      "  \u001b[32m✓\u001b[0m \(.id): \(.title)\(if $iter_count > 1 then " \u001b[90m(\($iter_count) iterations)\u001b[0m" else "" end)"
     elif .id == $current then
-      "  \u001b[33m→\u001b[0m \(.id): \(.title) \u001b[33m[\($current_worker | if . == "line" then "Line Cook" elif . == "sous" then "Sous Chef" elif . == "executive" then "Exec Chef" else . end)]\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
+      "  \u001b[33m→\u001b[0m \(.id): \(.title) \u001b[33m[\($current_worker | if . == "line" then "Line Cook" elif . == "sous" then "Sous Chef" elif . == "executive" then "Exec Chef" else . end) · iter \($current_iter)]\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
     elif $has_history then
-      "  \u001b[36m◐\u001b[0m \(.id): \(.title) \u001b[90m[\($worker_name)] awaiting review\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
+      "  \u001b[36m◐\u001b[0m \(.id): \(.title) \u001b[90m[\($worker_name)] awaiting review\($iter_display)\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
     else
       "  ○ \(.id): \(.title) \u001b[90m[\($worker_name)]\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
     end' "$prd_path"
