@@ -109,6 +109,22 @@ Contains:
 
 View with `./brigade.sh status`.
 
+## Status Symbols
+
+The status display uses these markers:
+
+| Symbol | Meaning |
+|--------|---------|
+| `✓` | Complete and reviewed |
+| `→` | Currently in progress |
+| `◐` | Worked on, awaiting review |
+| `○` | Not started yet |
+| `⬆` | Was escalated to higher tier |
+
+Task display also shows:
+- `[Sous Chef · iter 3]` - Current worker and iteration count
+- `(3 iterations)` - Completed task that took multiple tries
+
 ## Interrupts
 
 Ctrl+C anytime. Brigade:
