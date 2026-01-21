@@ -7177,9 +7177,9 @@ cmd_risk() {
       local title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title // ""' "$prd_path")
       local factors=$(get_task_risk_factors "$prd_path" "$task_id")
       echo -e "  ${YELLOW}⚠ $task_id: $title${NC}"
-      # Print each factor on its own line
-      IFS=', ' read -ra factor_array <<< "$factors"
-      for factor in "${factor_array[@]}"; do
+      # Print each factor on its own line (split on ", ")
+      echo "$factors" | tr ',' '\n' | while read -r factor; do
+        factor=$(echo "$factor" | sed 's/^[[:space:]]*//')
         [ -n "$factor" ] && echo -e "    ${GRAY}• $factor${NC}"
       done
     done
