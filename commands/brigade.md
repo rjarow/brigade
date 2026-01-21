@@ -21,6 +21,7 @@ You are orchestrating Brigade, a multi-model AI task execution framework. This s
 | `/brigade explore "question"` | Research feasibility without generating PRD |
 | `/brigade iterate "tweak"` | Quick tweak on completed PRD |
 | `/brigade template [name]` | Generate PRD from template |
+| `/brigade supervise` | Monitor and guide a running service |
 
 Aliases: `build` = `plan`, `service` = `run`, `execute` = `run`
 
@@ -1124,6 +1125,101 @@ Next steps:
   Validate: ./brigade.sh validate brigade/tasks/prd-products.json
   Execute:  ./brigade.sh service brigade/tasks/prd-products.json
 ```
+
+---
+
+# /brigade supervise
+
+Act as supervisor for a running Brigade service. Monitor progress, intervene when needed, keep things moving.
+
+## When to Use
+
+- Brigade is running with `--walkaway` or in background
+- You want to monitor and guide without implementing yourself
+- User asked you to "watch" or "supervise" the kitchen
+
+## Supervisor Role
+
+You are NOT a worker. You don't implement tasks. You:
+
+1. **Monitor** - Check status periodically
+2. **Intervene** - When Brigade signals it needs help
+3. **Guide** - Give stuck workers hints
+4. **Report** - Keep the user informed
+
+## Setup
+
+Make sure supervisor files are configured in `brigade.config`:
+
+```bash
+SUPERVISOR_STATUS_FILE="brigade/tasks/status.json"
+SUPERVISOR_EVENTS_FILE="brigade/tasks/events.jsonl"
+SUPERVISOR_CMD_FILE="brigade/tasks/cmd.json"
+```
+
+## Monitoring Commands
+
+```bash
+# Quick status (poll every 30-60s)
+./brigade.sh status --brief
+
+# Detailed status
+./brigade.sh status --json
+
+# Watch events in real-time
+tail -f brigade/tasks/events.jsonl
+```
+
+## Intervening
+
+When you see `decision_needed` or `attention` events, write to cmd.json:
+
+```json
+{"decision":"d-123","action":"retry","reason":"Transient error","guidance":"Check the API docs for auth headers"}
+```
+
+### Available Actions
+
+| Action | When to Use |
+|--------|-------------|
+| `retry` | Worth another attempt (add guidance to help) |
+| `skip` | Task is blocked, move on |
+| `abort` | Something fundamentally wrong |
+| `pause` | Need to investigate |
+
+## When to Intervene
+
+**Always intervene:**
+- `attention` events
+- `decision_needed` events
+- Multiple consecutive failures
+- Task running way longer than expected
+
+**Let it run:**
+- Normal task_start / task_complete flow
+- Single escalation (Line Cook → Sous Chef is normal)
+- Brief delays
+
+## Supervisor Loop
+
+```
+1. Check status (./brigade.sh status --brief)
+2. If attention=true, read events, understand issue
+3. Write decision to cmd.json
+4. Wait 30-60s
+5. Repeat until service_complete
+```
+
+## Reporting to User
+
+Keep updates concise:
+- "Kitchen cooking. 3/8 done, Sous Chef on US-004."
+- "Hit snag on US-005. Told worker to check the OpenAPI spec. Retrying."
+- "Done! 8/8 complete. Branch ready."
+
+## Full Instructions
+
+For complete supervisor guidance, read: `chef/supervisor.md`
 
 ---
 
