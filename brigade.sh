@@ -5038,8 +5038,10 @@ cmd_status() {
   fi
   local filled=$((pct / 5))
   local empty=$((20 - filled))
-  local bar=$(printf "█%.0s" $(seq 1 $filled 2>/dev/null) || echo "")
-  local bar_empty=$(printf "░%.0s" $(seq 1 $empty 2>/dev/null) || echo "")
+  local bar=""
+  local bar_empty=""
+  [ "$filled" -gt 0 ] && bar=$(printf "█%.0s" $(seq 1 $filled))
+  [ "$empty" -gt 0 ] && bar_empty=$(printf "░%.0s" $(seq 1 $empty))
 
   echo -e "${BOLD}📊 Progress:${NC} [${GREEN}${bar}${NC}${bar_empty}] ${pct}% ($complete/$total)"
   echo ""
