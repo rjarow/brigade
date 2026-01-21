@@ -491,6 +491,9 @@ print_usage() {
   echo "  init                   Guided setup wizard"
   echo "  demo                   Try a demo (dry-run)"
   echo ""
+  echo "Monitoring:"
+  echo "  supervise              Supervisor mode quick reference"
+  echo ""
   echo "Run './brigade.sh help --all' for the full menu."
 }
 
@@ -519,6 +522,9 @@ print_usage_full() {
   echo "Getting Started:"
   echo "  init                       Guided setup wizard"
   echo "  demo                       Try a demo (dry-run mode)"
+  echo ""
+  echo "Monitoring:"
+  echo "  supervise                  Supervisor mode quick reference"
   echo ""
   echo "Options:"
   echo "  --max-iterations <n>       Max iterations per task (default: 50)"
@@ -8112,6 +8118,50 @@ EOF
   echo ""
 }
 
+cmd_supervise() {
+  local supervisor_md="$SCRIPT_DIR/chef/supervisor.md"
+
+  echo -e "🧑‍🍳 ${BOLD}Supervisor Mode${NC}"
+  echo ""
+
+  if [ -f "$supervisor_md" ]; then
+    echo "Full supervisor instructions: $supervisor_md"
+    echo ""
+  fi
+
+  echo -e "${BOLD}Quick Reference:${NC}"
+  echo ""
+  echo "  Status check:     ./brigade.sh status --brief"
+  echo "  Detailed status:  ./brigade.sh status --json"
+  echo "  Watch events:     tail -f brigade/tasks/events.jsonl"
+  echo ""
+  echo -e "${BOLD}Intervene via cmd.json:${NC}"
+  echo ""
+  echo "  Write to: brigade/tasks/cmd.json"
+  echo ""
+  echo "  Actions:"
+  echo "    retry  - Try again (add 'guidance' field to help worker)"
+  echo "    skip   - Move on to next task"
+  echo "    abort  - Stop everything"
+  echo "    pause  - Stop and wait for investigation"
+  echo ""
+  echo "  Example:"
+  echo '    {"decision":"d-123","action":"retry","guidance":"Check the OpenAPI spec"}'
+  echo ""
+  echo -e "${BOLD}When to intervene:${NC}"
+  echo ""
+  echo "  ✓ 'attention' events - Brigade needs you"
+  echo "  ✓ 'decision_needed' - Waiting for your input"
+  echo "  ✓ Multiple failures on same task"
+  echo "  ✗ Normal task_start/task_complete - let it run"
+  echo "  ✗ Single escalation - that's normal"
+  echo ""
+
+  if [ -f "$supervisor_md" ]; then
+    echo -e "For complete documentation: ${CYAN}cat $supervisor_md${NC}"
+  fi
+}
+
 cmd_template() {
   local template_name="${1:-}"
   local resource_name="${2:-}"
@@ -8315,6 +8365,9 @@ main() {
       ;;
     "demo")
       cmd_demo "$@"
+      ;;
+    "supervise")
+      cmd_supervise "$@"
       ;;
     "help"|"--help"|"-h")
       # Check for --all flag for full help

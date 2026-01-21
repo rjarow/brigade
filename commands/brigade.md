@@ -42,8 +42,9 @@ Has `brigade/tasks/` or `brigade.config` → show quick reference:
 
   /brigade quick "task"     - Quick single task (no PRD)
   /brigade explore "idea"   - Research feasibility
+  /brigade supervise        - Monitor a running service
 
-Run /brigade help for all commands.
+Type /brigade help for all commands.
 ```
 
 ### 2. Existing codebase, new to Brigade
@@ -85,6 +86,43 @@ Looks like a fresh start. Let's get cooking!
 **Detection hints:**
 - Source files: `package.json`, `go.mod`, `Cargo.toml`, `requirements.txt`, `*.py`, `*.ts`, `*.go`, `src/`, `lib/`
 - Brigade setup: `brigade/tasks/`, `brigade.config`
+
+---
+
+# /brigade help
+
+Show all available commands:
+
+```
+🍳 Brigade Kitchen - All Commands
+
+Planning & Execution:
+  /brigade plan "feature"     - Plan a new feature (interview + PRD)
+  /brigade run                - Execute a PRD
+  /brigade quick "task"       - Single task without PRD ceremony
+  /brigade iterate "tweak"    - Quick tweak on completed PRD
+  /brigade template [name]    - Generate PRD from template
+
+Monitoring & Control:
+  /brigade status             - Check progress
+  /brigade resume             - Resume after failure
+  /brigade supervise          - Monitor and guide a running service
+
+PRD Management:
+  /brigade convert            - Convert markdown/text to PRD JSON
+  /brigade update             - Modify an existing PRD
+  /brigade cost               - Show estimated cost breakdown
+
+Research & Setup:
+  /brigade explore "question" - Research feasibility
+  /brigade init               - Guided setup wizard
+  /brigade demo               - Try a demo (dry-run)
+
+Output:
+  /brigade pr                 - Create PR from completed PRD
+
+Bash equivalents: ./brigade.sh help --all
+```
 
 ---
 
