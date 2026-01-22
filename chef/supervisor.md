@@ -93,6 +93,20 @@ Add `guidance` field to help the worker on retry:
 4. **Wait** - Let Brigade process (poll every 30-60s)
 5. **Repeat** until service_complete
 
+## Timeouts and Walkaway Mode
+
+**You have a decision timeout** (default: 300 seconds). When Brigade emits `decision_needed`, it waits for your response in `cmd.json`. If you don't respond in time:
+
+- **With `--walkaway`**: Executive Chef makes the decision autonomously
+- **Without `--walkaway`**: Service pauses/aborts
+
+This means:
+- **Respond promptly** to `decision_needed` events
+- If running with `--walkaway`, you're a safety net - walkaway handles decisions you miss
+- If running without `--walkaway`, you're the only decision-maker - don't go silent
+
+**Best practice**: Run with `--walkaway` so the kitchen keeps moving even if you're slow to respond. Your decisions take priority when you do respond; walkaway is the fallback.
+
 ## Reporting to User
 
 Keep the user informed with concise updates:
