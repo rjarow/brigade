@@ -124,14 +124,13 @@ Supervisor commands are safe and repetitive. To avoid constant permission prompt
     "allow": [
       "Bash(./brigade.sh *)",
       "Bash(cat chef/*)",
-      "Bash(cat CLAUDE.md)",
-      "Bash(cat brigade/*)",
       "Bash(cat docs/*)",
-      "Bash(ls brigade/*)",
-      "Bash(tail * brigade/tasks/*)",
-      "Bash(mkdir -p brigade/*)",
-      "Bash(echo * > brigade/tasks/cmd.json)",
-      "Bash(echo * > brigade/notes/*)"
+      "Bash(cat CLAUDE.md)",
+      "Bash(cat brigade/**)",
+      "Bash(ls brigade/**)",
+      "Bash(tail * brigade/**)",
+      "Bash(mkdir -p brigade/**)",
+      "Bash(echo * > brigade/**)"
     ]
   }
 }
