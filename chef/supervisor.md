@@ -116,29 +116,68 @@ Keep the user informed with concise updates:
 
 ## Reducing Permission Prompts
 
-Supervisor commands are safe and repetitive. To avoid constant permission prompts, add this to your project's `.claude/settings.json`:
+Supervisor commands are safe and repetitive. To avoid constant permission prompts, configure Claude Code permissions.
+
+### Option 1: Global Settings (Recommended)
+
+Works across all projects. Add to `~/.claude/settings.json`:
 
 ```json
 {
   "permissions": {
     "allow": [
       "Bash(./brigade.sh *)",
-      "Bash(cat chef/*)",
-      "Bash(cat docs/*)",
+      "Bash(./brigade/brigade.sh *)",
+      "Bash(* brigade/**)",
       "Bash(cat CLAUDE.md)",
-      "Bash(cat brigade/**)",
-      "Bash(ls brigade/**)",
-      "Bash(tail * brigade/**)",
-      "Bash(mkdir -p brigade/**)",
-      "Bash(echo * > brigade/**)"
+      "Bash(cat codebase-map.md)",
+      "Bash(pgrep *)",
+      "Bash(ps aux*)",
+      "Read(brigade/**)",
+      "Read(CLAUDE.md)",
+      "Read(codebase-map.md)",
+      "Write(brigade/**)",
+      "Edit(brigade/**)"
     ]
   }
 }
 ```
 
-Or copy the template: `cp examples/claude-supervisor-settings.json .claude/settings.json`
+### Option 2: Project-Level Settings
 
-This allows Brigade operations without prompts while keeping other commands gated.
+For project-specific permissions, add to `.claude/settings.json` in the project root:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(./brigade.sh *)",
+      "Bash(* brigade/**)",
+      "Bash(cat CLAUDE.md)",
+      "Bash(pgrep *)",
+      "Bash(ps aux*)",
+      "Read(brigade/**)",
+      "Read(CLAUDE.md)",
+      "Write(brigade/**)",
+      "Edit(brigade/**)"
+    ]
+  }
+}
+```
+
+Or copy the template: `cp brigade/examples/claude-supervisor-settings.json .claude/settings.json`
+
+### What These Permissions Allow
+
+| Permission | Purpose |
+|------------|---------|
+| `Bash(./brigade.sh *)` | Run any Brigade command |
+| `Bash(* brigade/**)` | Commands targeting brigade/ files (cat, tail, echo, etc.) |
+| `Bash(pgrep/ps *)` | Monitor worker processes |
+| `Read/Write/Edit(brigade/**)` | Direct file access to working directory |
+| `Read(CLAUDE.md)` | Access project context |
+
+**Note:** Restart Claude sessions after changing settings for them to take effect.
 
 ## Don't
 

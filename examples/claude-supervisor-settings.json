@@ -2,14 +2,17 @@
   "permissions": {
     "allow": [
       "Bash(./brigade.sh *)",
-      "Bash(cat chef/*)",
-      "Bash(cat docs/*)",
+      "Bash(./brigade/brigade.sh *)",
+      "Bash(* brigade/**)",
       "Bash(cat CLAUDE.md)",
-      "Bash(cat brigade/**)",
-      "Bash(ls brigade/**)",
-      "Bash(tail * brigade/**)",
-      "Bash(mkdir -p brigade/**)",
-      "Bash(echo * > brigade/**)"
+      "Bash(cat codebase-map.md)",
+      "Bash(pgrep *)",
+      "Bash(ps aux*)",
+      "Read(brigade/**)",
+      "Read(CLAUDE.md)",
+      "Read(codebase-map.md)",
+      "Write(brigade/**)",
+      "Edit(brigade/**)"
     ]
   }
 }
