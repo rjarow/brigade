@@ -151,6 +151,11 @@ SUPERVISOR_CMD_POLL_INTERVAL=2
 # Falls back to walkaway mode if timeout expires and WALKAWAY_MODE=true
 SUPERVISOR_CMD_TIMEOUT=300
 
+# Auto-scope supervisor files by PRD prefix (enables safe parallel execution)
+# When true: brigade/tasks/events.jsonl → brigade/tasks/auth-events.jsonl
+# This allows multiple Brigade instances to run different PRDs simultaneously
+SUPERVISOR_PRD_SCOPED=true
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MODULES
 # ═══════════════════════════════════════════════════════════════════════════════

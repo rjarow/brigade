@@ -303,6 +303,7 @@ STATUS_WATCH_INTERVAL=30           # Seconds between status refreshes in watch m
 SUPERVISOR_STATUS_FILE=""          # Write compact status JSON on state changes (empty = disabled)
 SUPERVISOR_EVENTS_FILE=""          # Append-only JSONL event stream (empty = disabled)
 SUPERVISOR_CMD_FILE=""             # Command ingestion file (empty = disabled)
+SUPERVISOR_PRD_SCOPED=true         # Auto-scope supervisor files by PRD (safe for parallel execution)
 SUPERVISOR_CMD_POLL_INTERVAL=2     # Seconds between polls when waiting for command
 SUPERVISOR_CMD_TIMEOUT=300         # Max seconds to wait for supervisor command (0 = wait forever)
 
@@ -974,6 +975,37 @@ format_task_id() {
   local task_id="$2"
   local prefix=$(get_prd_prefix "$prd_path")
   echo "${prefix}/${task_id}"
+}
+
+# Apply PRD-scoping to supervisor files (enables safe parallel execution)
+# Transforms: brigade/tasks/events.jsonl → brigade/tasks/auth-events.jsonl
+init_supervisor_files_for_prd() {
+  local prd_path="$1"
+
+  [ "$SUPERVISOR_PRD_SCOPED" != "true" ] && return 0
+
+  local prefix=$(get_prd_prefix "$prd_path")
+
+  # Scope status file: dir/status.json → dir/prefix-status.json
+  if [ -n "$SUPERVISOR_STATUS_FILE" ]; then
+    local dir=$(dirname "$SUPERVISOR_STATUS_FILE")
+    local base=$(basename "$SUPERVISOR_STATUS_FILE")
+    SUPERVISOR_STATUS_FILE="${dir}/${prefix}-${base}"
+  fi
+
+  # Scope events file: dir/events.jsonl → dir/prefix-events.jsonl
+  if [ -n "$SUPERVISOR_EVENTS_FILE" ]; then
+    local dir=$(dirname "$SUPERVISOR_EVENTS_FILE")
+    local base=$(basename "$SUPERVISOR_EVENTS_FILE")
+    SUPERVISOR_EVENTS_FILE="${dir}/${prefix}-${base}"
+  fi
+
+  # Scope cmd file: dir/cmd.json → dir/prefix-cmd.json
+  if [ -n "$SUPERVISOR_CMD_FILE" ]; then
+    local dir=$(dirname "$SUPERVISOR_CMD_FILE")
+    local base=$(basename "$SUPERVISOR_CMD_FILE")
+    SUPERVISOR_CMD_FILE="${dir}/${prefix}-${base}"
+  fi
 }
 
 # Quick validation for essential PRD structure (called before service)
@@ -5900,6 +5932,9 @@ cmd_service() {
     exit 1
   fi
   echo -e "${GREEN}✓${NC} PRD valid"
+
+  # Initialize PRD-scoped supervisor files (for safe parallel execution)
+  init_supervisor_files_for_prd "$prd_path"
 
   # Validate partial execution filters if any are active
   if has_active_filters; then
