@@ -11,18 +11,49 @@ cleanup_temp_files() {
   for f in "${BRIGADE_TEMP_FILES[@]}"; do
     rm -f "$f" 2>/dev/null
   done
+  # Also clean up PID registry file
+  rm -f "$BRIGADE_PID_REGISTRY" 2>/dev/null
 }
 
 # Track worker process PIDs for cleanup on interrupt
+# Using file-based registry to persist across subshells
 BRIGADE_WORKER_PIDS=()
+BRIGADE_PID_REGISTRY="/tmp/brigade-pids-$$.txt"
+
+# Register a worker PID (persists across subshells)
+register_worker_pid() {
+  local pid="$1"
+  BRIGADE_WORKER_PIDS+=("$pid")
+  echo "$pid" >> "$BRIGADE_PID_REGISTRY"
+}
+
+# Unregister a worker PID
+unregister_worker_pid() {
+  local pid="$1"
+  BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
+  if [ -f "$BRIGADE_PID_REGISTRY" ]; then
+    # Remove the PID from the file (portable sed)
+    local tmp_file=$(mktemp)
+    grep -v "^${pid}$" "$BRIGADE_PID_REGISTRY" > "$tmp_file" 2>/dev/null || true
+    mv "$tmp_file" "$BRIGADE_PID_REGISTRY"
+  fi
+}
+
+# Get all registered PIDs (from file, handles subshell isolation)
+get_registered_pids() {
+  if [ -f "$BRIGADE_PID_REGISTRY" ]; then
+    cat "$BRIGADE_PID_REGISTRY" 2>/dev/null | sort -u
+  fi
+}
 
 cleanup_on_interrupt() {
   echo ""
   echo -e "${YELLOW}Interrupted - cleaning up...${NC}"
 
-  # Kill any tracked worker processes
-  for pid in "${BRIGADE_WORKER_PIDS[@]}"; do
-    if kill -0 "$pid" 2>/dev/null; then
+  # Kill any tracked worker processes (from file registry for subshell safety)
+  local all_pids=$(get_registered_pids)
+  for pid in $all_pids; do
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       echo -e "${GRAY}Killing worker process $pid${NC}"
       # Try graceful kill first, then force
       kill "$pid" 2>/dev/null
@@ -40,8 +71,35 @@ cleanup_on_interrupt() {
     kill -9 $children 2>/dev/null
   fi
 
+  # Clean up PID registry file
+  rm -f "$BRIGADE_PID_REGISTRY"
+
   cleanup_modules
+
+  # Save partial worker output to log if interrupted mid-task
+  if [ -n "$CURRENT_WORKER_LOG" ] && [ -n "$CURRENT_OUTPUT_FILE" ] && [ -f "$CURRENT_OUTPUT_FILE" ]; then
+    {
+      cat "$CURRENT_OUTPUT_FILE"
+      echo ""
+      echo "═══════════════════════════════════════════════════════════"
+      echo "INTERRUPTED: $(date '+%Y-%m-%d %H:%M:%S')"
+      echo "═══════════════════════════════════════════════════════════"
+    } >> "$CURRENT_WORKER_LOG"
+    echo -e "${GRAY}Partial output saved to: $CURRENT_WORKER_LOG${NC}"
+  fi
+
   cleanup_temp_files
+
+  # Release service lock if held
+  if [ -n "$BRIGADE_SERVICE_LOCK_FILE" ] && [ -f "$BRIGADE_SERVICE_LOCK_FILE" ]; then
+    local lock_pid
+    lock_pid=$(cat "$BRIGADE_SERVICE_LOCK_FILE" 2>/dev/null)
+    if [ "$lock_pid" = "$$" ]; then
+      rm -f "$BRIGADE_SERVICE_LOCK_FILE"
+      echo -e "${GRAY}Released service lock${NC}"
+    fi
+  fi
+
   echo -e "${YELLOW}Cleanup complete. Run './brigade.sh resume' to continue.${NC}"
   exit 130  # Standard exit code for Ctrl+C
 }
@@ -96,6 +154,83 @@ release_lock() {
   rmdir "$lock_path" 2>/dev/null
 }
 
+# Service instance lock - prevents multiple services from running on the same PRD
+# Uses a lockfile with PID to detect stale locks from crashed processes
+# Usage: acquire_service_lock "$prd_path"  /  release_service_lock "$prd_path"
+BRIGADE_SERVICE_LOCK_FILE=""
+
+acquire_service_lock() {
+  local prd_path="$1"
+  local prd_dir=$(dirname "$prd_path")
+  local prd_name=$(basename "$prd_path" .json)
+  local lock_file="$prd_dir/.service-${prd_name}.lock"
+
+  BRIGADE_SERVICE_LOCK_FILE="$lock_file"
+
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] acquire_service_lock: attempting $lock_file (pid=$$)" >&2
+  fi
+
+  # Check if lock file exists
+  if [ -f "$lock_file" ]; then
+    local lock_pid
+    lock_pid=$(cat "$lock_file" 2>/dev/null)
+
+    # Check if the PID is still running
+    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+      echo -e "${RED}Error: Another service is already running on this PRD${NC}" >&2
+      echo -e "${GRAY}Lock held by PID $lock_pid${NC}" >&2
+      echo -e "${GRAY}Lock file: $lock_file${NC}" >&2
+      echo "" >&2
+      echo -e "${GRAY}If this is a stale lock from a crashed process, remove it:${NC}" >&2
+      echo -e "${GRAY}  rm $lock_file${NC}" >&2
+      return 1
+    else
+      # Stale lock - remove it
+      if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+        echo "[DEBUG] acquire_service_lock: removing stale lock (pid=$lock_pid no longer running)" >&2
+      fi
+      rm -f "$lock_file"
+    fi
+  fi
+
+  # Create lock file with our PID
+  echo "$$" > "$lock_file"
+
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] acquire_service_lock: acquired $lock_file (pid=$$)" >&2
+  fi
+
+  return 0
+}
+
+release_service_lock() {
+  local prd_path="$1"
+
+  # Use saved lock file path if available, otherwise compute it
+  local lock_file="$BRIGADE_SERVICE_LOCK_FILE"
+  if [ -z "$lock_file" ]; then
+    local prd_dir=$(dirname "$prd_path")
+    local prd_name=$(basename "$prd_path" .json)
+    lock_file="$prd_dir/.service-${prd_name}.lock"
+  fi
+
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] release_service_lock: releasing $lock_file (pid=$$)" >&2
+  fi
+
+  # Only remove if we own it (our PID is in the file)
+  if [ -f "$lock_file" ]; then
+    local lock_pid
+    lock_pid=$(cat "$lock_file" 2>/dev/null)
+    if [ "$lock_pid" = "$$" ]; then
+      rm -f "$lock_file"
+    fi
+  fi
+
+  BRIGADE_SERVICE_LOCK_FILE=""
+}
+
 # Cross-platform timeout execution with health monitoring (works on macOS and Linux)
 # Usage: run_with_timeout <seconds> <command> [args...]
 # Returns: command exit code, 124 if timed out, WORKER_CRASH_EXIT_CODE if crashed
@@ -111,7 +246,7 @@ run_with_timeout() {
 
   "$@" &
   local pid=$!
-  BRIGADE_WORKER_PIDS+=("$pid")
+  register_worker_pid "$pid"
 
   if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
     echo "[DEBUG] run_with_timeout: started pid=$pid, timeout=${timeout_secs}s" >&2
@@ -129,7 +264,7 @@ run_with_timeout() {
       # Process is gone - get exit code
       wait "$pid" 2>/dev/null
       local exit_code=$?
-      BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
+      unregister_worker_pid "$pid"
 
       if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
         echo "[DEBUG] run_with_timeout: pid=$pid exited with code=$exit_code after ${elapsed}s" >&2
@@ -162,13 +297,36 @@ run_with_timeout() {
       fi
 
       wait "$pid" 2>/dev/null
-      BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
+      unregister_worker_pid "$pid"
       return 124  # Standard timeout exit code
     fi
 
     # Sleep for health check interval
     sleep "$check_interval"
     elapsed=$((elapsed + check_interval))
+
+    # Check timeout warning (only once per task)
+    # Uses globals set by fire_ticket: CURRENT_WORKER, CURRENT_TASK_ID, CURRENT_PRD_PATH
+    if [ -n "$CURRENT_TASK_ID" ] && [ -n "$CURRENT_WORKER" ]; then
+      check_task_timeout_warning "$CURRENT_WORKER" "$elapsed" "$CURRENT_TASK_ID" "$CURRENT_PRD_PATH"
+    fi
+
+    # Activity heartbeat (every ACTIVITY_LOG_INTERVAL seconds)
+    if [ -n "$ACTIVITY_LOG" ] && [ -n "$CURRENT_TASK_ID" ]; then
+      local since_heartbeat=$((elapsed % ACTIVITY_LOG_INTERVAL))
+      if [ "$since_heartbeat" -lt "$check_interval" ] && [ "$elapsed" -ge "$ACTIVITY_LOG_INTERVAL" ]; then
+        write_activity_heartbeat "$CURRENT_PRD_PATH" "$CURRENT_TASK_ID" "$CURRENT_WORKER" "$elapsed"
+      fi
+    fi
+
+    # Supervisor status heartbeat (every 30 seconds)
+    if [ -n "$SUPERVISOR_STATUS_FILE" ] && [ -n "$CURRENT_PRD_PATH" ]; then
+      local status_interval=30
+      local since_status=$((elapsed % status_interval))
+      if [ "$since_status" -lt "$check_interval" ] && [ "$elapsed" -ge "$status_interval" ]; then
+        write_supervisor_status "$CURRENT_PRD_PATH"
+      fi
+    fi
 
     # Periodic health check logging (debug mode)
     if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
@@ -461,10 +619,13 @@ get_worker_log_path() {
   local prd_prefix=$(get_prd_prefix "$prd_path")
   local timestamp=$(date "+%Y-%m-%d-%H%M%S")
 
-  # Ensure directory exists
-  mkdir -p "$WORKER_LOG_DIR"
+  # Strip trailing slashes from WORKER_LOG_DIR to avoid double-slash paths
+  local log_dir="${WORKER_LOG_DIR%/}"
 
-  echo "${WORKER_LOG_DIR}/${prd_prefix}-${task_id}-${worker}-${timestamp}.log"
+  # Ensure directory exists
+  mkdir -p "$log_dir"
+
+  echo "${log_dir}/${prd_prefix}-${task_id}-${worker}-${timestamp}.log"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -683,7 +844,7 @@ run_with_spinner() {
   local pid=$!
 
   # Track PID for cleanup on interrupt
-  BRIGADE_WORKER_PIDS+=("$pid")
+  register_worker_pid "$pid"
 
   local start_time=$(date +%s)
   LAST_HEARTBEAT_TIME=$start_time
@@ -734,7 +895,7 @@ run_with_spinner() {
   local total_elapsed=$((end_time - start_time))
 
   # Remove PID from tracking (process completed)
-  BRIGADE_WORKER_PIDS=("${BRIGADE_WORKER_PIDS[@]/$pid}")
+  unregister_worker_pid "$pid"
 
   # Show cursor
   tput cnorm 2>/dev/null || true
@@ -1364,21 +1525,30 @@ mark_task_complete() {
   fi
 
   # Clear currentTask from state file (with file locking)
+  # IMPORTANT: Only clear if currentTask matches this task_id to avoid
+  # corrupting state during parallel execution (multiple tasks running)
   local state_path=$(get_state_path "$prd_path")
   if [ -f "$state_path" ]; then
     acquire_lock "$state_path"
     ensure_valid_state "$state_path" "$prd_path"
-    tmp_file=$(brigade_mktemp)
 
-    set +e
-    jq '.currentTask = null' "$state_path" > "$tmp_file"
-    jq_exit=$?
-    set -e
+    # Check if currentTask matches this task before clearing
+    local current_task=$(jq -r '.currentTask // ""' "$state_path" 2>/dev/null)
+    if [ "$current_task" = "$task_id" ]; then
+      tmp_file=$(brigade_mktemp)
 
-    if [ $jq_exit -eq 0 ] && [ -s "$tmp_file" ]; then
-      mv "$tmp_file" "$state_path"
-    else
-      echo -e "${YELLOW}Warning: Could not update state file for $task_id${NC}" >&2
+      set +e
+      jq '.currentTask = null' "$state_path" > "$tmp_file"
+      jq_exit=$?
+      set -e
+
+      if [ $jq_exit -eq 0 ] && [ -s "$tmp_file" ]; then
+        mv "$tmp_file" "$state_path"
+      else
+        echo -e "${YELLOW}Warning: Could not update state file for $task_id${NC}" >&2
+      fi
+    elif [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+      echo "[DEBUG] mark_task_complete: skipping currentTask clear for $task_id (current=$current_task)" >&2
     fi
 
     release_lock "$state_path"
@@ -1424,7 +1594,26 @@ find_active_prd() {
   # Check brigade/tasks first, then fallback paths (for running from inside brigade/)
   local search_dirs=("brigade/tasks" "tasks" "." "../brigade/tasks" "../tasks" "..")
 
-  # First, look for per-PRD state files (*.state.json) with an active currentTask
+  # First priority: Honor latest.json symlink if it exists and is valid
+  for dir in "${search_dirs[@]}"; do
+    local latest="$dir/latest.json"
+    if [ -L "$latest" ]; then
+      # Resolve symlink and validate the target
+      local target
+      if target=$(readlink "$latest" 2>/dev/null); then
+        # Handle both absolute and relative symlinks
+        if [[ "$target" != /* ]]; then
+          target="$dir/$target"
+        fi
+        if [ -f "$target" ] && jq -e '.tasks' "$target" >/dev/null 2>&1; then
+          echo "$target"
+          return 0
+        fi
+      fi
+    fi
+  done
+
+  # Second priority: look for per-PRD state files (*.state.json) with an active currentTask
   for dir in "${search_dirs[@]}"; do
     if [ -d "$dir" ]; then
       for state_file in "$dir"/*.state.json; do
@@ -1834,18 +2023,19 @@ write_supervisor_status() {
 
   # Write atomically (tmp file + mv)
   local tmp_file=$(brigade_mktemp)
+  local last_update=$(date -Iseconds)
   if [ "$attention" = "true" ]; then
-    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"attention":true,"reason":"%s"}\n' \
+    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"attention":true,"reason":"%s","lastUpdate":"%s"}\n' \
       "$done" "$total" \
       "$([ -n "$current" ] && echo "\"$current\"" || echo "null")" \
       "$([ -n "$worker" ] && echo "\"$worker\"" || echo "null")" \
-      "$elapsed" "$reason" > "$tmp_file"
+      "$elapsed" "$reason" "$last_update" > "$tmp_file"
   else
-    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"attention":false}\n' \
+    printf '{"done":%d,"total":%d,"current":%s,"worker":%s,"elapsed":%d,"attention":false,"lastUpdate":"%s"}\n' \
       "$done" "$total" \
       "$([ -n "$current" ] && echo "\"$current\"" || echo "null")" \
       "$([ -n "$worker" ] && echo "\"$worker\"" || echo "null")" \
-      "$elapsed" > "$tmp_file"
+      "$elapsed" "$last_update" > "$tmp_file"
   fi
   mv "$tmp_file" "$SUPERVISOR_STATUS_FILE"
 }
@@ -1922,6 +2112,11 @@ emit_supervisor_event() {
       # Scope question decided by exec chef in walkaway mode
       local task="$1" question="$2" decision="$3"
       printf '{"ts":"%s","event":"scope_decision","task":"%s","question":"%s","decision":"%s"}\n' "$ts" "$task" "$question" "$decision"
+      ;;
+    task_slow)
+      # Task taking longer than expected warning
+      local task="$1" elapsed="$2" expected="$3"
+      printf '{"ts":"%s","event":"task_slow","task":"%s","elapsed":%d,"expected":%d}\n' "$ts" "$task" "$elapsed" "$expected"
       ;;
     *)
       printf '{"ts":"%s","event":"%s"}\n' "$ts" "$event_type"
@@ -2900,12 +3095,14 @@ fire_ticket() {
   local worker="$3"
   local worker_timeout="${4:-0}"  # Timeout in seconds, 0 = no timeout
 
-  # Set global context for visibility features (heartbeat, timeout warnings)
+  # Set global context for visibility features (heartbeat, timeout warnings, crash logging)
   CURRENT_PRD_PATH="$prd_path"
   CURRENT_TASK_ID="$task_id"
   CURRENT_WORKER="$worker"
   CURRENT_TASK_WARNING_SHOWN=false
   CURRENT_TASK_START_TIME=$(date +%s)
+  CURRENT_WORKER_LOG=""
+  CURRENT_OUTPUT_FILE=""
 
   local worker_name=$(get_worker_name "$worker")
   local worker_cmd=$(get_worker_cmd "$worker")
@@ -2939,8 +3136,24 @@ fire_ticket() {
     echo -e "${GRAY}Worker log: $worker_log${NC}"
   fi
 
+  # Set globals for interrupt handler (allows saving partial output on Ctrl+C)
+  CURRENT_OUTPUT_FILE="$output_file"
+  CURRENT_WORKER_LOG="$worker_log"
+
   # Execute worker based on agent type
   local start_time=$(date +%s)
+
+  # Create worker log BEFORE execution starts (captures crash data)
+  if [ -n "$worker_log" ]; then
+    {
+      echo "═══════════════════════════════════════════════════════════"
+      echo "Task: $display_id - $task_title"
+      echo "Worker: $worker_name ($worker_agent)"
+      echo "Started: $(date '+%Y-%m-%d %H:%M:%S')"
+      echo "═══════════════════════════════════════════════════════════"
+      echo ""
+    } > "$worker_log"
+  fi
 
   # Show timeout info if set
   if [ "$worker_timeout" -gt 0 ]; then
@@ -3073,17 +3286,15 @@ fire_ticket() {
 
   echo -e "${GRAY}Duration: ${duration}s${NC}"
 
-  # Copy output to worker log file if enabled (for debugging and post-mortems)
+  # Append output to worker log file if enabled (header already written before execution)
   if [ -n "$worker_log" ] && [ -f "$output_file" ]; then
     {
+      cat "$output_file"
+      echo ""
       echo "═══════════════════════════════════════════════════════════"
-      echo "Task: $display_id - $task_title"
-      echo "Worker: $worker_name ($worker_agent)"
-      echo "Started: $(date -r $start_time '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d @$start_time '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'unknown')"
+      echo "Completed: $(date '+%Y-%m-%d %H:%M:%S')"
       echo "Duration: ${duration}s"
       echo "═══════════════════════════════════════════════════════════"
-      echo ""
-      cat "$output_file"
     } >> "$worker_log"
     echo -e "${GRAY}Output saved to: $worker_log${NC}"
   fi
@@ -3096,6 +3307,8 @@ fire_ticket() {
 
   # Clear global context
   CURRENT_TASK_ID=""
+  CURRENT_OUTPUT_FILE=""
+  CURRENT_WORKER_LOG=""
 
   # Extract any learnings shared by the worker
   extract_learnings_from_output "$output_file" "$prd_path" "$task_id" "$worker"
@@ -3124,25 +3337,26 @@ fire_ticket() {
   # 32 = BLOCKED
   # 33 = ALREADY_DONE
   # 34 = ABSORBED_BY
-  if grep -q "<promise>COMPLETE</promise>" "$output_file" 2>/dev/null; then
+  # Use grep -a for binary-safe scanning (worker output may contain binary data)
+  if grep -aq "<promise>COMPLETE</promise>" "$output_file" 2>/dev/null; then
     log_event "SUCCESS" "🍽️ $display_id plated! (${duration}s)"
     emit_supervisor_event "task_complete" "$task_id" "$worker" "$duration"
     rm -f "$output_file"
     return 0
-  elif grep -q "<promise>ALREADY_DONE</promise>" "$output_file" 2>/dev/null; then
+  elif grep -aq "<promise>ALREADY_DONE</promise>" "$output_file" 2>/dev/null; then
     log_event "SUCCESS" "🍽️ $display_id already on the pass! (${duration}s)"
     emit_supervisor_event "task_already_done" "$task_id"
     rm -f "$output_file"
     return 33  # ALREADY_DONE (distinct from jq exit code 3)
-  elif grep -oq "<promise>ABSORBED_BY:" "$output_file" 2>/dev/null; then
+  elif grep -aoq "<promise>ABSORBED_BY:" "$output_file" 2>/dev/null; then
     # Extract the absorbing task ID (e.g., ABSORBED_BY:US-001 -> US-001)
-    LAST_ABSORBED_BY=$(grep -o "<promise>ABSORBED_BY:[^<]*</promise>" "$output_file" | sed 's/<promise>ABSORBED_BY://;s/<\/promise>//')
+    LAST_ABSORBED_BY=$(grep -ao "<promise>ABSORBED_BY:[^<]*</promise>" "$output_file" | sed 's/<promise>ABSORBED_BY://;s/<\/promise>//')
     local absorbed_display=$(format_task_id "$prd_path" "$LAST_ABSORBED_BY")
     log_event "SUCCESS" "Task $display_id ABSORBED BY $absorbed_display (${duration}s)"
     emit_supervisor_event "task_absorbed" "$task_id" "$LAST_ABSORBED_BY"
     rm -f "$output_file"
     return 34  # ABSORBED_BY
-  elif grep -q "<promise>BLOCKED</promise>" "$output_file" 2>/dev/null; then
+  elif grep -aq "<promise>BLOCKED</promise>" "$output_file" 2>/dev/null; then
     log_event "ERROR" "Task $display_id is BLOCKED (${duration}s)"
     emit_supervisor_event "task_blocked" "$task_id" "$worker"
     emit_supervisor_event "attention" "$task_id" "blocked"
@@ -4071,6 +4285,12 @@ executive_review() {
     return 0
   fi
 
+  # Acquire review lock to serialize reviews during parallel execution
+  # This prevents multiple tasks from triggering overlapping executive reviews
+  local state_path=$(get_state_path "$prd_path")
+  local review_lock_path="${state_path%.json}.review"
+  acquire_lock "$review_lock_path"
+
   local task_title=$(jq -r ".tasks[] | select(.id == \"$task_id\") | .title" "$prd_path")
   local display_id=$(format_task_id "$prd_path" "$task_id")
 
@@ -4147,12 +4367,14 @@ executive_review() {
     LAST_VERIFICATION_FEEDBACK=""
     LAST_TODO_WARNINGS=""
     LAST_MANUAL_VERIFICATION_FEEDBACK=""
+    release_lock "$review_lock_path"
     return 0
   else
     log_event "ERROR" "👨‍🍳 Executive Chef sent $display_id back to the kitchen (${duration}s)"
     echo -e "${GRAY}Reason: $review_reason${NC}"
     # Store feedback so it can be passed to worker on retry
     LAST_REVIEW_FEEDBACK="$review_reason"
+    release_lock "$review_lock_path"
     return 1
   fi
 }
@@ -5827,8 +6049,13 @@ cmd_service() {
     local prd_files=("$@")
     local total_prds=${#prd_files[@]}
 
-    # Sort PRDs by filename for deterministic order (prd-001, prd-002, etc.)
-    IFS=$'\n' sorted_prds=($(sort <<<"${prd_files[*]}")); unset IFS
+    # Sort PRDs by modification time (newest first) for predictable execution order
+    # This ensures recently modified PRDs are processed first
+    IFS=$'\n' sorted_prds=($(ls -t "${prd_files[@]}" 2>/dev/null)); unset IFS
+    # Fallback to alphabetical if ls -t fails
+    if [ ${#sorted_prds[@]} -eq 0 ]; then
+      IFS=$'\n' sorted_prds=($(sort <<<"${prd_files[*]}")); unset IFS
+    fi
 
     echo ""
     echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
@@ -5932,6 +6159,11 @@ cmd_service() {
     exit 1
   fi
   echo -e "${GREEN}✓${NC} PRD valid"
+
+  # Acquire service instance lock (prevents multiple services on same PRD)
+  if ! acquire_service_lock "$prd_path"; then
+    exit 1
+  fi
 
   # Initialize PRD-scoped supervisor files (for safe parallel execution)
   init_supervisor_files_for_prd "$prd_path"
@@ -6547,6 +6779,9 @@ EOF
 
   echo -e "  • For chained PRDs, use ${CYAN}./brigade.sh --auto-continue service prd-*.json${NC}"
   echo ""
+
+  # Release service instance lock
+  release_service_lock "$prd_path"
 }
 
 cmd_plan() {
