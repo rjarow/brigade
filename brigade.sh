@@ -5249,6 +5249,9 @@ cmd_status() {
     fi
   fi
 
+  # Mini legend
+  echo ""
+  echo -e "${GRAY}Legend: ✓ complete  → in progress  ◐ awaiting review  ○ not started  ⬆ escalated${NC}"
   echo ""
 
     # Break out of loop unless in watch mode
