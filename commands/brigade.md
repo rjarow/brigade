@@ -2,6 +2,33 @@
 
 You are orchestrating Brigade, a multi-model AI task execution framework. This skill handles the full workflow: planning features, converting PRDs, updating PRDs, executing tasks, monitoring progress, and handling failures.
 
+## Finding brigade.sh
+
+Before running any Brigade command, locate the script. It may be in different places depending on project structure:
+
+```bash
+# Check common locations and set BRIGADE variable
+if [ -f "$BRIGADE" ]; then
+  BRIGADE="$BRIGADE"
+elif [ -f "./brigade/brigade.sh" ]; then
+  BRIGADE="./brigade/brigade.sh"
+elif [ -f ".$BRIGADE" ]; then
+  BRIGADE=".$BRIGADE"
+elif [ -f "../brigade/brigade.sh" ]; then
+  BRIGADE="../brigade/brigade.sh"
+else
+  echo "Error: brigade.sh not found"
+  echo "Expected locations: $BRIGADE, ./brigade/brigade.sh"
+  echo "Install Brigade or check your working directory"
+  exit 1
+fi
+echo "Using: $BRIGADE"
+```
+
+**Use `$BRIGADE` instead of `$BRIGADE` in all commands below.** For example:
+- `$BRIGADE init` instead of `$BRIGADE init`
+- `$BRIGADE status --json` instead of `$BRIGADE status --json`
+
 ## Commands
 
 | Command | Action |
@@ -62,7 +89,7 @@ I see you have an existing codebase. Let's set up Brigade to help manage it.
     /brigade plan "Add user authentication"
 
   Want to understand the codebase first?
-    ./brigade.sh map
+    $BRIGADE map
 ```
 
 ### 3. Greenfield (empty project)
@@ -121,7 +148,7 @@ Research & Setup:
 Output:
   /brigade pr                 - Create PR from completed PRD
 
-Bash equivalents: ./brigade.sh help --all
+Bash equivalents: $BRIGADE help --all
 ```
 
 ---
@@ -138,11 +165,29 @@ Guided setup wizard for new users.
 
 ## Workflow
 
-Run the CLI setup wizard:
+**First, find the brigade.sh script:**
 
 ```bash
-./brigade.sh init
+# Try common locations
+if [ -f "$BRIGADE" ]; then
+  BRIGADE="$BRIGADE"
+elif [ -f "./brigade/brigade.sh" ]; then
+  BRIGADE="./brigade/brigade.sh"
+elif [ -f ".$BRIGADE" ]; then
+  BRIGADE=".$BRIGADE"
+else
+  echo "brigade.sh not found. Please ensure Brigade is installed."
+  exit 1
+fi
 ```
+
+Then run the setup wizard:
+
+```bash
+$BRIGADE init
+```
+
+(Where `$BRIGADE` is the path found in the detection step above)
 
 This will:
 1. Check for AI tools (Claude CLI, OpenCode)
@@ -197,7 +242,7 @@ Try Brigade with a demo PRD in dry-run mode. Shows what would happen without act
 ## Workflow
 
 ```bash
-./brigade.sh demo
+$BRIGADE demo
 ```
 
 This will:
@@ -275,10 +320,11 @@ After the initial interview, the owner should be able to walk away and come back
 Before planning, ensure Brigade is set up in this project:
 
 ```bash
-# Check if brigade is initialized
+# First, find brigade.sh (see "Finding brigade.sh" section at top)
+# Then check if initialized
 if [ ! -d "brigade/tasks" ]; then
   echo "Brigade not initialized. Running setup..."
-  ./brigade.sh init
+  $BRIGADE init
 fi
 
 # Verify .gitignore includes brigade/
@@ -290,7 +336,7 @@ if [ -f ".gitignore" ]; then
 fi
 ```
 
-If Brigade isn't set up, run `./brigade.sh init` first - it handles everything including gitignore.
+If Brigade isn't set up, run `$BRIGADE init` first - it handles everything including gitignore.
 
 ### Phase 1: Project Detection
 First, check if this is a **greenfield** (new/empty) or **existing** project:
@@ -359,7 +405,7 @@ The goal is a thoughtful decision, not a quick lookup. Take the time to get it r
 1. **Check for existing map**: Look for `brigade/codebase-map.md`
 2. **Generate or refresh if needed**:
    ```bash
-   ./brigade.sh map
+   $BRIGADE map
    ```
    This analyzes the codebase and generates a structured map. It auto-detects staleness (embeds commit hash) and regenerates if the codebase has changed significantly.
 
@@ -559,7 +605,7 @@ If multiple exist, ask which one. PRDs with state files are likely active.
 ### Step 2: Validate
 
 ```bash
-./brigade.sh validate brigade/tasks/prd-{name}.json
+$BRIGADE validate brigade/tasks/prd-{name}.json
 ```
 
 Don't proceed if validation fails.
@@ -567,12 +613,12 @@ Don't proceed if validation fails.
 ### Step 3: Execute
 
 ```bash
-./brigade.sh service brigade/tasks/prd-{name}.json
+$BRIGADE service brigade/tasks/prd-{name}.json
 ```
 
 For unattended execution:
 ```bash
-./brigade.sh --walkaway service brigade/tasks/prd-{name}.json
+$BRIGADE --walkaway service brigade/tasks/prd-{name}.json
 ```
 
 ### Step 4: Report Completion
@@ -586,7 +632,7 @@ Summarize: tasks completed, failures, total time, next steps.
 Check current progress.
 
 ```bash
-./brigade.sh status --json
+$BRIGADE status --json
 ```
 
 Translate to natural language:
@@ -611,7 +657,7 @@ Handle failures and continue execution.
 ### Step 1: Diagnose
 
 ```bash
-./brigade.sh status --json
+$BRIGADE status --json
 ```
 
 Check `currentTask`, `attention`, `attentionReason`.
@@ -626,8 +672,8 @@ Check `currentTask`, `attention`, `attentionReason`.
 ### Step 3: Execute Choice
 
 ```bash
-./brigade.sh resume brigade/tasks/prd-{name}.json retry
-./brigade.sh resume brigade/tasks/prd-{name}.json skip
+$BRIGADE resume brigade/tasks/prd-{name}.json retry
+$BRIGADE resume brigade/tasks/prd-{name}.json skip
 ```
 
 ---
@@ -698,7 +744,7 @@ Set `complexity` to:
 ### Step 2: Execute
 
 ```bash
-./brigade.sh ticket "$prd_path" QT-001
+$BRIGADE ticket "$prd_path" QT-001
 ```
 
 ### Step 3: Report Result
@@ -1203,8 +1249,8 @@ Output:   brigade/tasks/prd-products.json
 
 Next steps:
   Review:   cat brigade/tasks/prd-products.json | jq
-  Validate: ./brigade.sh validate brigade/tasks/prd-products.json
-  Execute:  ./brigade.sh service brigade/tasks/prd-products.json
+  Validate: $BRIGADE validate brigade/tasks/prd-products.json
+  Execute:  $BRIGADE service brigade/tasks/prd-products.json
 ```
 
 ---
@@ -1239,7 +1285,7 @@ if [ -f "brigade/codebase-map.md" ]; then
   cat brigade/codebase-map.md    # Project structure, patterns, key files
 else
   echo "No codebase map found. Generating..."
-  ./brigade.sh map               # Creates brigade/codebase-map.md
+  $BRIGADE map               # Creates brigade/codebase-map.md
   cat brigade/codebase-map.md
 fi
 
@@ -1260,7 +1306,7 @@ cat brigade/tasks/prd-*.json     # Read what's being built
 
 ### Step 1: Check Current Status
 ```bash
-./brigade.sh status --brief
+$BRIGADE status --brief
 ```
 Returns JSON: `{"done":3,"total":8,"current":"US-004","worker":"sous","elapsed":125,"attention":false}`
 
@@ -1308,8 +1354,8 @@ When retrying, give the worker specific hints:
 
 ### Check Status (every 30-60s)
 ```bash
-./brigade.sh status --brief    # Quick JSON
-./brigade.sh status --json     # Full details
+$BRIGADE status --brief    # Quick JSON
+$BRIGADE status --json     # Full details
 ```
 
 ### Watch Events (for real-time monitoring)
@@ -1370,7 +1416,7 @@ Keep the user informed with concise updates:
 
 ```
 REPEAT until service_complete:
-  1. ./brigade.sh status --brief
+  1. $BRIGADE status --brief
   2. IF attention=true:
        - Read events: tail -20 brigade/tasks/events.jsonl
        - Understand the issue
@@ -1385,7 +1431,7 @@ REPEAT until service_complete:
 |------|----------|
 | `chef/supervisor.md` | Complete supervisor guide, intervention patterns, all event types |
 | `CLAUDE.md` | "Supervisor Integration" section - file formats, event types, config |
-| `brigade/codebase-map.md` | Project structure, key files, patterns (generate with `./brigade.sh map`) |
+| `brigade/codebase-map.md` | Project structure, key files, patterns (generate with `$BRIGADE map`) |
 | `brigade/tasks/prd-*.json` | Active PRDs - what's being built, acceptance criteria |
 | `brigade/notes/supervisor-notes.md` | Optional handoff notes from planning Claude |
 
@@ -1399,36 +1445,38 @@ REPEAT until service_complete:
 
 # Quick Reference
 
+**Note:** Replace `$BRIGADE` with the actual path to brigade.sh (see "Finding brigade.sh" at top).
+
 ```bash
 # Planning
-./brigade.sh plan "feature description"
-./brigade.sh template api users        # PRD from template
-./brigade.sh template                  # List templates
+$BRIGADE plan "feature description"
+$BRIGADE template api users        # PRD from template
+$BRIGADE template                  # List templates
 
 # Quick Tasks (no PRD ceremony)
 /brigade quick "small task description"
 /brigade quick "complex task" --senior
 
 # Execution
-./brigade.sh service brigade/tasks/prd-name.json
-./brigade.sh --walkaway service prd.json  # Unattended
-./brigade.sh --auto-continue service prd-*.json  # Chain PRDs
+$BRIGADE service brigade/tasks/prd-name.json
+$BRIGADE --walkaway service prd.json  # Unattended
+$BRIGADE --auto-continue service prd-*.json  # Chain PRDs
 
 # Partial Execution (filter which tasks run)
-./brigade.sh --only US-001,US-003 service prd.json   # Run specific tasks
-./brigade.sh --skip US-007 service prd.json          # Skip specific tasks
-./brigade.sh --from US-003 service prd.json          # Start from task
-./brigade.sh --until US-005 service prd.json         # Run up to task
-./brigade.sh --dry-run --only US-001 service prd.json  # Preview filtered plan
+$BRIGADE --only US-001,US-003 service prd.json   # Run specific tasks
+$BRIGADE --skip US-007 service prd.json          # Skip specific tasks
+$BRIGADE --from US-003 service prd.json          # Start from task
+$BRIGADE --until US-005 service prd.json         # Run up to task
+$BRIGADE --dry-run --only US-001 service prd.json  # Preview filtered plan
 
 # Monitoring
-./brigade.sh status              # Human-readable
-./brigade.sh status --json       # Machine-readable
-./brigade.sh status --watch      # Auto-refresh
+$BRIGADE status              # Human-readable
+$BRIGADE status --json       # Machine-readable
+$BRIGADE status --watch      # Auto-refresh
 
 # Resume
-./brigade.sh resume prd.json retry
-./brigade.sh resume prd.json skip
+$BRIGADE resume prd.json retry
+$BRIGADE resume prd.json skip
 
 # PR Creation
 /brigade pr                      # Auto-detect PRD
@@ -1436,14 +1484,14 @@ REPEAT until service_complete:
 /brigade pr --draft              # Create draft PR
 
 # Research & Iteration
-./brigade.sh explore "question"  # Feasibility research
-./brigade.sh map                 # Analyze codebase
-./brigade.sh iterate "tweak"     # Quick tweak on completed PRD
+$BRIGADE explore "question"  # Feasibility research
+$BRIGADE map                 # Analyze codebase
+$BRIGADE iterate "tweak"     # Quick tweak on completed PRD
 
 # Utilities
-./brigade.sh validate prd.json   # Check PRD
-./brigade.sh summary prd.json    # Generate report
-./brigade.sh cost prd.json       # Show cost breakdown
+$BRIGADE validate prd.json   # Check PRD
+$BRIGADE summary prd.json    # Generate report
+$BRIGADE cost prd.json       # Show cost breakdown
 ```
 
 ---
@@ -1463,7 +1511,7 @@ PRD saved with 8 tasks. Ready to execute?
 
 User: yes
 
-Claude: [Runs ./brigade.sh service]
+Claude: [Runs $BRIGADE service]
 Complete! 8/8 tasks in 32 minutes. Branch ready for review.
 ```
 

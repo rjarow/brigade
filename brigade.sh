@@ -328,6 +328,29 @@ run_with_timeout() {
       fi
     fi
 
+    # Output stall detection (no new output for N seconds)
+    # Uses CURRENT_WORKER_LOG set by fire_ticket; warns once per task
+    local stall_threshold="${OUTPUT_STALL_THRESHOLD:-300}"
+    if [ "$stall_threshold" -gt 0 ] && [ -n "$CURRENT_WORKER_LOG" ] && [ -f "$CURRENT_WORKER_LOG" ]; then
+      if [ "${CURRENT_STALL_WARNING_SHOWN:-false}" != "true" ]; then
+        # Get log file mtime (cross-platform: macOS uses -f %m, Linux uses -c %Y)
+        local log_mtime
+        if [[ "$OSTYPE" == darwin* ]]; then
+          log_mtime=$(stat -f %m "$CURRENT_WORKER_LOG" 2>/dev/null || echo 0)
+        else
+          log_mtime=$(stat -c %Y "$CURRENT_WORKER_LOG" 2>/dev/null || echo 0)
+        fi
+        local now=$(date +%s)
+        local stall_time=$((now - log_mtime))
+        if [ "$stall_time" -gt "$stall_threshold" ]; then
+          local stall_mins=$((stall_time / 60))
+          log_event "WARN" "⚠️ ${CURRENT_TASK_ID:-task} output stalled (no output for ${stall_mins}m)"
+          emit_supervisor_event "output_stall" "${CURRENT_TASK_ID:-unknown}" "$stall_time"
+          CURRENT_STALL_WARNING_SHOWN=true
+        fi
+      fi
+    fi
+
     # Periodic health check logging (debug mode)
     if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
       local now=$(date +%s)
@@ -423,6 +446,7 @@ PHASE_REVIEW_ACTION=continue # continue | pause | remediate
 # Auto-continue defaults (chain multiple PRDs)
 AUTO_CONTINUE=false          # Chain numbered PRDs without user intervention
 PHASE_GATE="continue"        # review | continue | pause (between PRDs)
+AUTO_CONTINUE_WARN_STALE=true  # Warn when PRD has existing state file
 
 # Walkaway mode defaults (autonomous execution without human input)
 WALKAWAY_MODE=false          # Use AI to decide retry/skip on failures
@@ -450,6 +474,7 @@ VERIFICATION_TIMEOUT=60            # Timeout per verification command in seconds
 TODO_SCAN_ENABLED=true             # Scan changed files for TODO/FIXME before marking complete
 VERIFICATION_WARN_GREP_ONLY=true   # Warn if PRD only has grep-based verification (no execution)
 MANUAL_VERIFICATION_ENABLED=false  # Prompt for human verification on tasks with manualVerification: true
+OUTPUT_RED_FLAG_ENABLED=true       # Scan worker output for red flags ("not implemented", "placeholder", etc.)
 
 # Visibility defaults
 ACTIVITY_LOG=""                    # Path to activity heartbeat log (empty = disabled)
@@ -458,6 +483,7 @@ TASK_TIMEOUT_WARNING_JUNIOR=10     # Minutes before warning for junior tasks (0 
 TASK_TIMEOUT_WARNING_SENIOR=20     # Minutes before warning for senior tasks
 WORKER_LOG_DIR=""                  # Directory for per-task worker logs (empty = disabled)
 STATUS_WATCH_INTERVAL=30           # Seconds between status refreshes in watch mode
+OUTPUT_STALL_THRESHOLD=300         # Seconds without output before warning (5 minutes, 0 = disabled)
 SUPERVISOR_STATUS_FILE=""          # Write compact status JSON on state changes (empty = disabled)
 SUPERVISOR_EVENTS_FILE=""          # Append-only JSONL event stream (empty = disabled)
 SUPERVISOR_CMD_FILE=""             # Command ingestion file (empty = disabled)
@@ -484,8 +510,10 @@ LAST_REVIEW_FEEDBACK=""       # Feedback from failed executive review, passed to
 LAST_VERIFICATION_FEEDBACK="" # Feedback from failed verification commands, passed to worker on retry
 LAST_TODO_WARNINGS=""         # Warnings from TODO scan, passed to worker on retry
 LAST_MANUAL_VERIFICATION_FEEDBACK=""  # Feedback from rejected manual verification
+LAST_OUTPUT_WARNINGS=""       # Red flag phrases found in worker output, passed to review
 CURRENT_TASK_START_TIME=0          # Epoch timestamp when current task started
 CURRENT_TASK_WARNING_SHOWN=false   # Whether timeout warning was shown for current task
+CURRENT_STALL_WARNING_SHOWN=false  # Whether output stall warning was shown for current task
 CURRENT_PRD_PATH=""                # Current PRD being processed (for visibility features)
 CURRENT_TASK_ID=""                 # Current task being worked (for visibility features)
 CURRENT_WORKER=""                  # Current worker (for visibility features)
@@ -3100,6 +3128,7 @@ fire_ticket() {
   CURRENT_TASK_ID="$task_id"
   CURRENT_WORKER="$worker"
   CURRENT_TASK_WARNING_SHOWN=false
+  CURRENT_STALL_WARNING_SHOWN=false
   CURRENT_TASK_START_TIME=$(date +%s)
   CURRENT_WORKER_LOG=""
   CURRENT_OUTPUT_FILE=""
@@ -3318,6 +3347,25 @@ fire_ticket() {
 
   # Handle any scope questions (in walkaway mode, exec chef decides)
   extract_scope_questions_from_output "$output_file" "$prd_path" "$task_id" "$worker"
+
+  # Scan for red flags in worker output (incomplete work indicators)
+  # Sets LAST_OUTPUT_WARNINGS if found - passed to executive review for consideration
+  LAST_OUTPUT_WARNINGS=""
+  if [ "${OUTPUT_RED_FLAG_ENABLED:-true}" == "true" ] && [ -f "$output_file" ]; then
+    # Pattern matches common phrases indicating incomplete work
+    # Use grep -ai for case-insensitive, binary-safe matching
+    local red_flag_pattern='not implement\|placeholder\|incomplete\|skipping\|left as\|stub\|dummy\|mock data\|hardcoded\|todo.*implement'
+    local red_flags=$(grep -ai "$red_flag_pattern" "$output_file" 2>/dev/null | head -5)
+    if [ -n "$red_flags" ]; then
+      LAST_OUTPUT_WARNINGS="$red_flags"
+      log_event "WARN" "⚠️ $display_id output contains potential red flags:"
+      echo "$red_flags" | while read -r line; do
+        echo -e "  ${YELLOW}→ $line${NC}" | head -c 200  # Truncate long lines
+        echo ""
+      done
+      emit_supervisor_event "output_red_flag" "$task_id" "$worker"
+    fi
+  fi
 
   # Check for completion signal
   # Debug: log output file details for parallel execution debugging
@@ -6084,6 +6132,19 @@ cmd_service() {
       echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
       log_event "START" "AUTO-CONTINUE: PRD $prd_num/$total_prds - $(basename "$current_prd")"
       echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+
+      # Warn about stale state (existing completed tasks from previous run)
+      if [ "${AUTO_CONTINUE_WARN_STALE:-true}" == "true" ]; then
+        local state_file="${current_prd%.json}.state.json"
+        if [ -f "$state_file" ]; then
+          local completed_count
+          completed_count=$(jq '[.taskHistory[]? | select(.status == "complete")] | length' "$state_file" 2>/dev/null || echo 0)
+          if [ "$completed_count" -gt 0 ]; then
+            echo -e "${YELLOW}⚠ PRD has existing state with $completed_count completed task(s)${NC}"
+            echo -e "${GRAY}  Using existing state. To start fresh: rm $state_file${NC}"
+          fi
+        fi
+      fi
 
       # Run single PRD (disable auto-continue to prevent recursion)
       AUTO_CONTINUE=false
