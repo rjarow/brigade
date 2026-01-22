@@ -27,21 +27,38 @@ ln -s /path/to/brigade ./brigade
 ## Project Structure
 
 ```
-brigade/
-├── brigade.sh           # Main CLI script
-├── brigade.config       # Default configuration
-├── chef/
-│   ├── executive.md     # Director prompt
-│   ├── sous.md          # Senior worker prompt
-│   └── line.md          # Junior worker prompt
-├── kitchen/             # (future) Additional scripts
-├── docs/                # Documentation
-│   ├── getting-started.md
-│   ├── how-it-works.md
-│   ├── configuration.md
-│   └── writing-prds.md
-└── examples/
-    └── prd-example.json
+brigade/                    # ← Repo root (clone into your project)
+├── brigade.sh              # Main CLI script
+├── brigade.config.example  # Configuration reference
+├── chef/                   # Worker prompts
+│   ├── executive.md        #   Executive Chef (Opus) - plans & reviews
+│   ├── sous.md             #   Sous Chef (Sonnet) - complex tasks
+│   ├── line.md             #   Line Cook (GLM) - routine tasks
+│   └── supervisor.md       #   External AI supervisor docs
+├── commands/               # Claude Code skills (/brigade)
+├── docs/                   # Documentation
+├── examples/               # Example PRDs and configs
+├── modules/                # Optional extensions (telegram, cost tracking)
+├── templates/              # PRD generation templates
+├── tests/                  # Test suite (bats)
+│
+└── brigade/                # ⚠️ Working files directory (gitignored)
+    ├── tasks/              #   PRDs, state files, events
+    ├── logs/               #   Worker conversation logs
+    └── notes/              #   Supervisor/handoff notes
+```
+
+**Note:** The inner `brigade/` folder is for runtime working files - it's not recursive. When you clone Brigade into your project, the working files stay isolated and gitignored:
+
+```
+your-project/
+├── src/
+├── brigade/              # ← You clone Brigade here
+│   ├── brigade.sh
+│   ├── chef/
+│   └── brigade/          # ← Working files (gitignored)
+│       └── tasks/
+└── ...
 ```
 
 ## Code Style
