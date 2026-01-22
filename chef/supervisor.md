@@ -114,6 +114,33 @@ Keep the user informed with concise updates:
 - "Hit a snag on US-005 - worker couldn't find the API endpoint. I told it to check the OpenAPI spec. Retrying."
 - "Done! 8/8 tasks complete. Branch ready for review."
 
+## Reducing Permission Prompts
+
+Supervisor commands are safe and repetitive. To avoid constant permission prompts, add this to your project's `.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(./brigade.sh *)",
+      "Bash(cat chef/*)",
+      "Bash(cat CLAUDE.md)",
+      "Bash(cat brigade/*)",
+      "Bash(cat docs/*)",
+      "Bash(ls brigade/*)",
+      "Bash(tail * brigade/tasks/*)",
+      "Bash(mkdir -p brigade/*)",
+      "Bash(echo * > brigade/tasks/cmd.json)",
+      "Bash(echo * > brigade/notes/*)"
+    ]
+  }
+}
+```
+
+Or copy the template: `cp examples/claude-supervisor-settings.json .claude/settings.json`
+
+This allows Brigade operations without prompts while keeping other commands gated.
+
 ## Don't
 
 - Don't implement tasks yourself

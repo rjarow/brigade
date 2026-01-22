@@ -1393,6 +1393,8 @@ REPEAT until service_complete:
 
 **Giving good guidance requires project knowledge.** Don't just say "check the auth code" - say "check src/auth/middleware.ts:45 for the JWT validation pattern". The codebase map helps you give specific, actionable guidance.
 
+**Reducing permission prompts:** If you're getting frequent permission prompts for Brigade commands, check if `.claude/settings.json` exists with allowed patterns. See `chef/supervisor.md` for the recommended settings.
+
 ---
 
 # Quick Reference
