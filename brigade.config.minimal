@@ -1,0 +1,27 @@
+# Brigade Minimal Config
+# Copy to brigade.config and uncomment what you need.
+# Full options: see brigade.config.example
+
+# ─────────────────────────────────────────────────────────────
+# COST SAVINGS - Use cheaper models for routine tasks
+# ─────────────────────────────────────────────────────────────
+# USE_OPENCODE=true
+# OPENCODE_MODEL="zai-coding-plan/glm-4.7"
+
+# ─────────────────────────────────────────────────────────────
+# TESTING - Run tests after each task
+# ─────────────────────────────────────────────────────────────
+# TEST_CMD="npm test"          # Node.js
+# TEST_CMD="go test ./..."     # Go
+# TEST_CMD="pytest"            # Python
+# TEST_CMD="cargo test"        # Rust
+
+# ─────────────────────────────────────────────────────────────
+# OUTPUT - Cleaner logs
+# ─────────────────────────────────────────────────────────────
+# QUIET_WORKERS=true           # Spinner instead of full output
+
+# ─────────────────────────────────────────────────────────────
+# OVERNIGHT RUNS - Autonomous execution
+# ─────────────────────────────────────────────────────────────
+# WALKAWAY_MODE=true           # AI decides retry/skip on failures

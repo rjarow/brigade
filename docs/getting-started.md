@@ -123,17 +123,21 @@ Ctrl+C anytime. Resume later:
 ./brigade.sh resume skip     # Skip and continue
 ```
 
-## Cost Savings
+## Configuration
 
-Use cheaper models for Line Cook work:
+Brigade works with zero config. For common tweaks, copy the minimal config:
 
 ```bash
-# In brigade.config
-USE_OPENCODE=true
-OPENCODE_MODEL="zai-coding-plan/glm-4.7"
+cp brigade.config.minimal brigade.config
 ```
 
-See available models: `./brigade.sh opencode-models`
+Then uncomment what you need:
+- **Cost savings** - Use OpenCode for routine tasks
+- **Testing** - Run tests after each task
+- **Quiet mode** - Spinner instead of full output
+- **Walkaway** - Autonomous overnight runs
+
+See [Configuration](configuration.md) for all 80+ options.
 
 ## Next Steps
 
