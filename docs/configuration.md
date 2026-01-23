@@ -79,7 +79,7 @@ All settings go in `brigade.config`. Everything is optional - Brigade works with
 | `SMART_RETRY_SESSION_FAILURES_MAX` | `5` | Max session failures tracked |
 | `SMART_RETRY_AUTO_LEARNING_THRESHOLD` | `3` | Auto-add to learnings after N failures |
 
-## PRD Quality (P15)
+## PRD Quality
 
 | Option | Default | Description |
 |--------|---------|-------------|
