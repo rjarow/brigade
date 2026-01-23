@@ -1,6 +1,6 @@
 # Risk Assessment Guide
 
-The risk assessment feature (Priority 9) helps you understand the complexity and potential challenges of a PRD before execution.
+The risk assessment feature helps you understand the complexity and potential challenges of a PRD before execution.
 
 ## Usage
 

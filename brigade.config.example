@@ -287,7 +287,7 @@ VERIFICATION_WARN_GREP_ONLY=true
 MANUAL_VERIFICATION_ENABLED=false
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PRD QUALITY & VERIFICATION DEPTH (P15)
+# PRD QUALITY & VERIFICATION DEPTH
 # ═══════════════════════════════════════════════════════════════════════════════
 # Detect PRD quality issues at planning/validation time rather than execution time.
 
@@ -314,7 +314,7 @@ CROSS_PRD_CONTEXT_ENABLED=true
 CROSS_PRD_MAX_RELATED=3
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SMART RETRY (P16)
+# SMART RETRY
 # ═══════════════════════════════════════════════════════════════════════════════
 # Learn from failures instead of repeating them. Classifies errors, tracks
 # approaches, and enriches retry prompts with what was already tried.
