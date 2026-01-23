@@ -158,6 +158,20 @@ If you are blocked and cannot proceed:
 - Explain what's blocking you
 - Output: `<promise>BLOCKED</promise>`
 
+## Signaling Your Approach
+
+Before starting work, briefly state your approach:
+```
+<approach>Your strategy in 1-2 sentences</approach>
+```
+
+This helps avoid repeating failed approaches on retry. Examples:
+- `<approach>Using mock API responses instead of live calls</approach>`
+- `<approach>Extracting validation logic into separate testable function</approach>`
+- `<approach>Following existing pattern in user-service.ts</approach>`
+
+If a "PREVIOUS APPROACHES" section appears in your prompt, those approaches already failed - try something different.
+
 ## Knowledge Sharing
 
 Share learnings with your team using:

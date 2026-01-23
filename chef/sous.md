@@ -116,6 +116,20 @@ If you are blocked and cannot proceed:
 - Explain what's blocking you
 - Output: `<promise>BLOCKED</promise>`
 
+## Signaling Your Approach
+
+Before starting work, briefly state your approach:
+```
+<approach>Your strategy in 1-2 sentences</approach>
+```
+
+This helps track what was tried and avoid repeating failed approaches. Examples:
+- `<approach>Redesigning the service layer to use dependency injection</approach>`
+- `<approach>Implementing retry with exponential backoff for API calls</approach>`
+- `<approach>Using integration tests with test containers instead of mocks</approach>`
+
+If a "PREVIOUS APPROACHES" section appears in your prompt, those approaches already failed. Analyze why and try something fundamentally different.
+
 ## Knowledge Sharing
 
 Share learnings with your team using:

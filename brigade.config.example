@@ -314,6 +314,33 @@ CROSS_PRD_CONTEXT_ENABLED=true
 CROSS_PRD_MAX_RELATED=3
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SMART RETRY (P16)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Learn from failures instead of repeating them. Classifies errors, tracks
+# approaches, and enriches retry prompts with what was already tried.
+
+# Enable smart retry features (failure classification, approach tracking)
+SMART_RETRY_ENABLED=true
+
+# Custom error patterns for your codebase (comma-separated pattern:category pairs)
+# Example: "MyCustomError:logic,ServiceUnavailable:integration"
+SMART_RETRY_CUSTOM_PATTERNS=""
+
+# Optional JSON file with custom strategy suggestions per error category
+# Format: {"syntax": "Try: ...", "integration": "Try: ...", ...}
+SMART_RETRY_STRATEGIES_FILE=""
+
+# Maximum previous approaches to show in retry prompt (prevents prompt bloat)
+SMART_RETRY_APPROACH_HISTORY_MAX=3
+
+# Maximum session failures to track for cross-task learning
+SMART_RETRY_SESSION_FAILURES_MAX=5
+
+# Auto-add to learnings after this many occurrences of same error category
+# Set to 0 to disable auto-learning
+SMART_RETRY_AUTO_LEARNING_THRESHOLD=3
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ESCALATION
 # ═══════════════════════════════════════════════════════════════════════════════
 

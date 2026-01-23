@@ -505,6 +505,14 @@ RISK_REPORT_ENABLED=true           # Show risk summary before service execution
 RISK_HISTORY_SCAN=false            # Include historical escalation patterns
 RISK_WARN_THRESHOLD=""             # Warn at this risk level: low, medium, high (empty = disabled)
 
+# Smart retry defaults (P16)
+SMART_RETRY_ENABLED=true           # Enable failure classification and approach tracking
+SMART_RETRY_CUSTOM_PATTERNS=""     # Custom patterns "pattern1:category,pattern2:category"
+SMART_RETRY_STRATEGIES_FILE=""     # Optional JSON override for strategy suggestions
+SMART_RETRY_APPROACH_HISTORY_MAX=3 # Max previous approaches to show in retry prompt
+SMART_RETRY_SESSION_FAILURES_MAX=5 # Max session failures to track (cross-task learning)
+SMART_RETRY_AUTO_LEARNING_THRESHOLD=3  # Auto-add to learnings after N occurrences
+
 # Runtime state (set during execution)
 LAST_REVIEW_FEEDBACK=""       # Feedback from failed executive review, passed to worker on retry
 LAST_VERIFICATION_FEEDBACK="" # Feedback from failed verification commands, passed to worker on retry
@@ -518,6 +526,11 @@ CURRENT_PRD_PATH=""                # Current PRD being processed (for visibility
 CURRENT_TASK_ID=""                 # Current task being worked (for visibility features)
 CURRENT_WORKER=""                  # Current worker (for visibility features)
 LAST_HEARTBEAT_TIME=0              # Last time heartbeat was written
+LAST_ERROR_CATEGORY=""             # Classification of last failure (syntax, logic, integration, environment, unknown)
+LAST_ERROR_SUMMARY=""              # Brief summary of last error
+LAST_APPROACH=""                   # Approach from last worker attempt
+ESCALATED_FROM=""                  # Worker tier we escalated from (for context enrichment)
+SMART_RETRY_SESSION_FAILURES=()    # Array of session failures "category:summary" (cross-task learning)
 
 # Module system defaults
 MODULES=""                         # Comma-separated list of modules to enable
@@ -1986,6 +1999,306 @@ record_phase_review() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SMART RETRY (P16) - Failure classification and approach tracking
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Classify error from worker output or verification failure
+# Returns: syntax, integration, environment, logic, or unknown
+classify_error() {
+  local output_file="$1"
+
+  if [ ! -f "$output_file" ]; then
+    echo "unknown"
+    return
+  fi
+
+  # Check custom patterns first (from config)
+  if [ -n "$SMART_RETRY_CUSTOM_PATTERNS" ]; then
+    IFS=',' read -ra custom_patterns <<< "$SMART_RETRY_CUSTOM_PATTERNS"
+    for entry in "${custom_patterns[@]}"; do
+      local pattern="${entry%:*}"
+      local category="${entry#*:}"
+      if grep -qiE "$pattern" "$output_file" 2>/dev/null; then
+        echo "$category"
+        return
+      fi
+    done
+  fi
+
+  # Syntax errors (compilation, parsing)
+  if grep -qiE "SyntaxError|ParseError|compile error|unexpected token|unexpected EOF|unterminated|missing semicolon|missing.*bracket|invalid syntax" "$output_file" 2>/dev/null; then
+    echo "syntax"
+    return
+  fi
+
+  # Integration errors (network, external services, APIs)
+  if grep -qiE "connection refused|ECONNREFUSED|timeout|ETIMEDOUT|API error|404|500|502|503|network error|DNS|socket hang up|ENOTFOUND|ECONNRESET" "$output_file" 2>/dev/null; then
+    echo "integration"
+    return
+  fi
+
+  # Environment errors (missing files, permissions, dependencies)
+  if grep -qiE "command not found|No such file|Permission denied|ENOENT|EACCES|not found|missing dependency|module not found|cannot find" "$output_file" 2>/dev/null; then
+    echo "environment"
+    return
+  fi
+
+  # Logic errors (test failures, assertion failures)
+  if grep -qiE "FAIL|AssertionError|expected.*got|test failed|assertion failed|does not match|mismatch|incorrect|wrong" "$output_file" 2>/dev/null; then
+    echo "logic"
+    return
+  fi
+
+  echo "unknown"
+}
+
+# Extract a brief error summary from output (first relevant line)
+extract_error_summary() {
+  local output_file="$1"
+  local max_len="${2:-100}"
+
+  if [ ! -f "$output_file" ]; then
+    echo "No output captured"
+    return
+  fi
+
+  # Try to find the most relevant error line
+  local summary=""
+
+  # Look for common error patterns and extract the line
+  summary=$(grep -iE "error:|Error:|ERROR|FAIL|failed|exception|SyntaxError|TypeError|ReferenceError" "$output_file" 2>/dev/null | head -1)
+
+  # Fallback: look for lines with ":" that look like error messages
+  if [ -z "$summary" ]; then
+    summary=$(grep -E "^[A-Za-z].*: " "$output_file" 2>/dev/null | tail -1)
+  fi
+
+  # Fallback: just use last non-empty line
+  if [ -z "$summary" ]; then
+    summary=$(tail -5 "$output_file" 2>/dev/null | grep -v "^$" | tail -1)
+  fi
+
+  # Truncate and clean
+  summary=$(echo "$summary" | head -c "$max_len" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+
+  echo "${summary:-Unknown error}"
+}
+
+# Extract approach from worker output (looks for <approach> tag)
+extract_approach_from_output() {
+  local output_file="$1"
+
+  if [ ! -f "$output_file" ]; then
+    return
+  fi
+
+  # Extract first approach tag content
+  sed -n 's/.*<approach>\(.*\)<\/approach>.*/\1/p' "$output_file" 2>/dev/null | head -1
+}
+
+# Get approach history for a task from state
+get_approach_history() {
+  local prd_path="$1"
+  local task_id="$2"
+  local max_entries="${3:-$SMART_RETRY_APPROACH_HISTORY_MAX}"
+
+  if [ "$CONTEXT_ISOLATION" != "true" ] || [ "$SMART_RETRY_ENABLED" != "true" ]; then
+    return
+  fi
+
+  local state_path=$(get_state_path "$prd_path")
+  if [ ! -f "$state_path" ]; then
+    return
+  fi
+
+  # Extract recent task history entries that have approach info
+  jq -r --arg id "$task_id" --argjson max "$max_entries" '
+    [.taskHistory[] | select(.taskId == $id and .approach != null and .approach != "")] |
+    .[-$max:] |
+    map("- \(.approach) → \(.errorCategory // "?"): \(.errorSummary // "failed")") |
+    join("\n")' "$state_path" 2>/dev/null
+}
+
+# Get strategy suggestions based on error category
+get_strategy_suggestions() {
+  local error_category="$1"
+
+  # Check for custom strategies file first
+  if [ -n "$SMART_RETRY_STRATEGIES_FILE" ] && [ -f "$SMART_RETRY_STRATEGIES_FILE" ]; then
+    local custom_suggestion=$(jq -r --arg cat "$error_category" '.[$cat] // empty' "$SMART_RETRY_STRATEGIES_FILE" 2>/dev/null)
+    if [ -n "$custom_suggestion" ]; then
+      echo "$custom_suggestion"
+      return
+    fi
+  fi
+
+  # Default suggestions by category
+  case "$error_category" in
+    "syntax")
+      echo "Try: Check language version compatibility, verify imports, review compiler/linter output carefully"
+      ;;
+    "integration")
+      echo "Try: Mock the external service, use test doubles, verify service is running and accessible, check network configuration"
+      ;;
+    "environment")
+      echo "Try: Check file paths exist, verify permissions, ensure dependencies are installed, use portable paths"
+      ;;
+    "logic")
+      echo "Try: Re-read acceptance criteria carefully, check edge cases, verify test setup and expectations, add debug logging"
+      ;;
+    *)
+      echo "Try: Break the problem into smaller steps, start with a simpler approach, add diagnostic output"
+      ;;
+  esac
+}
+
+# Build escalation context when escalating to higher tier
+build_escalation_context() {
+  local prd_path="$1"
+  local task_id="$2"
+  local from_worker="$3"
+
+  if [ "$SMART_RETRY_ENABLED" != "true" ]; then
+    return
+  fi
+
+  local state_path=$(get_state_path "$prd_path")
+  if [ ! -f "$state_path" ]; then
+    return
+  fi
+
+  # Get attempts summary from task history
+  local attempts=$(jq -r --arg id "$task_id" '
+    [.taskHistory[] | select(.taskId == $id)] |
+    map("- \(.worker): \(.approach // "unknown approach") → \(.errorCategory // "?")") |
+    unique |
+    join("\n")' "$state_path" 2>/dev/null)
+
+  if [ -z "$attempts" ] || [ "$attempts" == "null" ]; then
+    return
+  fi
+
+  cat <<EOF
+=== ESCALATION CONTEXT ===
+Escalated from $(get_worker_name "$from_worker") after multiple failures.
+
+Attempted approaches:
+$attempts
+
+Do NOT repeat these approaches. Try something fundamentally different.
+===========================
+EOF
+}
+
+# Record session failure for cross-task learning
+record_session_failure() {
+  local error_category="$1"
+  local error_summary="$2"
+
+  if [ "$SMART_RETRY_ENABLED" != "true" ]; then
+    return
+  fi
+
+  # Don't record unknown errors
+  [ "$error_category" == "unknown" ] && return
+
+  # Add to session failures array
+  local entry="${error_category}:${error_summary}"
+  SMART_RETRY_SESSION_FAILURES+=("$entry")
+
+  # Check for auto-learning threshold
+  if [ "$SMART_RETRY_AUTO_LEARNING_THRESHOLD" -gt 0 ]; then
+    local count=0
+    for failure in "${SMART_RETRY_SESSION_FAILURES[@]}"; do
+      if [[ "$failure" == "${error_category}:"* ]]; then
+        ((count++))
+      fi
+    done
+
+    if [ "$count" -ge "$SMART_RETRY_AUTO_LEARNING_THRESHOLD" ]; then
+      log_event "INFO" "Auto-learning: Recurring $error_category failures detected ($count occurrences)"
+      # Note: We don't auto-add to learnings file here to avoid noise
+      # Instead we just log - the patterns are captured in session failures
+    fi
+  fi
+}
+
+# Get session failures for inclusion in worker prompt
+get_session_failures() {
+  if [ "$SMART_RETRY_ENABLED" != "true" ]; then
+    return
+  fi
+
+  local max="${SMART_RETRY_SESSION_FAILURES_MAX:-5}"
+
+  # Deduplicate and limit
+  printf '%s\n' "${SMART_RETRY_SESSION_FAILURES[@]}" 2>/dev/null | sort -u | head -"$max" | while read -r failure; do
+    local category="${failure%%:*}"
+    local summary="${failure#*:}"
+    echo "- $category: $summary"
+  done
+}
+
+# Update task history with error classification and approach
+# Call this after a failure to record what was tried
+update_state_task_failure() {
+  local prd_path="$1"
+  local task_id="$2"
+  local worker="$3"
+  local status="$4"
+  local error_category="$5"
+  local error_summary="$6"
+  local approach="$7"
+
+  if [ "$CONTEXT_ISOLATION" != "true" ]; then
+    return 0
+  fi
+
+  local state_path=$(get_state_path "$prd_path")
+
+  acquire_lock "$state_path"
+  ensure_valid_state "$state_path" "$prd_path"
+  local tmp_file=$(brigade_mktemp)
+
+  # Build JSON entry with all available fields
+  set +e
+  jq --arg task "$task_id" \
+     --arg worker "$worker" \
+     --arg status "$status" \
+     --arg ts "$(date -Iseconds)" \
+     --arg errCat "${error_category:-}" \
+     --arg errSum "${error_summary:-}" \
+     --arg approach "${approach:-}" \
+    '.currentTask = $task | .taskHistory += [{
+      "taskId": $task,
+      "worker": $worker,
+      "status": $status,
+      "timestamp": $ts,
+      "errorCategory": (if $errCat != "" then $errCat else null end),
+      "errorSummary": (if $errSum != "" then $errSum else null end),
+      "approach": (if $approach != "" then $approach else null end)
+    }]' "$state_path" > "$tmp_file"
+  local jq_exit=$?
+  set -e
+
+  if [ $jq_exit -eq 0 ] && [ -s "$tmp_file" ]; then
+    mv "$tmp_file" "$state_path"
+  else
+    echo -e "${YELLOW}Warning: Could not update state with failure info for $task_id${NC}" >&2
+    rm -f "$tmp_file"
+  fi
+
+  release_lock "$state_path"
+
+  # Also record in session failures for cross-task learning
+  if [ -n "$error_category" ] && [ "$error_category" != "unknown" ]; then
+    record_session_failure "$error_category" "$error_summary"
+  fi
+
+  return 0
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SUPERVISOR INTEGRATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -3105,9 +3418,51 @@ Note: Check related PRDs for patterns to follow or conflicts to avoid.
     fi
   fi
 
+  # Smart retry: Include previous approach history (P16)
+  local approach_history_section=""
+  if [ "$SMART_RETRY_ENABLED" == "true" ]; then
+    local approach_history=$(get_approach_history "$prd_path" "$task_id")
+    if [ -n "$approach_history" ] && [ "$approach_history" != "null" ]; then
+      approach_history_section="
+---
+PREVIOUS APPROACHES (avoid repeating these):
+$approach_history
+
+Try a DIFFERENT approach this time.
+---
+"
+    fi
+  fi
+
+  # Smart retry: Include escalation context if we were escalated (P16)
+  local escalation_context_section=""
+  if [ "$SMART_RETRY_ENABLED" == "true" ] && [ -n "$ESCALATED_FROM" ]; then
+    escalation_context_section="
+---
+$(build_escalation_context "$prd_path" "$task_id" "$ESCALATED_FROM")
+---
+"
+  fi
+
+  # Smart retry: Include session failures for cross-task learning (P16)
+  local session_failures_section=""
+  if [ "$SMART_RETRY_ENABLED" == "true" ] && [ ${#SMART_RETRY_SESSION_FAILURES[@]} -gt 0 ]; then
+    local session_failures=$(get_session_failures)
+    if [ -n "$session_failures" ]; then
+      session_failures_section="
+---
+SESSION FAILURES (issues encountered in other tasks this session):
+$session_failures
+
+Be aware of these patterns that have caused problems.
+---
+"
+    fi
+  fi
+
   cat <<EOF
 $chef_prompt
-$learnings_section$review_feedback_section$verification_feedback_section$todo_feedback_section$manual_verification_feedback_section$verification_section$iteration_context_section$cross_prd_section
+$learnings_section$review_feedback_section$verification_feedback_section$todo_feedback_section$manual_verification_feedback_section$verification_section$iteration_context_section$cross_prd_section$approach_history_section$escalation_context_section$session_failures_section
 ---
 FEATURE: $feature_name
 PRD_FILE: $prd_path
@@ -3126,6 +3481,7 @@ INSTRUCTIONS:
 8. Share useful learnings with: <learning>What you learned</learning>
 9. Log out-of-scope discoveries with: <backlog>Description of issue or enhancement</backlog>
 10. For scope/requirement ambiguities, ask: <scope-question>Your question about scope or approach</scope-question>
+11. State your approach upfront with: <approach>Your strategy in 1-2 sentences</approach>
 
 BEGIN WORK:
 EOF
@@ -3362,6 +3718,15 @@ fire_ticket() {
   # Handle any scope questions (in walkaway mode, exec chef decides)
   extract_scope_questions_from_output "$output_file" "$prd_path" "$task_id" "$worker"
 
+  # Smart retry: extract approach from worker output (P16)
+  LAST_APPROACH=""
+  if [ "$SMART_RETRY_ENABLED" == "true" ] && [ -f "$output_file" ]; then
+    LAST_APPROACH=$(extract_approach_from_output "$output_file")
+    if [ -n "$LAST_APPROACH" ]; then
+      echo -e "${GRAY}Approach: $LAST_APPROACH${NC}"
+    fi
+  fi
+
   # Scan for red flags in worker output (incomplete work indicators)
   # Sets LAST_OUTPUT_WARNINGS if found - passed to executive review for consideration
   LAST_OUTPUT_WARNINGS=""
@@ -3545,10 +3910,30 @@ run_verification() {
     LAST_VERIFICATION_FEEDBACK="Verification commands failed:${failed_cmds}
 
 Please fix these issues and ensure all verification commands pass before signaling COMPLETE."
+
+    # Smart retry: classify verification error for better retry guidance
+    if [ "$SMART_RETRY_ENABLED" == "true" ]; then
+      # Create temp file with failure details for classification
+      local error_details_file=$(brigade_mktemp)
+      echo -e "$failed_cmds" > "$error_details_file"
+      LAST_ERROR_CATEGORY=$(classify_error "$error_details_file")
+      LAST_ERROR_SUMMARY=$(extract_error_summary "$error_details_file" 80)
+      rm -f "$error_details_file"
+
+      if [ "$LAST_ERROR_CATEGORY" != "unknown" ]; then
+        local strategy=$(get_strategy_suggestions "$LAST_ERROR_CATEGORY")
+        LAST_VERIFICATION_FEEDBACK="${LAST_VERIFICATION_FEEDBACK}
+
+Error classification: $LAST_ERROR_CATEGORY
+$strategy"
+      fi
+    fi
     return 1
   else
     log_event "SUCCESS" "✅ Taste test passed! $pass_count of $cmd_count check(s)"
     LAST_VERIFICATION_FEEDBACK=""
+    LAST_ERROR_CATEGORY=""
+    LAST_ERROR_SUMMARY=""
     return 0
   fi
 }
@@ -4857,11 +5242,24 @@ build_walkaway_decision_prompt() {
   local state_path=$(get_state_path "$prd_path")
   local task_history=""
   if [ -f "$state_path" ]; then
+    # Smart retry: include error classification in history if available
     task_history=$(jq -r --arg id "$task_id" '
       [.taskHistory[] | select(.taskId == $id)] |
       .[-5:] |
-      map("- \(.timestamp | split("T")[1] | split("+")[0] | .[0:8]): \(.worker) - \(.status)") |
+      map("- \(.timestamp | split("T")[1] | split("+")[0] | .[0:8]): \(.worker) - \(.status)" +
+          (if .errorCategory then " [\(.errorCategory)]" else "" end) +
+          (if .approach then " (approach: \(.approach | .[0:50]))" else "" end)) |
       join("\n")' "$state_path" 2>/dev/null || echo "")
+  fi
+
+  # Smart retry: get error classification context
+  local error_context=""
+  if [ "$SMART_RETRY_ENABLED" == "true" ] && [ -n "$LAST_ERROR_CATEGORY" ]; then
+    local strategy=$(get_strategy_suggestions "$LAST_ERROR_CATEGORY")
+    error_context="
+ERROR CLASSIFICATION: $LAST_ERROR_CATEGORY
+$strategy
+"
   fi
 
   # Get completed and pending tasks
@@ -4876,7 +5274,7 @@ FAILED TASK: $task_id - $task_title
 LAST WORKER: $(get_worker_name "$last_worker")
 ITERATIONS: $iteration_count
 FAILURE REASON: $failure_reason
-
+$error_context
 TASK DETAILS:
 $task_json
 
@@ -6196,6 +6594,10 @@ cmd_ticket() {
   LAST_VERIFICATION_FEEDBACK=""
   LAST_TODO_WARNINGS=""
   LAST_MANUAL_VERIFICATION_FEEDBACK=""
+  LAST_ERROR_CATEGORY=""
+  LAST_ERROR_SUMMARY=""
+  LAST_APPROACH=""
+  ESCALATED_FROM=""
 
   # Track task start time for timeout checking
   local task_start_epoch=$(date +%s)
@@ -6231,6 +6633,7 @@ cmd_ticket() {
       echo ""
 
       record_escalation "$prd_path" "$task_id" "line" "sous" "Max iterations ($ESCALATION_AFTER) reached without completion"
+      ESCALATED_FROM="line"  # Smart retry: track escalation source for context enrichment
       worker="sous"
       escalation_tier=1
       iteration_in_tier=0
@@ -6251,6 +6654,7 @@ cmd_ticket() {
       echo ""
 
       record_escalation "$prd_path" "$task_id" "sous" "executive" "Max iterations ($ESCALATION_TO_EXEC_AFTER) reached without completion"
+      ESCALATED_FROM="sous"  # Smart retry: track escalation source for context enrichment
       worker="executive"
       escalation_tier=2
       iteration_in_tier=0
@@ -6276,6 +6680,7 @@ cmd_ticket() {
           echo ""
 
           record_escalation "$prd_path" "$task_id" "line" "sous" "Task timeout (${elapsed_mins}m exceeded ${timeout_mins}m limit)"
+          ESCALATED_FROM="line"  # Smart retry: track escalation source
           worker="sous"
           escalation_tier=1
           iteration_in_tier=0
@@ -6290,6 +6695,7 @@ cmd_ticket() {
           echo ""
 
           record_escalation "$prd_path" "$task_id" "sous" "executive" "Task timeout (${elapsed_mins}m exceeded ${timeout_mins}m limit)"
+          ESCALATED_FROM="sous"  # Smart retry: track escalation source
           worker="executive"
           escalation_tier=2
           iteration_in_tier=0
@@ -6343,7 +6749,13 @@ cmd_ticket() {
       if ! run_verification "$prd_path" "$task_id"; then
         verification_passed=false
         echo -e "${YELLOW}Verification failed, continuing iterations...${NC}"
-        update_state_task "$prd_path" "$task_id" "$worker" "verification_failed"
+        # Smart retry: record failure with classification and approach
+        if [ "$SMART_RETRY_ENABLED" == "true" ]; then
+          update_state_task_failure "$prd_path" "$task_id" "$worker" "verification_failed" \
+            "$LAST_ERROR_CATEGORY" "$LAST_ERROR_SUMMARY" "$LAST_APPROACH"
+        else
+          update_state_task "$prd_path" "$task_id" "$worker" "verification_failed"
+        fi
         # Continue to next iteration - LAST_VERIFICATION_FEEDBACK is set
         continue
       fi
