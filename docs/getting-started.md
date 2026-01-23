@@ -17,7 +17,12 @@ git clone https://github.com/rjarow/brigade.git
 ./brigade.sh install-commands
 ```
 
-**3. Start cooking:**
+**3. Start Claude Code:**
+```bash
+claude
+```
+
+**4. Start cooking:**
 ```
 You: /brigade plan "Add user authentication with JWT"
 
