@@ -1,0 +1,64 @@
+site_name: Brigade
+site_description: Multi-model AI orchestration framework
+site_url: https://rjarow.github.io/brigade/
+repo_url: https://github.com/rjarow/brigade
+repo_name: rjarow/brigade
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started.md
+  - Concepts:
+    - How It Works: how-it-works.md
+    - Architecture: architecture.md
+  - Features:
+    - Smart Retries: features/smart-retries.md
+    - Walkaway Mode: features/walkaway-mode.md
+    - Supervisor Integration: features/supervisor.md
+    - Risk Assessment: risk-assessment.md
+  - Guides:
+    - Writing PRDs: writing-prds.md
+    - Configuration: configuration.md
+    - Modules: modules.md
+  - Reference:
+    - CLI Commands: reference/commands.md
+  - Troubleshooting: troubleshooting.md

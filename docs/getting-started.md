@@ -1,4 +1,4 @@
-# Getting Started 🍳
+# Getting Started
 
 Get your kitchen running in 5 minutes.
 
@@ -140,3 +140,10 @@ See available models: `./brigade.sh opencode-models`
 - **[How It Works](how-it-works.md)** - Understand the execution flow
 - **[Configuration](configuration.md)** - Tune the kitchen
 - **[Writing PRDs](writing-prds.md)** - Manual PRD creation
+
+## Advanced Features
+
+- **[Smart Retries](features/smart-retries.md)** - Learn from failures
+- **[Walkaway Mode](features/walkaway-mode.md)** - Autonomous execution
+- **[Supervisor Integration](features/supervisor.md)** - AI-driven oversight
+- **[CLI Reference](reference/commands.md)** - All commands
