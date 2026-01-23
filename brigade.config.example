@@ -287,6 +287,33 @@ VERIFICATION_WARN_GREP_ONLY=true
 MANUAL_VERIFICATION_ENABLED=false
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PRD QUALITY & VERIFICATION DEPTH (P15)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Detect PRD quality issues at planning/validation time rather than execution time.
+
+# Lint acceptance criteria for ambiguous language during `validate`
+# Detects: "shown" without context, "supports X" without default state,
+#          "handles errors" without specifics, "user can" without method,
+#          subjective terms like "appropriate", "suitable", "reasonable"
+CRITERIA_LINT_ENABLED=true
+
+# Suggest verification commands for tasks without them during `validate`
+# Suggestions based on task title keywords and detected project stack (Go/Node/Python/etc)
+VERIFICATION_SCAFFOLD_ENABLED=true
+
+# Detect web apps (React/Vue/Svelte/HTMX) with UI tasks but no E2E testing
+# Prompts to add Playwright/Cypress when UI-related tasks detected
+E2E_DETECTION_ENABLED=true
+
+# Include related PRD context in worker prompts
+# Workers see: related PRDs, their status (complete/in-progress), and relevant learnings
+# Helps avoid conflicts and follow established patterns
+CROSS_PRD_CONTEXT_ENABLED=true
+
+# Maximum related PRDs to include in worker prompt context
+CROSS_PRD_MAX_RELATED=3
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ESCALATION
 # ═══════════════════════════════════════════════════════════════════════════════
 

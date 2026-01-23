@@ -3091,9 +3091,23 @@ This is a small iteration/tweak on the completed feature. Focus only on the spec
 "
   fi
 
+  # Include cross-PRD context if enabled (P15)
+  local cross_prd_section=""
+  if [ "${CROSS_PRD_CONTEXT_ENABLED:-true}" == "true" ]; then
+    local cross_prd_context=$(get_cross_prd_context "$prd_path" "$task_id")
+    if [ -n "$cross_prd_context" ]; then
+      cross_prd_section="
+---
+$cross_prd_context
+Note: Check related PRDs for patterns to follow or conflicts to avoid.
+---
+"
+    fi
+  fi
+
   cat <<EOF
 $chef_prompt
-$learnings_section$review_feedback_section$verification_feedback_section$todo_feedback_section$manual_verification_feedback_section$verification_section$iteration_context_section
+$learnings_section$review_feedback_section$verification_feedback_section$todo_feedback_section$manual_verification_feedback_section$verification_section$iteration_context_section$cross_prd_section
 ---
 FEATURE: $feature_name
 PRD_FILE: $prd_path
@@ -3726,6 +3740,399 @@ check_prd_verification_coverage() {
   done
 
   return $warnings
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRD QUALITY & VERIFICATION DEPTH (P15)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Pattern matching for vague/ambiguous acceptance criteria phrases
+# Returns warnings (one per line) to stdout
+lint_acceptance_criteria() {
+  local criterion="$1"
+  local task_id="$2"
+  local criterion_lower=$(echo "$criterion" | tr '[:upper:]' '[:lower:]')
+
+  # "shown" without context
+  if echo "$criterion_lower" | grep -qE '\bshown\b' && ! echo "$criterion_lower" | grep -qE '(shown when|shown by default|shown if|shown after|shown on|shown in)'; then
+    printf '%s: "shown" is ambiguous - specify when/where/how it'\''s shown\n' "$task_id"
+  fi
+
+  # "supports X" without enabled state
+  if echo "$criterion_lower" | grep -qE '\bsupports?\b' && ! echo "$criterion_lower" | grep -qE '(by default|enabled|disabled|opt.?in|opt.?out|when configured)'; then
+    printf '%s: "supports" is ambiguous - specify if enabled by default or opt-in\n' "$task_id"
+  fi
+
+  # "works correctly/properly"
+  if echo "$criterion_lower" | grep -qE '\b(works?\s+(correctly|properly)|correctly\s+works?|properly\s+works?)\b'; then
+    printf '%s: "works correctly/properly" is vague - specify expected behavior\n' "$task_id"
+  fi
+
+  # "handles errors" without specifics
+  if echo "$criterion_lower" | grep -qE '\bhandles?\s+(errors?|exceptions?|failures?)\b' && ! echo "$criterion_lower" | grep -qE '(returns|displays|shows|logs|emits|throws|with message|error code|status)'; then
+    printf '%s: "handles errors" is vague - specify error response/behavior\n' "$task_id"
+  fi
+
+  # "user can X" without method
+  if echo "$criterion_lower" | grep -qE '\buser\s+can\b' && ! echo "$criterion_lower" | grep -qE '(via|using|by clicking|through|in the|from the|with the|button|menu|command|api|cli)'; then
+    printf '%s: "user can" is vague - specify via what interface (UI/CLI/API)\n' "$task_id"
+  fi
+
+  # Subjective terms
+  if echo "$criterion_lower" | grep -qE '\b(appropriate|suitable|reasonable|adequate|sufficient|good|nice|clean|proper)\b'; then
+    local match=$(echo "$criterion_lower" | grep -oE '\b(appropriate|suitable|reasonable|adequate|sufficient|good|nice|clean|proper)\b' | head -1)
+    printf '%s: "%s" is subjective - specify measurable criteria\n' "$task_id" "$match"
+  fi
+
+  # "should be" phrasing (uncertainty)
+  if echo "$criterion_lower" | grep -qE '\bshould\s+be\b'; then
+    printf '%s: "should be" implies uncertainty - use declarative language ("is", "returns", "displays")\n' "$task_id"
+  fi
+
+  # Empty or very short criteria
+  local word_count=$(echo "$criterion" | wc -w | tr -d ' ')
+  if [ "$word_count" -lt 3 ]; then
+    printf '%s: Criterion is too brief (%d words) - provide more detail\n' "$task_id" "$word_count"
+  fi
+}
+
+# Lint all acceptance criteria for a task
+# Returns: 0 if no warnings, 1 if warnings found
+# Side effect: sets TASK_CRITERIA_WARNINGS (newline-separated)
+lint_task_criteria() {
+  local prd_path="$1"
+  local task_id="$2"
+  TASK_CRITERIA_WARNINGS=""
+
+  local criteria=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .acceptanceCriteria[]?' "$prd_path" 2>/dev/null)
+
+  if [ -z "$criteria" ]; then
+    return 0
+  fi
+
+  while IFS= read -r criterion; do
+    [ -z "$criterion" ] && continue
+    local warnings=$(lint_acceptance_criteria "$criterion" "$task_id")
+    if [ -n "$warnings" ]; then
+      # $() strips trailing newlines, so add one back when appending
+      TASK_CRITERIA_WARNINGS="${TASK_CRITERIA_WARNINGS}${warnings}
+"
+    fi
+  done <<< "$criteria"
+
+  if [ -n "$TASK_CRITERIA_WARNINGS" ]; then
+    return 1
+  fi
+  return 0
+}
+
+# Suggest verification commands based on task title and project stack
+# Returns suggestions to stdout
+suggest_verification() {
+  local prd_path="$1"
+  local task_id="$2"
+
+  local task_title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title // ""' "$prd_path")
+  local title_lower=$(echo "$task_title" | tr '[:upper:]' '[:lower:]')
+  local suggestions=""
+
+  # Detect project stack
+  local stack=""
+  if [ -f "go.mod" ]; then
+    stack="go"
+  elif [ -f "package.json" ]; then
+    stack="node"
+  elif [ -f "requirements.txt" ] || [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
+    stack="python"
+  elif [ -f "Cargo.toml" ]; then
+    stack="rust"
+  elif [ -f "Gemfile" ]; then
+    stack="ruby"
+  fi
+
+  # CLI/Command/Flag patterns
+  if echo "$title_lower" | grep -qE '\b(cli|command|flag|option|argument|args)\b'; then
+    case "$stack" in
+      go) suggestions="${suggestions}  {\"type\": \"smoke\", \"cmd\": \"go build ./... && ./bin/app --help\"}\n" ;;
+      node) suggestions="${suggestions}  {\"type\": \"smoke\", \"cmd\": \"npm run build && node ./dist/cli.js --help\"}\n" ;;
+      python) suggestions="${suggestions}  {\"type\": \"smoke\", \"cmd\": \"python -m app --help\"}\n" ;;
+      rust) suggestions="${suggestions}  {\"type\": \"smoke\", \"cmd\": \"cargo build && ./target/debug/app --help\"}\n" ;;
+      *) suggestions="${suggestions}  {\"type\": \"smoke\", \"cmd\": \"./app --help\"}\n" ;;
+    esac
+  fi
+
+  # API/Endpoint/Handler patterns
+  if echo "$title_lower" | grep -qE '\b(api|endpoint|handler|route|controller|rest)\b'; then
+    case "$stack" in
+      go) suggestions="${suggestions}  {\"type\": \"integration\", \"cmd\": \"go test -run TestAPI ./...\"}\n" ;;
+      node) suggestions="${suggestions}  {\"type\": \"integration\", \"cmd\": \"npm test -- --grep \\\"API\\\"\"}\n" ;;
+      python) suggestions="${suggestions}  {\"type\": \"integration\", \"cmd\": \"pytest -k api\"}\n" ;;
+      rust) suggestions="${suggestions}  {\"type\": \"integration\", \"cmd\": \"cargo test api\"}\n" ;;
+      *) suggestions="${suggestions}  {\"type\": \"integration\", \"cmd\": \"# Add API test command\"}\n" ;;
+    esac
+  fi
+
+  # Model/Schema/Database patterns
+  if echo "$title_lower" | grep -qE '\b(model|schema|database|db|migration|entity|table)\b'; then
+    case "$stack" in
+      go) suggestions="${suggestions}  {\"type\": \"unit\", \"cmd\": \"go test -run TestModel ./internal/models/...\"}\n" ;;
+      node) suggestions="${suggestions}  {\"type\": \"unit\", \"cmd\": \"npm test -- --grep \\\"model\\\"\"}\n" ;;
+      python) suggestions="${suggestions}  {\"type\": \"unit\", \"cmd\": \"pytest -k model\"}\n" ;;
+      *) suggestions="${suggestions}  {\"type\": \"unit\", \"cmd\": \"# Add model test command\"}\n" ;;
+    esac
+  fi
+
+  # Auth/Login/JWT patterns
+  if echo "$title_lower" | grep -qE '\b(auth|login|jwt|oauth|session|token|password)\b'; then
+    case "$stack" in
+      go) suggestions="${suggestions}  {\"type\": \"unit\", \"cmd\": \"go test -run TestAuth ./internal/auth/...\"}\n  {\"type\": \"integration\", \"cmd\": \"go test -run TestLoginFlow ./internal/app/...\"}\n" ;;
+      node) suggestions="${suggestions}  {\"type\": \"unit\", \"cmd\": \"npm test -- --grep \\\"auth\\\"\"}\n  {\"type\": \"integration\", \"cmd\": \"npm test -- --grep \\\"login flow\\\"\"}\n" ;;
+      python) suggestions="${suggestions}  {\"type\": \"unit\", \"cmd\": \"pytest -k auth\"}\n  {\"type\": \"integration\", \"cmd\": \"pytest -k login\"}\n" ;;
+      *) suggestions="${suggestions}  {\"type\": \"unit\", \"cmd\": \"# Add auth unit tests\"}\n  {\"type\": \"integration\", \"cmd\": \"# Add auth integration tests\"}\n" ;;
+    esac
+  fi
+
+  # Integration/Connect/Wire patterns
+  if echo "$title_lower" | grep -qE '\b(integrat|connect|wire|link|hook|bind)\b'; then
+    case "$stack" in
+      go) suggestions="${suggestions}  {\"type\": \"integration\", \"cmd\": \"go test -tags=integration ./...\"}\n" ;;
+      node) suggestions="${suggestions}  {\"type\": \"integration\", \"cmd\": \"npm run test:integration\"}\n" ;;
+      python) suggestions="${suggestions}  {\"type\": \"integration\", \"cmd\": \"pytest -m integration\"}\n" ;;
+      *) suggestions="${suggestions}  {\"type\": \"integration\", \"cmd\": \"# Add integration test command\"}\n" ;;
+    esac
+  fi
+
+  # Feature/Flow/User patterns (need smoke tests)
+  if echo "$title_lower" | grep -qE '\b(feature|flow|workflow|user can|user sees|full|complete|end.to.end)\b'; then
+    case "$stack" in
+      go) suggestions="${suggestions}  {\"type\": \"smoke\", \"cmd\": \"go test -tags=smoke ./...\"}\n" ;;
+      node) suggestions="${suggestions}  {\"type\": \"smoke\", \"cmd\": \"npm run test:e2e\"}\n" ;;
+      python) suggestions="${suggestions}  {\"type\": \"smoke\", \"cmd\": \"pytest -m smoke\"}\n" ;;
+      *) suggestions="${suggestions}  {\"type\": \"smoke\", \"cmd\": \"# Add smoke/e2e test command\"}\n" ;;
+    esac
+  fi
+
+  # Default suggestion if nothing matched
+  if [ -z "$suggestions" ]; then
+    case "$stack" in
+      go) suggestions="  {\"type\": \"unit\", \"cmd\": \"go test ./...\"}\n" ;;
+      node) suggestions="  {\"type\": \"unit\", \"cmd\": \"npm test\"}\n" ;;
+      python) suggestions="  {\"type\": \"unit\", \"cmd\": \"pytest\"}\n" ;;
+      rust) suggestions="  {\"type\": \"unit\", \"cmd\": \"cargo test\"}\n" ;;
+      ruby) suggestions="  {\"type\": \"unit\", \"cmd\": \"bundle exec rspec\"}\n" ;;
+      *) suggestions="  {\"type\": \"unit\", \"cmd\": \"# Add test command\"}\n" ;;
+    esac
+  fi
+
+  echo -e "$suggestions"
+}
+
+# Detect if project is a web app (React/Vue/Svelte/HTMX)
+# Returns: 0 if web app, 1 otherwise
+# Side effect: sets WEB_APP_TYPE
+detect_web_app() {
+  WEB_APP_TYPE=""
+
+  # Check package.json for React/Vue/Svelte/Next.js
+  if [ -f "package.json" ]; then
+    local deps=$(cat package.json | jq -r '.dependencies // {} | keys[]' 2>/dev/null)
+    local dev_deps=$(cat package.json | jq -r '.devDependencies // {} | keys[]' 2>/dev/null)
+    local all_deps="$deps $dev_deps"
+
+    if echo "$all_deps" | grep -qE '^react$'; then
+      WEB_APP_TYPE="react"
+      return 0
+    fi
+    if echo "$all_deps" | grep -qE '^vue$'; then
+      WEB_APP_TYPE="vue"
+      return 0
+    fi
+    if echo "$all_deps" | grep -qE '^svelte$'; then
+      WEB_APP_TYPE="svelte"
+      return 0
+    fi
+    if echo "$all_deps" | grep -qE '^next$'; then
+      WEB_APP_TYPE="nextjs"
+      return 0
+    fi
+    if echo "$all_deps" | grep -qE '^nuxt$'; then
+      WEB_APP_TYPE="nuxt"
+      return 0
+    fi
+  fi
+
+  # Check for HTMX in templates (common patterns)
+  if find . -maxdepth 4 -type f \( -name "*.html" -o -name "*.tmpl" -o -name "*.templ" -o -name "*.gohtml" -o -name "*.jinja2" \) 2>/dev/null | head -20 | xargs grep -l 'hx-' 2>/dev/null | grep -q .; then
+    WEB_APP_TYPE="htmx"
+    return 0
+  fi
+
+  # Check for vanilla JS DOM manipulation in significant JS files
+  if find . -maxdepth 3 -type f -name "*.js" ! -path "*/node_modules/*" 2>/dev/null | head -20 | xargs grep -lE '(document\.(getElementById|querySelector|createElement)|addEventListener|innerHTML|\.onclick)' 2>/dev/null | grep -q .; then
+    WEB_APP_TYPE="vanilla"
+    return 0
+  fi
+
+  return 1
+}
+
+# Check if project has E2E testing setup
+# Returns: 0 if has E2E, 1 otherwise
+# Side effect: sets E2E_FRAMEWORK
+has_e2e_testing() {
+  E2E_FRAMEWORK=""
+
+  # Playwright
+  if [ -f "playwright.config.ts" ] || [ -f "playwright.config.js" ]; then
+    E2E_FRAMEWORK="playwright"
+    return 0
+  fi
+
+  # Cypress
+  if [ -f "cypress.config.ts" ] || [ -f "cypress.config.js" ] || [ -d "cypress" ]; then
+    E2E_FRAMEWORK="cypress"
+    return 0
+  fi
+
+  # Selenium (check for common test files)
+  if find . -maxdepth 3 -type f \( -name "*selenium*" -o -name "*webdriver*" \) ! -path "*/node_modules/*" 2>/dev/null | grep -q .; then
+    E2E_FRAMEWORK="selenium"
+    return 0
+  fi
+
+  # Puppeteer
+  if [ -f "package.json" ] && grep -q '"puppeteer"' package.json 2>/dev/null; then
+    E2E_FRAMEWORK="puppeteer"
+    return 0
+  fi
+
+  return 1
+}
+
+# Check if PRD has UI-related tasks that need E2E testing
+# Returns: 0 if UI tasks found, 1 otherwise
+# Side effect: sets UI_TASK_COUNT and UI_TASK_IDS
+has_ui_tasks() {
+  local prd_path="$1"
+  UI_TASK_COUNT=0
+  UI_TASK_IDS=""
+
+  local all_ids=$(jq -r '.tasks[].id' "$prd_path" 2>/dev/null)
+
+  for task_id in $all_ids; do
+    local title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title // ""' "$prd_path")
+    local criteria=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .acceptanceCriteria[]?' "$prd_path" 2>/dev/null | tr '\n' ' ')
+    local combined=$(echo "$title $criteria" | tr '[:upper:]' '[:lower:]')
+
+    # UI-related keywords
+    if echo "$combined" | grep -qE '\b(user sees|user clicks|clicks|button|form|modal|dropdown|filter|display|render|shows|visible|ui|interface|page|view|component|screen)\b'; then
+      UI_TASK_COUNT=$((UI_TASK_COUNT + 1))
+      UI_TASK_IDS="${UI_TASK_IDS}${task_id} "
+    fi
+  done
+
+  if [ "$UI_TASK_COUNT" -gt 0 ]; then
+    return 0
+  fi
+  return 1
+}
+
+# Find PRDs with keyword overlap to the current task
+# Returns: related PRD info to stdout
+find_related_prds() {
+  local prd_path="$1"
+  local task_id="$2"
+  local max_related="${CROSS_PRD_MAX_RELATED:-3}"
+
+  # Get current task keywords from title
+  local task_title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title // ""' "$prd_path" 2>/dev/null)
+  local keywords=$(echo "$task_title" | tr '[:upper:]' '[:lower:]' | grep -oE '\b[a-z]{3,}\b' | sort -u | head -10)
+
+  if [ -z "$keywords" ]; then
+    return
+  fi
+
+  # Get PRD directory
+  local prd_dir=$(dirname "$prd_path")
+  local current_prd=$(basename "$prd_path")
+
+  # Find other PRDs in same directory
+  local other_prds=$(find "$prd_dir" -maxdepth 1 -name "prd-*.json" ! -name "$current_prd" 2>/dev/null)
+
+  if [ -z "$other_prds" ]; then
+    return
+  fi
+
+  # Score each PRD by keyword overlap
+  local scored_prds=""
+  for other_prd in $other_prds; do
+    local other_name=$(basename "$other_prd")
+    local other_feature=$(jq -r '.featureName // ""' "$other_prd" 2>/dev/null)
+    local other_titles=$(jq -r '.tasks[].title' "$other_prd" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    local score=0
+
+    for keyword in $keywords; do
+      if echo "$other_feature $other_titles" | grep -qi "$keyword"; then
+        score=$((score + 1))
+      fi
+    done
+
+    if [ "$score" -gt 0 ]; then
+      # Determine status
+      local state_path="${other_prd%.json}.state.json"
+      local status="pending"
+      if [ -f "$state_path" ]; then
+        local total=$(jq '.tasks | length' "$other_prd" 2>/dev/null || echo "0")
+        local done=$(jq '[.tasks[] | select(.passes == true)] | length' "$other_prd" 2>/dev/null || echo "0")
+        if [ "$done" -eq "$total" ] && [ "$total" -gt 0 ]; then
+          status="complete"
+        elif [ "$done" -gt 0 ]; then
+          status="in-progress"
+        fi
+      fi
+
+      scored_prds="${scored_prds}${score}|${other_name}|${other_feature}|${status}\n"
+    fi
+  done
+
+  # Sort by score and return top N
+  if [ -n "$scored_prds" ]; then
+    echo -e "$scored_prds" | sort -t'|' -k1 -nr | head -$max_related
+  fi
+}
+
+# Build cross-PRD context section for worker prompt
+get_cross_prd_context() {
+  local prd_path="$1"
+  local task_id="$2"
+
+  local related=$(find_related_prds "$prd_path" "$task_id")
+
+  if [ -z "$related" ]; then
+    return
+  fi
+
+  local context="RELATED PRDs (may have relevant patterns or conflicts):\n"
+  local prd_dir=$(dirname "$prd_path")
+
+  while IFS='|' read -r score name feature status; do
+    [ -z "$name" ] && continue
+    context="${context}- ${feature} (${name}) [${status}]\n"
+
+    # If complete, check for learnings
+    if [ "$status" = "complete" ]; then
+      local learnings_path=$(get_learnings_path "${prd_dir}/${name}")
+      if [ -f "$learnings_path" ]; then
+        local recent_learnings=$(grep -A2 "^## \[" "$learnings_path" 2>/dev/null | head -6)
+        if [ -n "$recent_learnings" ]; then
+          context="${context}  Recent learnings:\n"
+          context="${context}$(echo "$recent_learnings" | sed 's/^/    /')\n"
+        fi
+      fi
+    fi
+  done <<< "$related"
+
+  echo -e "$context"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -7242,6 +7649,78 @@ $current"
       echo -e "  ${GRAY}Walkaway mode requires at least one execution-based verification command${NC}"
       echo -e "  ${GRAY}Add unit, integration, or smoke tests to each task${NC}"
       errors=$((errors + 1))
+    fi
+  fi
+
+  # P15: Acceptance criteria linting
+  if [ "${CRITERIA_LINT_ENABLED:-true}" == "true" ]; then
+    echo ""
+    echo -e "${GRAY}Checking acceptance criteria quality...${NC}"
+    local criteria_lint_warnings=0
+
+    for task_id in $all_ids; do
+      if ! lint_task_criteria "$prd_path" "$task_id"; then
+        # Print each warning on its own line
+        while IFS= read -r warning; do
+          [ -z "$warning" ] && continue
+          echo -e "  ${YELLOW}⚠${NC} $warning"
+          criteria_lint_warnings=$((criteria_lint_warnings + 1))
+        done <<< "$TASK_CRITERIA_WARNINGS"
+      fi
+    done
+
+    if [ "$criteria_lint_warnings" -gt 0 ]; then
+      warnings=$((warnings + 1))
+      echo -e "  ${GRAY}Tip: Specific acceptance criteria lead to better verification${NC}"
+    else
+      echo -e "${GREEN}✓${NC} Acceptance criteria are specific and testable"
+    fi
+  fi
+
+  # P15: Verification scaffolding suggestions
+  if [ "${VERIFICATION_SCAFFOLD_ENABLED:-true}" == "true" ]; then
+    local tasks_without_verification=$(jq -r '.tasks[] | select(.verification == null or (.verification | length) == 0) | .id' "$prd_path")
+    if [ -n "$tasks_without_verification" ]; then
+      echo ""
+      echo -e "${GRAY}Suggested verification commands for tasks without verification:${NC}"
+      for task_id in $tasks_without_verification; do
+        local suggestions=$(suggest_verification "$prd_path" "$task_id")
+        if [ -n "$suggestions" ]; then
+          local task_title=$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .title' "$prd_path" | head -c 50)
+          echo -e "  ${CYAN}$task_id${NC}: $task_title"
+          echo -e "$suggestions"
+        fi
+      done
+    fi
+  fi
+
+  # P15: E2E detection for web apps
+  if [ "${E2E_DETECTION_ENABLED:-true}" == "true" ]; then
+    if detect_web_app; then
+      if has_ui_tasks "$prd_path"; then
+        if ! has_e2e_testing; then
+          echo ""
+          echo -e "${YELLOW}⚠${NC} Web app ($WEB_APP_TYPE) with UI tasks but no E2E testing setup detected"
+          echo -e "  ${GRAY}$UI_TASK_COUNT tasks reference UI elements: $UI_TASK_IDS${NC}"
+          echo -e "  ${GRAY}Consider adding Playwright or Cypress for browser-based verification:${NC}"
+          case "$WEB_APP_TYPE" in
+            react|vue|svelte|nextjs|nuxt)
+              echo -e "    npm install -D @playwright/test"
+              echo -e "    npx playwright install"
+              ;;
+            htmx)
+              echo -e "    # For HTMX apps, Playwright works well:"
+              echo -e "    npm install -D @playwright/test"
+              ;;
+            vanilla)
+              echo -e "    npm install -D @playwright/test"
+              ;;
+          esac
+          warnings=$((warnings + 1))
+        else
+          echo -e "${GREEN}✓${NC} Web app has E2E testing setup ($E2E_FRAMEWORK)"
+        fi
+      fi
     fi
   fi
 

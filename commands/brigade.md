@@ -473,6 +473,56 @@ Every task MUST have execution-based verification, not just grep:
 ]
 ```
 
+### Acceptance Criteria Quality Guidelines
+
+Write **specific, testable, unambiguous** acceptance criteria:
+
+| Bad (Ambiguous) | Good (Specific) |
+|-----------------|-----------------|
+| "Feature shown correctly" | "Login button displays 'Loading' spinner during auth" |
+| "Handles errors" | "Returns HTTP 400 with `{error: 'message'}` body" |
+| "Supports dark mode" | "Dark mode enabled by default when system prefers dark" |
+| "User can export" | "User clicks Export button → downloads CSV file" |
+| "Works properly" | "Response time under 200ms for 95th percentile" |
+
+**Avoid these patterns:**
+- "shown" without context → specify when/where/how
+- "supports X" → specify if enabled by default or opt-in
+- "handles errors" → specify error response/behavior
+- "user can" → specify via what interface (UI/CLI/API)
+- Subjective terms: "appropriate", "suitable", "reasonable", "good"
+
+**When interviewing:**
+- Ask: "What happens when not in a TTY?"
+- Ask: "What if the file doesn't exist?"
+- Ask: "What about empty input?"
+- Ask: "Should this be enabled by default or opt-in?"
+
+### E2E Detection for Web Apps
+
+During codebase analysis, check if this is a web app:
+- React/Vue/Svelte via package.json
+- HTMX via `hx-*` attributes in templates
+- Vanilla JS via DOM manipulation patterns
+
+If web app has UI tasks (buttons, forms, user sees/clicks), check for E2E setup:
+- Look for: `playwright.config.*`, `cypress.config.*`, `cypress/` directory
+- If missing and tasks involve UI interactions, add an E2E testing task:
+  ```json
+  {
+    "id": "US-XXX",
+    "title": "Add Playwright E2E tests for user flows",
+    "acceptanceCriteria": [
+      "Playwright installed and configured",
+      "E2E test covers main user flow from login to completion"
+    ],
+    "verification": [
+      {"type": "smoke", "cmd": "npx playwright test --reporter=list"}
+    ],
+    "complexity": "senior"
+  }
+  ```
+
 ### Complexity Assignment
 
 - **junior**: Tests, boilerplate, CRUD, docs, following patterns
