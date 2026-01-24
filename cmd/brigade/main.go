@@ -458,6 +458,7 @@ type taskStatus struct {
 	Marker     string
 	Worker     string
 	Iterations int
+	Escalated  bool
 }
 
 func getStatus(prdPath string) (*statusInfo, error) {
@@ -472,14 +473,21 @@ func getStatus(prdPath string) (*statusInfo, error) {
 		return nil, err
 	}
 
-	completed := st.CompletedTaskIDs()
-	done := len(completed)
+	// Use PRD passes field as source of truth for completion
+	completed := make(map[string]bool)
+	done := 0
+	for _, task := range p.Tasks {
+		if task.Passes {
+			completed[task.ID] = true
+			done++
+		}
+	}
 
-	// Count reviews
+	// Count reviews (result is uppercase: "PASS" or "FAIL")
 	reviewsPassed := 0
 	reviewsFailed := 0
 	for _, r := range st.Reviews {
-		if r.Result == "pass" {
+		if strings.ToUpper(r.Result) == "PASS" {
 			reviewsPassed++
 		} else {
 			reviewsFailed++
@@ -543,6 +551,9 @@ func getStatus(prdPath string) (*statusInfo, error) {
 			}
 		}
 
+		// Check if task was escalated (separate from status)
+		ts.Escalated = st.WasEscalated(task.ID)
+
 		if completed[task.ID] {
 			ts.Status = "complete"
 			ts.Marker = "✓"
@@ -550,9 +561,6 @@ func getStatus(prdPath string) (*statusInfo, error) {
 			ts.Status = "in_progress"
 			ts.Marker = "→"
 			info.Worker = ts.Worker
-		} else if st.WasEscalated(task.ID) {
-			ts.Status = "escalated"
-			ts.Marker = "⬆"
 		} else {
 			ts.Status = "pending"
 			ts.Marker = "○"
@@ -595,9 +603,10 @@ func (s *statusInfo) Format() string {
 	}
 	barWidth := 20
 	filled := (percent * barWidth) / 100
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+	filledBar := strings.Repeat("█", filled)
+	emptyBar := strings.Repeat("░", barWidth-filled)
 	sb.WriteString(fmt.Sprintf("%s📊 Progress:%s [%s%s%s%s] %d%% (%d/%d)\n\n",
-		colorBold, colorReset, colorGreen, bar[:filled], colorReset, bar[filled:], percent, s.Done, s.Total))
+		colorBold, colorReset, colorGreen, filledBar, colorReset, emptyBar, percent, s.Done, s.Total))
 
 	// Tasks header
 	sb.WriteString(fmt.Sprintf("%sTasks:%s\n", colorBold, colorReset))
@@ -630,7 +639,12 @@ func (s *statusInfo) Format() string {
 			workerInfo = fmt.Sprintf(" %s[%s]%s", colorDim, t.Worker, colorReset)
 		}
 
-		sb.WriteString(fmt.Sprintf("  %s%s%s %s: %s%s\n", markerColor, t.Marker, colorReset, t.ID, t.Title, workerInfo))
+		// Add escalation indicator if task was escalated
+		escIndicator := ""
+		if t.Escalated {
+			escIndicator = fmt.Sprintf(" %s⬆%s", colorYellow, colorReset)
+		}
+		sb.WriteString(fmt.Sprintf("  %s%s%s %s: %s%s%s\n", markerColor, t.Marker, colorReset, t.ID, t.Title, workerInfo, escIndicator))
 	}
 
 	// Session stats
