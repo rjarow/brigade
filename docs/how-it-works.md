@@ -86,8 +86,6 @@ If the PRD has verification commands, they run after `COMPLETE`:
 - All pass → continue to review
 - Any fail → worker iterates with feedback
 
-If `TEST_CMD` is configured, tests run the same way.
-
 ### Executive Review
 
 If `REVIEW_ENABLED=true`, Executive Chef reviews completed work:
@@ -107,24 +105,6 @@ Contains:
 - Escalations and reviews
 - Current task (for resume)
 
-View with `./brigade.sh status`.
-
-## Status Symbols
-
-The status display uses these markers:
-
-| Symbol | Meaning |
-|--------|---------|
-| `✓` | Complete and reviewed |
-| `→` | Currently in progress |
-| `◐` | Worked on, awaiting review |
-| `○` | Not started yet |
-| `⬆` | Was escalated to higher tier |
-
-Task display also shows:
-- `[Sous Chef · iter 3]` - Current worker and iteration count
-- `(3 iterations)` - Completed task that took multiple tries
-
 ## Interrupts
 
 Ctrl+C anytime. Brigade:
@@ -134,20 +114,3 @@ Ctrl+C anytime. Brigade:
 
 Run `./brigade.sh resume` to pick up where you left off.
 
-## Configuration
-
-See [Configuration](configuration.md) for all the knobs. Key ones:
-
-```bash
-# In brigade.config
-ESCALATION_AFTER=3           # Line Cook → Sous Chef threshold
-TASK_TIMEOUT_JUNIOR=900      # 15 min before timeout escalation
-REVIEW_ENABLED=true          # Executive Chef reviews work
-QUIET_WORKERS=true           # Spinner instead of conversation output
-```
-
-## Next Steps
-
-- **[Configuration](configuration.md)** - Tune the kitchen
-- **[Writing PRDs](writing-prds.md)** - Manual PRD creation
-- **[Troubleshooting](troubleshooting.md)** - When things go wrong

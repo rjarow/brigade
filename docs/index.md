@@ -23,38 +23,7 @@ go build -o brigade-go ./cmd/brigade
 
 Both versions share the same config files, PRD format, and state files.
 
-## Key Features
-
-### Walkaway Development
-
-Interview once during planning, then autonomous execution. Workers escalate to each other, not to you. Configure `--walkaway` and let it run overnight.
-
-[Learn more about Walkaway Mode](features/walkaway-mode.md)
-
-### Smart Retries
-
-Brigade learns from failures instead of repeating them. Errors are classified, approaches tracked, and retry prompts enriched with what was already tried.
-
-[Learn more about Smart Retries](features/smart-retries.md)
-
-### Multi-Model Support
-
-Mix and match AI providers. Use Opus for planning, Sonnet for complex work, and cheaper models like GLM for routine tasks.
-
-```bash
-# Example mixed configuration
-EXECUTIVE_CMD="claude --model opus"
-SOUS_CMD="claude --model sonnet"
-LINE_CMD="opencode --model zai-coding-plan/glm-4.7"
-```
-
-### Supervisor Integration
-
-Build AI supervisors that monitor Brigade with minimal token overhead. File-based integration means no webhooks required.
-
-[Learn more about Supervisor Integration](features/supervisor.md)
-
-## The Kitchen Metaphor
+## The Kitchen
 
 | Role | Model | Responsibility |
 |------|-------|----------------|
@@ -74,9 +43,3 @@ Line Cook fails 3x → Sous Chef takes over
 Sous Chef fails 5x → Executive Chef steps in
 ```
 
-## Next Steps
-
-- [Getting Started](getting-started.md) - Install and run your first feature
-- [How It Works](how-it-works.md) - Understand the execution flow
-- [Writing PRDs](writing-prds.md) - Create effective task plans
-- [Configuration](configuration.md) - Customize the kitchen

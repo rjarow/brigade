@@ -1,10 +1,8 @@
-# CLI Commands
+# Commands
 
 Complete reference for Brigade CLI commands.
 
-> **Note:** All commands work with both `./brigade.sh` (Bash) and `./brigade-go` (Go). Examples use `./brigade.sh` but you can substitute `./brigade-go` with identical behavior.
->
-> To build the Go version: `go build -o brigade-go ./cmd/brigade`
+> All commands work with both `./brigade.sh` (Bash) and `./brigade-go` (Go).
 
 ## Setup
 
@@ -57,12 +55,7 @@ Validate PRD structure and quality.
 ./brigade.sh validate brigade/tasks/prd.json
 ```
 
-Checks:
-- JSON syntax
-- Required fields
-- Dependency cycles
-- Acceptance criteria quality (if `CRITERIA_LINT_ENABLED=true`)
-- Verification coverage (if `VERIFICATION_SCAFFOLD_ENABLED=true`)
+Checks: JSON syntax, required fields, dependency cycles, acceptance criteria quality, verification coverage.
 
 ### map
 
@@ -96,17 +89,10 @@ Execute all tasks in a PRD.
 #### Partial Execution
 
 ```bash
-# Run specific tasks only
-./brigade.sh --only US-001,US-003 service prd.json
-
-# Skip specific tasks
-./brigade.sh --skip US-007 service prd.json
-
-# Start from task (inclusive)
-./brigade.sh --from US-003 service prd.json
-
-# Run up to task (inclusive)
-./brigade.sh --until US-005 service prd.json
+./brigade.sh --only US-001,US-003 service prd.json   # Run specific tasks
+./brigade.sh --skip US-007 service prd.json          # Skip specific tasks
+./brigade.sh --from US-003 service prd.json          # Start from task
+./brigade.sh --until US-005 service prd.json         # Run up to task
 ```
 
 ### ticket
@@ -147,7 +133,6 @@ Check progress.
 ```bash
 ./brigade.sh status                    # Current state
 ./brigade.sh status --watch            # Auto-refresh every 30s
-./brigade.sh status --watch --all      # Include all escalations
 ./brigade.sh status --json             # Machine-readable JSON
 ./brigade.sh status --brief            # Ultra-compact JSON
 ```
@@ -178,8 +163,6 @@ Show estimated cost breakdown.
 ./brigade.sh cost brigade/tasks/prd.json
 ```
 
-Uses duration-based estimates configured in `brigade.config`.
-
 ### risk
 
 Pre-execution risk assessment.
@@ -187,16 +170,6 @@ Pre-execution risk assessment.
 ```bash
 ./brigade.sh risk brigade/tasks/prd.json
 ./brigade.sh risk --history brigade/tasks/prd.json  # Include historical patterns
-```
-
-## Utilities
-
-### opencode-models
-
-List available OpenCode models.
-
-```bash
-./brigade.sh opencode-models
 ```
 
 ## Exit Codes
@@ -209,15 +182,3 @@ List available OpenCode models.
 | 33 | ALREADY_DONE - prior task completed this |
 | 34 | ABSORBED_BY - work absorbed by another task |
 
-## Environment Variables
-
-```bash
-# Enable debug output
-BRIGADE_DEBUG=true ./brigade.sh service prd.json
-```
-
-Debug mode shows:
-- Lock acquisition/release
-- Signal detection
-- Task completion flow
-- Worker process health

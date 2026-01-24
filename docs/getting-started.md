@@ -12,17 +12,7 @@ cd your-project
 git clone https://github.com/rjarow/brigade.git
 ```
 
-**2. Install the skill:**
-```bash
-./brigade.sh install-commands
-```
-
-**3. Start Claude Code:**
-```bash
-claude
-```
-
-**4. Start cooking:**
+**2. Start Claude Code and use the skill:**
 ```
 You: /brigade plan "Add user authentication with JWT"
 
@@ -47,22 +37,16 @@ Claude: [Runs service, reports progress]
 | `/brigade status` | Check progress |
 | `/brigade quick "X"` | One-off task, no PRD |
 
----
+## CLI Usage
 
-## CLI Usage (Power Users)
-
-For automation, CI/CD, or if you prefer the terminal.
+For automation, CI/CD, or terminal use.
 
 ### Choose Your Version
-
-Brigade has two implementations with identical CLI:
 
 | Version | Install | Best For |
 |---------|---------|----------|
 | **Bash** | Works out of the box | Default, production-tested |
 | **Go** | `go build -o brigade-go ./cmd/brigade` | Better errors, type safety |
-
-Both use the same config, PRD format, and commands. Examples below use `./brigade.sh` but `./brigade-go` works identically.
 
 ### Prerequisites
 
@@ -75,22 +59,11 @@ Both use the same config, PRD format, and commands. Examples below use `./brigad
 - **Go 1.21+** - to build
 - **Claude CLI** (`claude`) - required
 
-### First Run (Bash)
+### First Run
 
 ```bash
 ./brigade.sh init    # Setup wizard
 ./brigade.sh demo    # See what it does
-```
-
-### First Run (Go)
-
-```bash
-# Build once
-go build -o brigade-go ./cmd/brigade
-
-# Then use like bash version
-./brigade-go init
-./brigade-go demo
 ```
 
 ### Your First Feature
@@ -119,27 +92,3 @@ Ctrl+C anytime. Resume later:
 ./brigade.sh resume skip     # Skip and continue
 ```
 
----
-
-## Configuration
-
-Brigade works with zero config. For common tweaks:
-
-```bash
-cp brigade.config.minimal brigade.config
-```
-
-Uncomment what you need:
-- **Cost savings** - Use OpenCode for routine tasks
-- **Testing** - Run tests after each task
-- **Quiet mode** - Spinner instead of full output
-- **Walkaway** - Autonomous overnight runs
-
-See [Configuration](configuration.md) for all options.
-
-## Next Steps
-
-- [How It Works](how-it-works.md) - Understand the flow
-- [Writing PRDs](writing-prds.md) - Manual PRD creation
-- [Walkaway Mode](features/walkaway-mode.md) - Autonomous execution
-- [CLI Reference](reference/commands.md) - All commands
