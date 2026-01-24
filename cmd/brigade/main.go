@@ -81,6 +81,22 @@ func init() {
 	rootCmd.AddCommand(ticketCmd)
 	rootCmd.AddCommand(costCmd)
 	rootCmd.AddCommand(riskCmd)
+
+	// Phase 2: New user flow commands
+	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(demoCmd)
+	rootCmd.AddCommand(planCmd)
+
+	// Phase 3: Convenience commands
+	rootCmd.AddCommand(templateCmd)
+	rootCmd.AddCommand(iterateCmd)
+	rootCmd.AddCommand(mapCmd)
+	rootCmd.AddCommand(exploreCmd)
+
+	// Phase 4: Reference commands
+	rootCmd.AddCommand(superviseCmd)
+	rootCmd.AddCommand(analyzeCmd)
+	rootCmd.AddCommand(opencodeModelsCmd)
 }
 
 // serviceCmd runs the Brigade service.
