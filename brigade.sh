@@ -9206,10 +9206,10 @@ cmd_init() {
     return 1
   fi
 
-  # Create config file
+  # Create config file (in Brigade subdir, not project root)
   echo -e "${BOLD}Step 2: Creating configuration...${NC}"
 
-  if [ -f "brigade.config" ]; then
+  if [ -f "$SCRIPT_DIR/brigade.config" ]; then
     echo -e "  ${YELLOW}!${NC} brigade.config already exists"
     read -p "  Overwrite? (y/N) " -n 1 -r
     echo ""
@@ -9288,7 +9288,7 @@ cmd_init() {
 
 # Helper function to create default config
 create_default_config() {
-  cat > brigade.config << 'EOF'
+  cat > "$SCRIPT_DIR/brigade.config" << 'EOF'
 # Brigade Kitchen Configuration
 # See brigade.config.example for all options
 

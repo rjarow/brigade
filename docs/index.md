@@ -6,19 +6,22 @@ Brigade routes coding tasks to the right AI based on complexity. Using a kitchen
 
 ## Quick Start
 
+Brigade has two implementations with identical CLI - use whichever you prefer:
+
 ```bash
-# Setup wizard
+# Bash version (works out of the box)
 ./brigade.sh init
-
-# Plan a feature
 ./brigade.sh plan "Add user authentication with JWT"
+./brigade.sh service
 
-# Execute the plan
-./brigade.sh service brigade/tasks/prd-*.json
-
-# Check progress
-./brigade.sh status --watch
+# Go version (build first, then same commands)
+go build -o brigade-go ./cmd/brigade
+./brigade-go init
+./brigade-go plan "Add user authentication with JWT"
+./brigade-go service
 ```
+
+Both versions share the same config files, PRD format, and state files.
 
 ## Key Features
 

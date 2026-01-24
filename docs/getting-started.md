@@ -53,17 +53,44 @@ Claude: [Runs service, reports progress]
 
 For automation, CI/CD, or if you prefer the terminal.
 
+### Choose Your Version
+
+Brigade has two implementations with identical CLI:
+
+| Version | Install | Best For |
+|---------|---------|----------|
+| **Bash** | Works out of the box | Default, production-tested |
+| **Go** | `go build -o brigade-go ./cmd/brigade` | Better errors, type safety |
+
+Both use the same config, PRD format, and commands. Examples below use `./brigade.sh` but `./brigade-go` works identically.
+
 ### Prerequisites
 
+**For Bash version:**
 - **Claude CLI** (`claude`) - required
 - **jq** - for JSON processing
 - **bash** 4.0+
 
-### First Run
+**For Go version:**
+- **Go 1.21+** - to build
+- **Claude CLI** (`claude`) - required
+
+### First Run (Bash)
 
 ```bash
 ./brigade.sh init    # Setup wizard
 ./brigade.sh demo    # See what it does
+```
+
+### First Run (Go)
+
+```bash
+# Build once
+go build -o brigade-go ./cmd/brigade
+
+# Then use like bash version
+./brigade-go init
+./brigade-go demo
 ```
 
 ### Your First Feature

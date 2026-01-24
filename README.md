@@ -32,6 +32,19 @@ git clone https://github.com/yourusername/brigade.git
 ./brigade.sh service
 ```
 
+### Go Version
+
+Brigade also has a Go implementation with identical CLI:
+
+```bash
+# Build
+go build -o brigade-go ./cmd/brigade
+
+# Use like brigade.sh
+./brigade-go service
+./brigade-go status --json
+```
+
 **What you'll see:**
 ```
 🍳 Firing up the kitchen for: User Authentication

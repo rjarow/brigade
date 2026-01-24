@@ -1,6 +1,10 @@
 # CLI Commands
 
-Complete reference for `./brigade.sh` commands.
+Complete reference for Brigade CLI commands.
+
+> **Note:** All commands work with both `./brigade.sh` (Bash) and `./brigade-go` (Go). Examples use `./brigade.sh` but you can substitute `./brigade-go` with identical behavior.
+>
+> To build the Go version: `go build -o brigade-go ./cmd/brigade`
 
 ## Setup
 

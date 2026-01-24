@@ -2,6 +2,22 @@
 
 All settings go in `brigade.config`. Everything is optional - Brigade works without it.
 
+## Config File Location
+
+Place `brigade.config` inside the Brigade directory (keeps your project root clean):
+
+```
+your-project/
+├── brigade/              # Brigade installation
+│   ├── brigade.sh
+│   ├── brigade.config    # ← Your config goes here
+│   └── ...
+├── src/
+└── ...
+```
+
+Run `./brigade/brigade.sh init` to create a starter config.
+
 ## Workers
 
 | Option | Default | Description |
