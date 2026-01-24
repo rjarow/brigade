@@ -1307,232 +1307,46 @@ Next steps:
 
 # /brigade supervise
 
-You are now the **Supervisor** for Brigade. Your job is to actively monitor and guide the kitchen - NOT implement tasks yourself.
+You are now the **Supervisor** for Brigade. Monitor and guide - do NOT implement tasks yourself.
 
-## THE RECIPE THAT WORKS
-
-This pattern has been proven in production runs:
-
-### Phase 1: Internalize the Role (do this FIRST)
-```bash
-cat brigade/chef/supervisor.md  # Read the full supervisor guide
-```
-
-**Key mindset to adopt:**
-- You are a **monitor**, not an implementer
-- Only intervene when `attention: true` or task is clearly stuck
-- Give **specific** guidance (file paths, line numbers) not vague hints
-- Report to user in friendly, concise updates
-
-### Phase 2: Understand the Project
-```bash
-cat brigade/codebase-map.md 2>/dev/null || echo "Run: $BRIGADE map"
-cat brigade/tasks/prd-*.json | head -100  # What's being built
-```
-
-### Phase 3: Start the Monitoring Loop
-Use this efficient combined command:
-```bash
-sleep 30 && $BRIGADE status --brief && echo "---" && tail -20 brigade/tasks/events.jsonl
-```
-
-This gives you status + recent events in one shot. Run it every 30-60 seconds.
-
-### Phase 4: Report & Intervene
-- **Normal flow:** "Kitchen cooking. 5/8 done, Sous Chef on US-006 (4m elapsed)."
-- **Intervention:** Only when `attention: true` - write to `cmd.json`
-- **Completion:** "Order up! 8/8 tasks complete. Branch ready for review."
-
-**Why this works:** The supervisor stays lightweight, checks frequently but doesn't spam, and only intervenes when actually needed. Workers handle normal escalation (Line Cook → Sous Chef) on their own.
-
----
-
-## DETAILED GUIDE
-
-## STEP 1: LEARN HOW TO SUPERVISE
-
-**Read the Brigade supervisor documentation:**
+## STEP 1: READ THE SUPERVISOR GUIDE
 
 ```bash
-cat brigade/chef/supervisor.md  # Full supervisor guide - events, commands, intervention patterns
-cat brigade/CLAUDE.md           # Find "Supervisor Integration" and "Autonomy Hierarchy" sections
+cat brigade/chef/supervisor.md
 ```
 
-These docs explain:
-- **Events system** - `events.jsonl` for real-time task updates
-- **Command file** - Send decisions and guidance to workers via `cmd.json`
-- **Status formats** - `--brief` vs `--json` vs `--watch`
-- **Intervention patterns** - When to retry, skip, abort, or pause
-- **Guidance techniques** - How to help stuck workers
+This is the complete guide. Read it first - it covers events, commands, intervention patterns, and permissions setup.
 
-## STEP 2: UNDERSTAND THE PROJECT
-
-**Load project context so you can give useful guidance:**
+## STEP 2: LOAD PROJECT CONTEXT
 
 ```bash
-# 1. Check for codebase map
-if [ -f "brigade/codebase-map.md" ]; then
-  cat brigade/codebase-map.md    # Project structure, patterns, key files
-else
-  echo "No codebase map found. Generating..."
-  $BRIGADE map               # Creates brigade/codebase-map.md
-  cat brigade/codebase-map.md
-fi
-
-# 2. Read project-specific instructions
-cat brigade/CLAUDE.md            # Project conventions and instructions
-
-# 3. Find and read active PRDs
-ls brigade/tasks/prd-*.json      # List PRDs
-cat brigade/tasks/prd-*.json     # Read what's being built
-
-# 4. Check for handoff notes from planning Claude (optional)
-[ -f "brigade/notes/supervisor-notes.md" ] && cat brigade/notes/supervisor-notes.md
+cat brigade/codebase-map.md 2>/dev/null || $BRIGADE map
+cat brigade/tasks/prd-*.json | head -100
 ```
-
-**Why this matters:** When a worker is stuck, you need to give specific guidance like "check src/auth/middleware.ts:45 for the pattern" - not vague hints. The codebase map tells you where things are.
 
 ## STEP 3: START MONITORING
 
-### Step 1: Check Current Status
 ```bash
-$BRIGADE status --brief
-```
-Returns JSON: `{"done":3,"total":8,"current":"US-004","worker":"sous","elapsed":125,"attention":false}`
-
-### Step 2: Report to User
-Tell the user what's happening:
-> "Kitchen is cooking. 3/8 tasks done, Sous Chef working on US-004 (2m elapsed)."
-
-### Step 3: Set Up Event Watching
-```bash
-# Watch events in real-time (run in background or check periodically)
-tail -f brigade/tasks/events.jsonl
-```
-
-### Step 4: Enter Monitoring Loop
-Check status every 30-60 seconds. Look for:
-- `"attention": true` - **STOP and intervene immediately**
-- Task taking too long (>15min for junior, >30min for senior)
-- Multiple failures on same task
-
-## HOW TO INTERVENE
-
-When Brigade needs help (`attention: true` or `decision_needed` event), you MUST write a command to `brigade/tasks/cmd.json`:
-
-```bash
-# Using Write tool or echo:
-echo '{"decision":"d-123","action":"retry","reason":"Transient failure","guidance":"Try mocking the external API"}' > brigade/tasks/cmd.json
-```
-
-### Actions You Can Take
-
-| Action | When | Example Guidance |
-|--------|------|------------------|
-| `retry` | Temporary failure, worth another shot | "Check the OpenAPI spec at docs/api.md" |
-| `skip` | Task is blocked, move on | "Dependency issue, will fix manually later" |
-| `abort` | Something fundamentally wrong | "Missing credentials, cannot proceed" |
-| `pause` | Need to investigate before continuing | "Reviewing worker logs" |
-
-### Guidance Tips
-When retrying, give the worker specific hints:
-- Point to specific files: "Pattern is in src/auth/middleware.ts:45"
-- Clarify requirements: "The API expects Bearer token, not Basic auth"
-- Suggest approaches: "Try using the existing UserService instead of raw queries"
-
-## WHAT TO MONITOR
-
-### Check Status (every 30-60s)
-```bash
-$BRIGADE status --brief    # Quick JSON
-$BRIGADE status --json     # Full details
-
-# Efficient combined check: status + recent events in one command
+# Run every 30-60 seconds:
 sleep 30 && $BRIGADE status --brief && echo "---" && tail -20 brigade/tasks/events.jsonl
 ```
 
-### Watch Events (for real-time monitoring)
+## QUICK REFERENCE
+
+**Intervene when:** `attention: true` or `decision_needed` event
+
+**Let it run:** Normal task flow, single escalations, brief pauses
+
+**To intervene:**
 ```bash
-tail -20 brigade/tasks/events.jsonl
+echo '{"decision":"d-123","action":"retry","reason":"...","guidance":"Check src/file.ts:45"}' > brigade/tasks/cmd.json
 ```
 
-Events you'll see:
-- `task_start` / `task_complete` - Normal flow, no action needed
-- `escalation` - Worker handed off to senior, watch but don't intervene yet
-- `attention` - **INTERVENE NOW**
-- `decision_needed` - **RESPOND via cmd.json**
-- `service_complete` - Done! Report to user.
+**Actions:** `retry`, `skip`, `abort`, `pause`
 
-### Check Worker Logs (when debugging)
-```bash
-ls -la brigade/logs/
-cat brigade/logs/<latest-log>.log
-```
+**Report to user:** "Kitchen cooking. 5/8 done, Sous Chef on US-006 (4m elapsed)."
 
-## WHEN TO INTERVENE vs LET IT RUN
-
-**INTERVENE:**
-- `attention: true` in status
-- `decision_needed` event
-- Same task failed 3+ times
-- Task running 2x expected time
-
-**LET IT RUN:**
-- Normal task_start → task_complete flow
-- Single escalation (Line Cook → Sous Chef is normal)
-- Brief pauses between tasks (<2 min)
-
-## REPORTING TO USER
-
-Keep the user informed with concise updates:
-
-**While running:**
-> "Kitchen cooking. 5/8 done, Sous Chef on US-006 (JWT middleware), 4m elapsed."
-
-**When you intervene:**
-> "US-005 hit a snag - couldn't find the validation pattern. I told the worker to check src/validators/. Retrying."
-
-**When done:**
-> "Order up! 8/8 tasks complete in 32 minutes. Branch `feature/auth` ready for review."
-
-## YOUR RESPONSIBILITIES
-
-1. ✓ Check status regularly (every 30-60s)
-2. ✓ Intervene when `attention: true` or `decision_needed`
-3. ✓ Provide helpful guidance when retrying
-4. ✓ Report progress to the user
-5. ✗ Do NOT implement tasks yourself
-6. ✗ Do NOT intervene on normal escalations
-7. ✗ Do NOT abort on first failure (escalation is normal)
-
-## COMPLETE SUPERVISOR LOOP
-
-```
-REPEAT until service_complete:
-  1. $BRIGADE status --brief
-  2. IF attention=true:
-       - Read events: tail -20 brigade/tasks/events.jsonl
-       - Understand the issue
-       - Write decision: echo '{"decision":"...","action":"..."}' > brigade/tasks/cmd.json
-  3. Report to user if significant change
-  4. Wait 30-60 seconds
-```
-
-## REFERENCE DOCS (READ THESE)
-
-| File | Contains |
-|------|----------|
-| `brigade/chef/supervisor.md` | Complete supervisor guide, intervention patterns, all event types |
-| `brigade/CLAUDE.md` | "Supervisor Integration" section - file formats, event types, config |
-| `brigade/codebase-map.md` | Project structure, key files, patterns (generate with `$BRIGADE map`) |
-| `brigade/tasks/prd-*.json` | Active PRDs - what's being built, acceptance criteria |
-| `brigade/notes/supervisor-notes.md` | Optional handoff notes from planning Claude |
-
-**These docs are authoritative.** If something isn't working as expected, re-read the docs - they may have been updated with new capabilities or fixes.
-
-**Giving good guidance requires project knowledge.** Don't just say "check the auth code" - say "check src/auth/middleware.ts:45 for the JWT validation pattern". The codebase map helps you give specific, actionable guidance.
-
-**Reducing permission prompts:** If you're getting frequent permission prompts for Brigade commands, check if `.claude/settings.json` exists with allowed patterns. See `chef/supervisor.md` for the recommended settings.
+**Full details:** See `brigade/chef/supervisor.md`
 
 ---
 
