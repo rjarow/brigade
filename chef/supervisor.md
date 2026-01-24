@@ -93,6 +93,16 @@ Add `guidance` field to help the worker on retry:
 4. **Wait** - Let Brigade process (poll every 30-60s)
 5. **Repeat** until service_complete
 
+### Efficient Monitoring Command
+
+Combine status check and event history in one command:
+
+```bash
+sleep 30 && ./brigade.sh status --brief && echo "---" && tail -20 brigade/tasks/events.jsonl
+```
+
+This shows current state + recent events in one shot, minimizing tool calls.
+
 ## Timeouts and Walkaway Mode
 
 **You have a decision timeout** (default: 300 seconds). When Brigade emits `decision_needed`, it waits for your response in `cmd.json`. If you don't respond in time:

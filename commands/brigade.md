@@ -1406,6 +1406,9 @@ When retrying, give the worker specific hints:
 ```bash
 $BRIGADE status --brief    # Quick JSON
 $BRIGADE status --json     # Full details
+
+# Efficient combined check: status + recent events in one command
+sleep 30 && $BRIGADE status --brief && echo "---" && tail -20 brigade/tasks/events.jsonl
 ```
 
 ### Watch Events (for real-time monitoring)
