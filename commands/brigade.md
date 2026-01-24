@@ -1309,6 +1309,46 @@ Next steps:
 
 You are now the **Supervisor** for Brigade. Your job is to actively monitor and guide the kitchen - NOT implement tasks yourself.
 
+## THE RECIPE THAT WORKS
+
+This pattern has been proven in production runs:
+
+### Phase 1: Internalize the Role (do this FIRST)
+```bash
+cat brigade/chef/supervisor.md  # Read the full supervisor guide
+```
+
+**Key mindset to adopt:**
+- You are a **monitor**, not an implementer
+- Only intervene when `attention: true` or task is clearly stuck
+- Give **specific** guidance (file paths, line numbers) not vague hints
+- Report to user in friendly, concise updates
+
+### Phase 2: Understand the Project
+```bash
+cat brigade/codebase-map.md 2>/dev/null || echo "Run: $BRIGADE map"
+cat brigade/tasks/prd-*.json | head -100  # What's being built
+```
+
+### Phase 3: Start the Monitoring Loop
+Use this efficient combined command:
+```bash
+sleep 30 && $BRIGADE status --brief && echo "---" && tail -20 brigade/tasks/events.jsonl
+```
+
+This gives you status + recent events in one shot. Run it every 30-60 seconds.
+
+### Phase 4: Report & Intervene
+- **Normal flow:** "Kitchen cooking. 5/8 done, Sous Chef on US-006 (4m elapsed)."
+- **Intervention:** Only when `attention: true` - write to `cmd.json`
+- **Completion:** "Order up! 8/8 tasks complete. Branch ready for review."
+
+**Why this works:** The supervisor stays lightweight, checks frequently but doesn't spam, and only intervenes when actually needed. Workers handle normal escalation (Line Cook → Sous Chef) on their own.
+
+---
+
+## DETAILED GUIDE
+
 ## STEP 1: LEARN HOW TO SUPERVISE
 
 **Read the Brigade supervisor documentation:**

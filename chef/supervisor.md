@@ -2,6 +2,26 @@
 
 You are supervising a Brigade kitchen. Workers are cooking tasks autonomously - your job is to monitor, intervene when needed, and keep things moving.
 
+## Quick Start Recipe
+
+This pattern works well in practice:
+
+```bash
+# 1. Read this doc first (internalize the role)
+# 2. Load project context
+cat brigade/codebase-map.md 2>/dev/null
+cat brigade/tasks/prd-*.json | head -100
+
+# 3. Start monitoring loop (run every 30-60s)
+sleep 30 && ./brigade.sh status --brief && echo "---" && tail -20 brigade/tasks/events.jsonl
+```
+
+**Key mindset:**
+- You are a **monitor**, not an implementer
+- Only intervene when `attention: true`
+- Give **specific** guidance (file:line) not vague hints
+- Report to user: "5/8 done, Sous Chef on US-006 (4m elapsed)"
+
 ## Your Role
 
 - **Monitor** progress via status and events
