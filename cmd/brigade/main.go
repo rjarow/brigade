@@ -436,20 +436,28 @@ func findActivePRD() string {
 }
 
 type statusInfo struct {
-	PRD       string
-	Done      int
-	Total     int
-	Current   string
-	Worker    string
-	Elapsed   time.Duration
-	Tasks     []taskStatus
+	PRD          string
+	FeatureName  string
+	Done         int
+	Total        int
+	Current      string
+	Worker       string
+	Elapsed      time.Duration
+	Tasks        []taskStatus
+	Escalations  int
+	Absorptions  int
+	ReviewsPassed int
+	ReviewsFailed int
+	TotalTime    time.Duration
 }
 
 type taskStatus struct {
-	ID      string
-	Title   string
-	Status  string
-	Marker  string
+	ID         string
+	Title      string
+	Status     string
+	Marker     string
+	Worker     string
+	Iterations int
 }
 
 func getStatus(prdPath string) (*statusInfo, error) {
@@ -467,11 +475,44 @@ func getStatus(prdPath string) (*statusInfo, error) {
 	completed := st.CompletedTaskIDs()
 	done := len(completed)
 
+	// Count reviews
+	reviewsPassed := 0
+	reviewsFailed := 0
+	for _, r := range st.Reviews {
+		if r.Result == "pass" {
+			reviewsPassed++
+		} else {
+			reviewsFailed++
+		}
+	}
+
+	// Calculate total time
+	var totalTime time.Duration
+	if st.StartedAt != "" {
+		if startTime, err := time.Parse(time.RFC3339, st.StartedAt); err == nil {
+			totalTime = time.Since(startTime)
+		}
+	}
+
 	info := &statusInfo{
-		PRD:     p.Prefix(),
-		Done:    done,
-		Total:   len(p.Tasks),
-		Current: st.CurrentTask,
+		PRD:           p.Prefix(),
+		FeatureName:   p.FeatureName,
+		Done:          done,
+		Total:         len(p.Tasks),
+		Current:       st.CurrentTask,
+		Escalations:   len(st.Escalations),
+		Absorptions:   len(st.Absorptions),
+		ReviewsPassed: reviewsPassed,
+		ReviewsFailed: reviewsFailed,
+		TotalTime:     totalTime,
+	}
+
+	// Build task history lookup - count iterations and find latest worker
+	iterationsByTask := make(map[string]int)
+	workerByTask := make(map[string]state.WorkerTier)
+	for _, h := range st.TaskHistory {
+		iterationsByTask[h.TaskID]++
+		workerByTask[h.TaskID] = h.Worker // Latest worker
 	}
 
 	for _, task := range p.Tasks {
@@ -480,12 +521,35 @@ func getStatus(prdPath string) (*statusInfo, error) {
 			Title: task.Title,
 		}
 
+		// Determine worker based on complexity (default)
+		if task.Complexity == prd.ComplexitySenior {
+			ts.Worker = "Sous Chef"
+		} else {
+			ts.Worker = "Line Cook"
+		}
+
+		// Get iteration count from history
+		ts.Iterations = iterationsByTask[task.ID]
+
+		// Update worker from history if available
+		if w, ok := workerByTask[task.ID]; ok {
+			switch w {
+			case state.TierSous:
+				ts.Worker = "Sous Chef"
+			case state.TierLine:
+				ts.Worker = "Line Cook"
+			case state.TierExecutive:
+				ts.Worker = "Executive Chef"
+			}
+		}
+
 		if completed[task.ID] {
 			ts.Status = "complete"
 			ts.Marker = "✓"
 		} else if task.ID == st.CurrentTask {
 			ts.Status = "in_progress"
 			ts.Marker = "→"
+			info.Worker = ts.Worker
 		} else if st.WasEscalated(task.ID) {
 			ts.Status = "escalated"
 			ts.Marker = "⬆"
@@ -500,15 +564,96 @@ func getStatus(prdPath string) (*statusInfo, error) {
 	return info, nil
 }
 
+// ANSI color codes
+const (
+	colorReset  = "\033[0m"
+	colorBold   = "\033[1m"
+	colorDim    = "\033[0;90m"
+	colorCyan   = "\033[0;36m"
+	colorGreen  = "\033[0;32m"
+	colorYellow = "\033[0;33m"
+	colorRed    = "\033[0;31m"
+)
+
 func (s *statusInfo) Format() string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("=== %s: %d/%d tasks ===\n\n", s.PRD, s.Done, s.Total))
+
+	// Kitchen banner
+	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf("🍳 %s═══════════════════════════════════════════════════════════%s\n", colorCyan, colorReset))
+	sb.WriteString(fmt.Sprintf("   %sBrigade Kitchen%s - AI Chefs at Your Service\n", colorBold, colorReset))
+	sb.WriteString(fmt.Sprintf("   %s═══════════════════════════════════════════════════════════%s\n\n", colorCyan, colorReset))
+
+	// Feature name header
+	sb.WriteString(fmt.Sprintf("%sKitchen Status: %s%s\n", colorBold, s.FeatureName, colorReset))
+	sb.WriteString(fmt.Sprintf("%s═══════════════════════════════════════════════════════════%s\n", colorCyan, colorReset))
+
+	// Progress bar
+	percent := 0
+	if s.Total > 0 {
+		percent = (s.Done * 100) / s.Total
+	}
+	barWidth := 20
+	filled := (percent * barWidth) / 100
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+	sb.WriteString(fmt.Sprintf("%s📊 Progress:%s [%s%s%s%s] %d%% (%d/%d)\n\n",
+		colorBold, colorReset, colorGreen, bar[:filled], colorReset, bar[filled:], percent, s.Done, s.Total))
+
+	// Tasks header
+	sb.WriteString(fmt.Sprintf("%sTasks:%s\n", colorBold, colorReset))
 
 	for _, t := range s.Tasks {
-		sb.WriteString(fmt.Sprintf("%s %s: %s\n", t.Marker, t.ID, t.Title))
+		var markerColor string
+		switch t.Status {
+		case "complete":
+			markerColor = colorGreen
+		case "in_progress":
+			markerColor = colorYellow
+		case "escalated":
+			markerColor = colorYellow
+		default:
+			markerColor = colorReset
+		}
+
+		// Format worker info
+		workerInfo := ""
+		if t.Status == "in_progress" {
+			workerInfo = fmt.Sprintf(" %s[%s · iter %d]%s", colorYellow, t.Worker, t.Iterations, colorReset)
+		} else if t.Status == "pending" {
+			workerInfo = fmt.Sprintf(" %s[%s]%s", colorDim, t.Worker, colorReset)
+		}
+
+		sb.WriteString(fmt.Sprintf("  %s%s%s %s: %s%s\n", markerColor, t.Marker, colorReset, t.ID, t.Title, workerInfo))
 	}
 
+	// Session stats
+	sb.WriteString(fmt.Sprintf("\n%sSession Stats:%s\n", colorBold, colorReset))
+	sb.WriteString(fmt.Sprintf("  Total time:       %s\n", formatDuration(s.TotalTime)))
+	sb.WriteString(fmt.Sprintf("  Escalations:      %d\n", s.Escalations))
+	sb.WriteString(fmt.Sprintf("  Absorptions:      %d\n", s.Absorptions))
+	sb.WriteString(fmt.Sprintf("  Reviews:          %d (%s%d passed%s, %s%d failed%s)\n",
+		s.ReviewsPassed+s.ReviewsFailed, colorGreen, s.ReviewsPassed, colorReset, colorRed, s.ReviewsFailed, colorReset))
+
+	// Legend
+	sb.WriteString(fmt.Sprintf("\n%sLegend: ✓ complete  → in progress  ◐ awaiting review  ○ not started  ⬆ escalated%s\n\n", colorDim, colorReset))
+
 	return sb.String()
+}
+
+func formatDuration(d time.Duration) string {
+	if d == 0 {
+		return "0s"
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm", h, m)
+	} else if m > 0 {
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
 }
 
 func (s *statusInfo) JSON() string {
