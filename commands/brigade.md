@@ -52,6 +52,32 @@ echo "Using: $BRIGADE"
 
 Aliases: `build` = `plan`, `service` = `run`, `execute` = `run`
 
+## Recommended Workflow: Plan → Run → Supervise
+
+The best experience is when **one Claude session handles everything** - you have full context from planning through completion.
+
+**User says:**
+> "Plan and run this feature for me: [description]. Use walkaway mode and supervise it."
+
+**Claude does:**
+1. **Plan** - `/brigade plan "feature"` → Walkaway interview, generate PRD
+2. **User reviews** - Approves or tweaks the PRD
+3. **Kick off** - `$BRIGADE --walkaway service brigade/tasks/prd-*.json`
+4. **Supervise** - Monitor loop until done (see `/brigade supervise`)
+5. **Report** - "Order up! All tasks complete. Branch ready for review."
+
+**Why this works best:**
+- Same Claude has context from planning decisions
+- No handoff = no lost context
+- Walkaway interview means workers don't need to ask questions
+- `--walkaway` flag means Executive Chef handles what you miss
+
+**Alternative: Just supervise**
+If someone else (or a previous session) already created the PRD:
+> "Supervise the running Brigade service"
+
+Claude reads the PRD, enters supervisor mode, monitors until done.
+
 ## /brigade (no subcommand)
 
 Detect the project state and show appropriate message:
@@ -549,6 +575,22 @@ Include:
 - Files the supervisor should know about ("auth patterns in src/middleware/")
 
 This helps the supervisor give better guidance when workers get stuck.
+
+## After Planning: Run and Supervise
+
+**Best practice:** Don't stop after generating the PRD. You have all the context - continue to execution:
+
+```
+"PRD saved with 8 tasks. Want me to kick it off with walkaway mode and supervise?"
+```
+
+Then:
+1. Start: `$BRIGADE --walkaway service brigade/tasks/prd-*.json`
+2. Enter supervisor mode (see `/brigade supervise`)
+3. Monitor until complete
+4. Report to user
+
+This keeps context in one session - no handoff needed.
 
 ---
 
