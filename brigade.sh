@@ -90,10 +90,21 @@ cleanup_on_interrupt() {
 
   cleanup_temp_files
 
+  # Stop lock heartbeat if running
+  if [ -n "$LOCK_HEARTBEAT_PID" ]; then
+    kill "$LOCK_HEARTBEAT_PID" 2>/dev/null
+    LOCK_HEARTBEAT_PID=""
+  fi
+
   # Release service lock if held
   if [ -n "$BRIGADE_SERVICE_LOCK_FILE" ] && [ -f "$BRIGADE_SERVICE_LOCK_FILE" ]; then
+    local content=$(cat "$BRIGADE_SERVICE_LOCK_FILE" 2>/dev/null)
     local lock_pid
-    lock_pid=$(cat "$BRIGADE_SERVICE_LOCK_FILE" 2>/dev/null)
+    if echo "$content" | jq -e '.pid' >/dev/null 2>&1; then
+      lock_pid=$(echo "$content" | jq -r '.pid')
+    else
+      lock_pid="$content"
+    fi
     if [ "$lock_pid" = "$$" ]; then
       rm -f "$BRIGADE_SERVICE_LOCK_FILE"
       echo -e "${GRAY}Released service lock${NC}"
@@ -155,9 +166,82 @@ release_lock() {
 }
 
 # Service instance lock - prevents multiple services from running on the same PRD
-# Uses a lockfile with PID to detect stale locks from crashed processes
+# Uses a lockfile with JSON format (PID + heartbeat) to detect stale locks
 # Usage: acquire_service_lock "$prd_path"  /  release_service_lock "$prd_path"
 BRIGADE_SERVICE_LOCK_FILE=""
+
+# Check if lock is stale (process dead or heartbeat too old)
+# Args: lock_file
+# Returns: 0 if stale, 1 if valid
+is_lock_stale() {
+  local lock_file="$1"
+  local content lock_pid lock_heartbeat
+
+  content=$(cat "$lock_file" 2>/dev/null)
+
+  # Parse JSON or legacy plain-PID format
+  if echo "$content" | jq -e '.pid' >/dev/null 2>&1; then
+    lock_pid=$(echo "$content" | jq -r '.pid')
+    lock_heartbeat=$(echo "$content" | jq -r '.heartbeat // 0')
+  else
+    # Legacy format: just PID
+    lock_pid="$content"
+    lock_heartbeat=0
+  fi
+
+  # Stale if PID not running
+  if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+    if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+      echo "[DEBUG] is_lock_stale: pid=$lock_pid not running" >&2
+    fi
+    return 0
+  fi
+
+  # Stale if heartbeat too old (>2x interval)
+  if [ "$lock_heartbeat" -gt 0 ]; then
+    local now=$(date +%s)
+    local age=$((now - lock_heartbeat))
+    local max_age=$((LOCK_HEARTBEAT_INTERVAL * 2))
+    if [ "$age" -gt "$max_age" ]; then
+      if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+        echo "[DEBUG] is_lock_stale: heartbeat age=${age}s > max=${max_age}s" >&2
+      fi
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# Update lock file heartbeat timestamp
+update_lock_heartbeat() {
+  [ -z "$BRIGADE_SERVICE_LOCK_FILE" ] && return 0
+  [ ! -f "$BRIGADE_SERVICE_LOCK_FILE" ] && return 0
+  printf '{"pid":%d,"heartbeat":%d}\n' "$$" "$(date +%s)" > "$BRIGADE_SERVICE_LOCK_FILE"
+}
+
+# Start background heartbeat updater
+start_lock_heartbeat() {
+  ( while true; do
+      sleep "$LOCK_HEARTBEAT_INTERVAL"
+      update_lock_heartbeat
+    done ) &
+  LOCK_HEARTBEAT_PID=$!
+  if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+    echo "[DEBUG] start_lock_heartbeat: started heartbeat process (pid=$LOCK_HEARTBEAT_PID)" >&2
+  fi
+}
+
+# Stop background heartbeat updater
+stop_lock_heartbeat() {
+  if [ -n "$LOCK_HEARTBEAT_PID" ]; then
+    kill "$LOCK_HEARTBEAT_PID" 2>/dev/null
+    if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+      echo "[DEBUG] stop_lock_heartbeat: stopped heartbeat process (pid=$LOCK_HEARTBEAT_PID)" >&2
+    fi
+    LOCK_HEARTBEAT_PID=""
+  fi
+}
 
 acquire_service_lock() {
   local prd_path="$1"
@@ -173,29 +257,40 @@ acquire_service_lock() {
 
   # Check if lock file exists
   if [ -f "$lock_file" ]; then
-    local lock_pid
-    lock_pid=$(cat "$lock_file" 2>/dev/null)
+    if is_lock_stale "$lock_file"; then
+      # Stale lock - remove it
+      if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
+        echo "[DEBUG] acquire_service_lock: removing stale lock" >&2
+      fi
+      rm -f "$lock_file"
+    elif [ "$FORCE_LOCK" == "true" ]; then
+      # Force override requested
+      echo -e "${YELLOW}Warning: Overriding existing lock (--force)${NC}" >&2
+      rm -f "$lock_file"
+    else
+      # Lock held by active process
+      local content=$(cat "$lock_file" 2>/dev/null)
+      local lock_pid
+      if echo "$content" | jq -e '.pid' >/dev/null 2>&1; then
+        lock_pid=$(echo "$content" | jq -r '.pid')
+      else
+        lock_pid="$content"
+      fi
 
-    # Check if the PID is still running
-    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
       echo -e "${RED}Error: Another service is already running on this PRD${NC}" >&2
       echo -e "${GRAY}Lock held by PID $lock_pid${NC}" >&2
       echo -e "${GRAY}Lock file: $lock_file${NC}" >&2
       echo "" >&2
-      echo -e "${GRAY}If this is a stale lock from a crashed process, remove it:${NC}" >&2
-      echo -e "${GRAY}  rm $lock_file${NC}" >&2
+      echo -e "${GRAY}Options:${NC}" >&2
+      echo -e "${GRAY}  • Wait for the other service to complete${NC}" >&2
+      echo -e "${GRAY}  • Use --force to override (if the other service is stuck)${NC}" >&2
+      echo -e "${GRAY}  • Remove manually: rm $lock_file${NC}" >&2
       return 1
-    else
-      # Stale lock - remove it
-      if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
-        echo "[DEBUG] acquire_service_lock: removing stale lock (pid=$lock_pid no longer running)" >&2
-      fi
-      rm -f "$lock_file"
     fi
   fi
 
-  # Create lock file with our PID
-  echo "$$" > "$lock_file"
+  # Create lock file with JSON format (PID + heartbeat)
+  printf '{"pid":%d,"heartbeat":%d}\n' "$$" "$(date +%s)" > "$lock_file"
 
   if [ "${BRIGADE_DEBUG:-false}" == "true" ]; then
     echo "[DEBUG] acquire_service_lock: acquired $lock_file (pid=$$)" >&2
@@ -206,6 +301,9 @@ acquire_service_lock() {
 
 release_service_lock() {
   local prd_path="$1"
+
+  # Stop heartbeat before releasing lock
+  stop_lock_heartbeat
 
   # Use saved lock file path if available, otherwise compute it
   local lock_file="$BRIGADE_SERVICE_LOCK_FILE"
@@ -221,8 +319,13 @@ release_service_lock() {
 
   # Only remove if we own it (our PID is in the file)
   if [ -f "$lock_file" ]; then
+    local content=$(cat "$lock_file" 2>/dev/null)
     local lock_pid
-    lock_pid=$(cat "$lock_file" 2>/dev/null)
+    if echo "$content" | jq -e '.pid' >/dev/null 2>&1; then
+      lock_pid=$(echo "$content" | jq -r '.pid')
+    else
+      lock_pid="$content"
+    fi
     if [ "$lock_pid" = "$$" ]; then
       rm -f "$lock_file"
     fi
@@ -442,6 +545,7 @@ REVIEW_JUNIOR_ONLY=true
 PHASE_REVIEW_ENABLED=false   # Off by default, enable for larger projects
 PHASE_REVIEW_AFTER=5         # Review every N completed tasks
 PHASE_REVIEW_ACTION=continue # continue | pause | remediate
+PHASE_REVIEW_TIMEOUT=300     # Timeout for phase review in seconds (5 min, 0=use TASK_TIMEOUT_EXECUTIVE)
 
 # Auto-continue defaults (chain multiple PRDs)
 AUTO_CONTINUE=false          # Chain numbered PRDs without user intervention
@@ -505,6 +609,14 @@ RISK_REPORT_ENABLED=true           # Show risk summary before service execution
 RISK_HISTORY_SCAN=false            # Include historical escalation patterns
 RISK_WARN_THRESHOLD=""             # Warn at this risk level: low, medium, high (empty = disabled)
 
+# Lock file heartbeat (P14)
+LOCK_HEARTBEAT_INTERVAL=30         # Seconds between lock heartbeat updates
+FORCE_LOCK=false                   # Override existing lock (--force flag)
+
+# Service idle watchdog (P14)
+SERVICE_IDLE_THRESHOLD=180         # Seconds with no progress before attention event (0=disabled)
+SERVICE_IDLE_ACTION="warn"         # Action on idle: warn, heal, abort
+
 # Smart retry defaults (P16)
 SMART_RETRY_ENABLED=true           # Enable failure classification and approach tracking
 SMART_RETRY_CUSTOM_PATTERNS=""     # Custom patterns "pattern1:category,pattern2:category"
@@ -531,6 +643,9 @@ LAST_ERROR_SUMMARY=""              # Brief summary of last error
 LAST_APPROACH=""                   # Approach from last worker attempt
 ESCALATED_FROM=""                  # Worker tier we escalated from (for context enrichment)
 SMART_RETRY_SESSION_FAILURES=()    # Array of session failures "category:summary" (cross-task learning)
+LOCK_HEARTBEAT_PID=""              # PID of background lock heartbeat process
+SERVICE_LAST_PROGRESS_TIME=0       # Epoch time of last progress (for idle watchdog)
+SERVICE_IDLE_WARNING_SHOWN=false   # Whether idle warning was shown
 
 # Module system defaults
 MODULES=""                         # Comma-separated list of modules to enable
@@ -607,6 +722,84 @@ write_activity_heartbeat() {
   [ -n "$log_dir" ] && [ "$log_dir" != "." ] && mkdir -p "$log_dir"
 
   echo "[$ts] $display_id: $worker_name working (${mins}m ${secs}s)" >> "$ACTIVITY_LOG"
+}
+
+# Write dispatcher state change to activity log (P14)
+# Usage: write_activity_state "event" "reason" ["detail"]
+write_activity_state() {
+  [ -z "$ACTIVITY_LOG" ] && return 0
+
+  local event="$1"
+  local reason="$2"
+  local detail="${3:-}"
+
+  local ts=$(date "+%H:%M:%S")
+  local prefix=""
+  [ -n "$CURRENT_PRD_PATH" ] && prefix="$(get_prd_prefix "$CURRENT_PRD_PATH"): "
+
+  # Ensure directory exists
+  local log_dir=$(dirname "$ACTIVITY_LOG")
+  [ -n "$log_dir" ] && [ "$log_dir" != "." ] && mkdir -p "$log_dir" 2>/dev/null
+
+  if [ -n "$detail" ]; then
+    echo "[$ts] ${prefix}${event^^} - $reason ($detail)" >> "$ACTIVITY_LOG"
+  else
+    echo "[$ts] ${prefix}${event^^} - $reason" >> "$ACTIVITY_LOG"
+  fi
+}
+
+# Mark service progress (resets idle timer)
+# Call this when a task starts or completes
+mark_service_progress() {
+  SERVICE_LAST_PROGRESS_TIME=$(date +%s)
+  SERVICE_IDLE_WARNING_SHOWN=false
+}
+
+# Check for service idle state (P14 idle watchdog)
+# Args: prd_path
+# Returns: 0 if idle action taken, 1 otherwise
+check_service_idle() {
+  local prd_path="$1"
+
+  # Skip if disabled
+  [ "$SERVICE_IDLE_THRESHOLD" -eq 0 ] && return 1
+  [ "$SERVICE_LAST_PROGRESS_TIME" -eq 0 ] && return 1
+
+  local now=$(date +%s)
+  local idle_time=$((now - SERVICE_LAST_PROGRESS_TIME))
+
+  # Not idle yet
+  [ "$idle_time" -lt "$SERVICE_IDLE_THRESHOLD" ] && return 1
+
+  # Check if there are pending tasks (otherwise idle is expected - we're done)
+  local pending=$(jq '[.tasks[] | select(.passes == false)] | length' "$prd_path" 2>/dev/null)
+  [ "$pending" -eq 0 ] && return 1
+
+  # Show warning only once
+  if [ "$SERVICE_IDLE_WARNING_SHOWN" != "true" ]; then
+    local idle_mins=$((idle_time / 60))
+    log_event "WARN" "Service idle ${idle_mins}m with $pending tasks pending"
+    write_activity_state "idle" "no_progress" "${idle_mins}m"
+    emit_supervisor_event "attention" "service" "service_idle_${idle_mins}m"
+    SERVICE_IDLE_WARNING_SHOWN=true
+  fi
+
+  # Take action based on config
+  case "$SERVICE_IDLE_ACTION" in
+    "abort")
+      log_event "ERROR" "Service abort due to idle timeout"
+      write_activity_state "abort" "idle_timeout"
+      exit 1
+      ;;
+    "heal")
+      # Reset progress timer and continue (attempt self-healing)
+      mark_service_progress
+      return 0
+      ;;
+  esac
+
+  # "warn" is default - just continue
+  return 1
 }
 
 # Check and log timeout warning for current task
@@ -3525,6 +3718,7 @@ fire_ticket() {
 
   # Emit supervisor event for task start
   emit_supervisor_event "task_start" "$task_id" "$worker"
+  mark_service_progress
 
   local full_prompt=$(build_prompt "$prd_path" "$task_id" "$chef_prompt")
   local output_file=$(brigade_mktemp)
@@ -3768,11 +3962,13 @@ fire_ticket() {
   if grep -aq "<promise>COMPLETE</promise>" "$output_file" 2>/dev/null; then
     log_event "SUCCESS" "🍽️ $display_id plated! (${duration}s)"
     emit_supervisor_event "task_complete" "$task_id" "$worker" "$duration"
+    mark_service_progress
     rm -f "$output_file"
     return 0
   elif grep -aq "<promise>ALREADY_DONE</promise>" "$output_file" 2>/dev/null; then
     log_event "SUCCESS" "🍽️ $display_id already on the pass! (${duration}s)"
     emit_supervisor_event "task_already_done" "$task_id"
+    mark_service_progress
     rm -f "$output_file"
     return 33  # ALREADY_DONE (distinct from jq exit code 3)
   elif grep -aoq "<promise>ABSORBED_BY:" "$output_file" 2>/dev/null; then
@@ -3781,6 +3977,7 @@ fire_ticket() {
     local absorbed_display=$(format_task_id "$prd_path" "$LAST_ABSORBED_BY")
     log_event "SUCCESS" "Task $display_id ABSORBED BY $absorbed_display (${duration}s)"
     emit_supervisor_event "task_absorbed" "$task_id" "$LAST_ABSORBED_BY"
+    mark_service_progress
     rm -f "$output_file"
     return 34  # ABSORBED_BY
   elif grep -aq "<promise>BLOCKED</promise>" "$output_file" 2>/dev/null; then
@@ -5546,18 +5743,42 @@ RECOMMENDATIONS: <any suggestions, or 'none'>
   local output_file=$(brigade_mktemp)
   local start_time=$(date +%s)
 
-  if $EXECUTIVE_CMD --dangerously-skip-permissions -p "$phase_prompt" 2>&1 | tee "$output_file"; then
+  # Log phase review start to activity log
+  write_activity_state "phase_review" "starting" "$completed/$total"
+  mark_service_progress
+
+  # Determine timeout (use specific timeout or fall back to executive timeout)
+  local review_timeout="$PHASE_REVIEW_TIMEOUT"
+  [ "$review_timeout" -eq 0 ] 2>/dev/null && review_timeout="$TASK_TIMEOUT_EXECUTIVE"
+
+  # Run with timeout to prevent stalls (P14 fix)
+  local review_result=0
+  if run_with_timeout "$review_timeout" $EXECUTIVE_CMD --dangerously-skip-permissions -p "$phase_prompt" > "$output_file" 2>&1; then
     echo -e "${GREEN}Phase review completed${NC}"
   else
-    echo -e "${YELLOW}Phase review exited${NC}"
+    review_result=$?
+    if [ "$review_result" -eq 124 ]; then
+      echo -e "${YELLOW}Phase review timed out after ${review_timeout}s - continuing${NC}"
+      write_activity_state "phase_review" "timeout" "${review_timeout}s"
+      emit_supervisor_event "attention" "phase_review" "timeout_${review_timeout}s"
+    else
+      echo -e "${YELLOW}Phase review exited (code $review_result)${NC}"
+    fi
   fi
 
   local end_time=$(date +%s)
   local duration=$((end_time - start_time))
 
+  # Mark progress after phase review completes
+  mark_service_progress
+  write_activity_state "phase_review" "complete" "${duration}s"
+
   # Extract status (macOS compatible - no -P flag)
   local status=$(sed -n 's/.*STATUS: *\([a-z_]*\).*/\1/p' "$output_file" 2>/dev/null | head -1)
   [ -z "$status" ] && status="unknown"
+
+  # If timed out, treat as unknown but don't block
+  [ "$review_result" -eq 124 ] && status="timeout"
 
   # Record phase review to state file
   record_phase_review "$prd_path" "$completed" "$total" "$status" "$output_file"
@@ -5572,6 +5793,11 @@ RECOMMENDATIONS: <any suggestions, or 'none'>
       log_event "WARN" "Phase Review: MINOR CONCERNS (${duration}s)"
       rm -f "$output_file"
       return 0
+      ;;
+    "timeout")
+      log_event "WARN" "Phase Review: TIMEOUT after ${duration}s - continuing execution"
+      rm -f "$output_file"
+      return 0  # Don't block on timeout - continue with next task
       ;;
     "needs_attention")
       log_event "ERROR" "Phase Review: NEEDS ATTENTION (${duration}s)"
@@ -7045,6 +7271,9 @@ cmd_service() {
     exit 1
   fi
 
+  # Start lock heartbeat (keeps lock fresh for long-running services)
+  start_lock_heartbeat
+
   # Initialize PRD-scoped supervisor files (for safe parallel execution)
   init_supervisor_files_for_prd "$prd_path"
 
@@ -7258,6 +7487,8 @@ $task_id"
 
   log_event "START" "🍳 Firing up the kitchen for: $feature_name"
   emit_supervisor_event "service_start" "$(basename "$prd_path")" "$total"
+  write_activity_state "service_start" "$total tasks"
+  mark_service_progress
   echo -e "📋 Menu: $total dishes to prepare"
   echo -e "${GRAY}Escalation: $([ "$ESCALATION_ENABLED" == "true" ] && echo "ON (after $ESCALATION_AFTER iterations)" || echo "OFF")${NC}"
   echo -e "${GRAY}Executive Review: $([ "$REVIEW_ENABLED" == "true" ] && echo "ON" || echo "OFF")${NC}"
@@ -7273,14 +7504,19 @@ $task_id"
   local completed=0
 
   while true; do
+    # Check for service idle (P14 watchdog)
+    check_service_idle "$prd_path"
+
     local ready_tasks=$(get_ready_tasks "$prd_path")
 
     if [ -z "$ready_tasks" ]; then
       # Check if all done or blocked
       local pending=$(jq '[.tasks[] | select(.passes == false)] | length' "$prd_path")
       if [ "$pending" -eq 0 ]; then
+        write_activity_state "loop_exit" "all_complete"
         break  # All done
       else
+        write_activity_state "loop_exit" "blocked" "$pending pending"
         echo -e "${RED}No available tasks - remaining tasks may be blocked${NC}"
         cmd_status "$prd_path"
         exit 1
@@ -7576,6 +7812,7 @@ EOF
   log_event "SUCCESS" "✅ Order up! $completed dishes served, kitchen clean."
   local failed_tasks=$((total_tasks - completed))
   emit_supervisor_event "service_complete" "$completed" "$failed_tasks" "$duration"
+  write_activity_state "service_end" "done=$completed duration=${duration}s"
 
   # Merge feature branch to default branch
   local merge_status="none"  # none, success, failed, pushed
@@ -9576,6 +9813,10 @@ main() {
       --walkaway)
         WALKAWAY_MODE=true
         echo -e "${CYAN}Walkaway mode: AI will decide retry/skip on failures${NC}"
+        shift
+        ;;
+      --force)
+        FORCE_LOCK=true
         shift
         ;;
       --only)

@@ -146,8 +146,18 @@ type Config struct {
 	WalkawayDecisionTimeout time.Duration `mapstructure:"WALKAWAY_DECISION_TIMEOUT"`
 	WalkawayScopeDecisions bool          `mapstructure:"WALKAWAY_SCOPE_DECISIONS"`
 
+	// Lock Heartbeat
+	LockHeartbeatInterval time.Duration `mapstructure:"LOCK_HEARTBEAT_INTERVAL"`
+
+	// Service Idle Detection
+	ServiceIdleThreshold time.Duration `mapstructure:"SERVICE_IDLE_THRESHOLD"`
+	ServiceIdleAction    string        `mapstructure:"SERVICE_IDLE_ACTION"`
+
 	// Limits
 	MaxIterations int `mapstructure:"MAX_ITERATIONS"`
+
+	// Runtime flags (set via CLI, not config file)
+	ForceOverrideLock bool
 
 	// Internal tracking
 	configPath string
@@ -272,6 +282,13 @@ func Default() *Config {
 		WalkawayDecisionTimeout: 2 * time.Minute,
 		WalkawayScopeDecisions:  true,
 
+		// Lock Heartbeat
+		LockHeartbeatInterval: 30 * time.Second,
+
+		// Service Idle Detection
+		ServiceIdleThreshold: 180 * time.Second, // 3 min
+		ServiceIdleAction:    "warn",
+
 		// Limits
 		MaxIterations: 50,
 	}
@@ -385,6 +402,7 @@ func (c *Config) loadFromEnv() {
 		"KNOWLEDGE_SHARING", "LEARNINGS_FILE", "BACKLOG_FILE", "LEARNINGS_MAX", "LEARNINGS_ARCHIVE",
 		"MAX_PARALLEL", "AUTO_CONTINUE", "PHASE_GATE",
 		"WALKAWAY_MODE", "WALKAWAY_MAX_SKIPS", "WALKAWAY_DECISION_TIMEOUT", "WALKAWAY_SCOPE_DECISIONS",
+		"LOCK_HEARTBEAT_INTERVAL", "SERVICE_IDLE_THRESHOLD", "SERVICE_IDLE_ACTION",
 		"MAX_ITERATIONS",
 	}
 
@@ -579,6 +597,14 @@ func (c *Config) setValue(key, value string) {
 		c.WorkerHealthCheckInterval = parseDurationSeconds(value)
 	case "WALKAWAY_DECISION_TIMEOUT":
 		c.WalkawayDecisionTimeout = parseDurationSeconds(value)
+	case "LOCK_HEARTBEAT_INTERVAL":
+		c.LockHeartbeatInterval = parseDurationSeconds(value)
+	case "SERVICE_IDLE_THRESHOLD":
+		c.ServiceIdleThreshold = parseDurationSeconds(value)
+
+	// Service Idle Action (string)
+	case "SERVICE_IDLE_ACTION":
+		c.ServiceIdleAction = value
 
 	// String arrays
 	case "MODULES":
@@ -614,6 +640,13 @@ func (c *Config) Validate() []string {
 	if !validRisks[c.RiskWarnThreshold] {
 		warnings = append(warnings, fmt.Sprintf("RISK_WARN_THRESHOLD '%s' invalid, disabling", c.RiskWarnThreshold))
 		c.RiskWarnThreshold = ""
+	}
+
+	// Validate service idle action
+	validIdleActions := map[string]bool{"warn": true, "abort": true, "heal": true}
+	if !validIdleActions[c.ServiceIdleAction] {
+		warnings = append(warnings, fmt.Sprintf("SERVICE_IDLE_ACTION '%s' invalid, using 'warn'", c.ServiceIdleAction))
+		c.ServiceIdleAction = "warn"
 	}
 
 	// Validate numeric ranges

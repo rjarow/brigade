@@ -122,6 +122,27 @@ WORKER_LOG_DIR=""  # e.g., "brigade/logs/"
 STATUS_WATCH_INTERVAL=30  # Seconds between refreshes in `status --watch` mode
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SERVICE RELIABILITY (P14)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Features to detect and recover from service stalls.
+
+# Lock file heartbeat - prevents stale locks from blocking new service starts
+# Lock format: JSON with PID and heartbeat timestamp
+# Stale locks (dead process or heartbeat >2x interval) are automatically cleaned
+LOCK_HEARTBEAT_INTERVAL=30  # Seconds between lock heartbeat updates
+
+# Service idle watchdog - detects when service stalls between tasks
+# Triggers attention event when no progress for SERVICE_IDLE_THRESHOLD seconds
+# while tasks are still pending
+SERVICE_IDLE_THRESHOLD=180  # Seconds with no progress before alert (0=disabled)
+
+# Action to take when idle threshold exceeded:
+#   warn  - Log warning and emit attention event (default)
+#   heal  - Reset progress timer and continue (attempt self-healing)
+#   abort - Exit service with error
+SERVICE_IDLE_ACTION="warn"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SUPERVISOR INTEGRATION
 # ═══════════════════════════════════════════════════════════════════════════════
 # For AI supervisors (Claude, TUI tools, etc.) to monitor Brigade with minimal overhead.
@@ -411,6 +432,11 @@ PHASE_REVIEW_AFTER=5
 #   pause     - Stop execution, require manual restart
 #   remediate - Let Executive Chef add corrective tasks to PRD
 PHASE_REVIEW_ACTION=continue
+
+# Timeout for phase review in seconds (prevents stalls)
+# If exceeded, logs warning and continues execution
+# Set to 0 to use TASK_TIMEOUT_EXECUTIVE instead
+PHASE_REVIEW_TIMEOUT=300  # 5 minutes
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT ISOLATION

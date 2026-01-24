@@ -28,6 +28,7 @@ var (
 	sequential   bool
 	walkawayMode bool
 	autoContinue bool
+	forceFlag    bool
 
 	// Partial execution flags
 	onlyTasks  []string
@@ -63,6 +64,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&sequential, "sequential", false, "force sequential execution")
 	rootCmd.PersistentFlags().BoolVar(&walkawayMode, "walkaway", false, "autonomous execution mode")
 	rootCmd.PersistentFlags().BoolVar(&autoContinue, "auto-continue", false, "chain multiple PRDs")
+	rootCmd.PersistentFlags().BoolVar(&forceFlag, "force", false, "override existing service lock")
 
 	// Partial execution flags
 	rootCmd.PersistentFlags().StringSliceVar(&onlyTasks, "only", nil, "run specific tasks only")
@@ -98,6 +100,9 @@ var serviceCmd = &cobra.Command{
 		}
 		if walkawayMode {
 			cfg.WalkawayMode = true
+		}
+		if forceFlag {
+			cfg.ForceOverrideLock = true
 		}
 
 		// Set up logger

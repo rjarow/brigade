@@ -1,20 +1,28 @@
 package state
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
+// lockInfo represents the JSON lock file format.
+type lockInfo struct {
+	PID       int   `json:"pid"`
+	Heartbeat int64 `json:"heartbeat"`
+}
+
 // Lock represents a file-based lock using mkdir (cross-platform compatible).
 type Lock struct {
-	path    string
-	timeout time.Duration
-	stale   time.Duration
+	path              string
+	timeout           time.Duration
+	stale             time.Duration
+	heartbeatInterval time.Duration
+	force             bool
 }
 
 // LockOption configures lock behavior.
@@ -34,12 +42,27 @@ func WithStaleAge(d time.Duration) LockOption {
 	}
 }
 
+// WithHeartbeatInterval sets the heartbeat update interval.
+func WithHeartbeatInterval(d time.Duration) LockOption {
+	return func(l *Lock) {
+		l.heartbeatInterval = d
+	}
+}
+
+// WithForce enables force override of existing locks.
+func WithForce(force bool) LockOption {
+	return func(l *Lock) {
+		l.force = force
+	}
+}
+
 // NewLock creates a new lock for the given path.
 func NewLock(path string, opts ...LockOption) *Lock {
 	l := &Lock{
-		path:    path + ".lock",
-		timeout: 30 * time.Second,
-		stale:   5 * time.Minute,
+		path:              path + ".lock",
+		timeout:           30 * time.Second,
+		stale:             5 * time.Minute,
+		heartbeatInterval: 30 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(l)
@@ -52,13 +75,17 @@ func (l *Lock) Acquire() error {
 	deadline := time.Now().Add(l.timeout)
 	pollInterval := 100 * time.Millisecond
 
+	// Force override existing lock if requested
+	if l.force {
+		os.RemoveAll(l.path)
+	}
+
 	for {
 		// Try to create lock directory
 		err := os.Mkdir(l.path, 0755)
 		if err == nil {
-			// Lock acquired, write our PID
-			pidFile := filepath.Join(l.path, "pid")
-			if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
+			// Lock acquired, write our lock info
+			if err := l.writeLockInfo(); err != nil {
 				// Non-fatal, continue with lock
 			}
 			return nil
@@ -96,11 +123,15 @@ func (l *Lock) Release() error {
 // TryAcquire attempts to acquire the lock without blocking.
 // Returns true if lock was acquired, false otherwise.
 func (l *Lock) TryAcquire() bool {
+	// Force override existing lock if requested
+	if l.force {
+		os.RemoveAll(l.path)
+	}
+
 	err := os.Mkdir(l.path, 0755)
 	if err == nil {
-		// Lock acquired, write our PID
-		pidFile := filepath.Join(l.path, "pid")
-		os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+		// Lock acquired, write our lock info
+		l.writeLockInfo()
 		return true
 	}
 
@@ -113,8 +144,7 @@ func (l *Lock) TryAcquire() bool {
 		if l.tryRemoveStale() {
 			// Try one more time
 			if err := os.Mkdir(l.path, 0755); err == nil {
-				pidFile := filepath.Join(l.path, "pid")
-				os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+				l.writeLockInfo()
 				return true
 			}
 		}
@@ -123,26 +153,77 @@ func (l *Lock) TryAcquire() bool {
 	return false
 }
 
-// isStale checks if the lock is older than the stale threshold.
+// writeLockInfo writes the JSON lock info file.
+func (l *Lock) writeLockInfo() error {
+	info := lockInfo{
+		PID:       os.Getpid(),
+		Heartbeat: time.Now().Unix(),
+	}
+	data, err := json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(l.path, "pid"), data, 0644)
+}
+
+// readLockInfo reads the lock info, supporting both JSON and plain PID formats.
+func (l *Lock) readLockInfo() (*lockInfo, error) {
+	pidFile := filepath.Join(l.path, "pid")
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try JSON first
+	var info lockInfo
+	if err := json.Unmarshal(data, &info); err == nil {
+		return &info, nil
+	}
+
+	// Fall back to plain PID format for backward compatibility
+	var pid int
+	if _, err := fmt.Sscanf(string(data), "%d", &pid); err == nil {
+		return &lockInfo{PID: pid, Heartbeat: 0}, nil
+	}
+
+	return nil, fmt.Errorf("invalid lock file format")
+}
+
+// isStale checks if the lock is stale based on heartbeat or file age.
 func (l *Lock) isStale() bool {
-	info, err := os.Stat(l.path)
+	info, err := l.readLockInfo()
+	if err != nil {
+		// Can't read lock info, consider stale
+		return true
+	}
+
+	// Check if process is running
+	if !isProcessRunning(info.PID) {
+		return true
+	}
+
+	// If heartbeat is set, check heartbeat freshness (>2x interval = stale)
+	if info.Heartbeat > 0 && l.heartbeatInterval > 0 {
+		age := time.Since(time.Unix(info.Heartbeat, 0))
+		if age > l.heartbeatInterval*2 {
+			return true
+		}
+	}
+
+	// Fall back to directory modification time
+	dirInfo, err := os.Stat(l.path)
 	if err != nil {
 		return false
 	}
-
-	age := time.Since(info.ModTime())
-	return age > l.stale
+	return time.Since(dirInfo.ModTime()) > l.stale
 }
 
 // tryRemoveStale attempts to remove a stale lock.
 func (l *Lock) tryRemoveStale() bool {
-	// Check if the holder PID is still running
-	holder := l.getHolder()
-	if holder != "" {
-		pid, err := strconv.Atoi(holder)
-		if err == nil && isProcessRunning(pid) {
-			return false // Process still running, not stale
-		}
+	// Double-check that holder PID is not running
+	info, err := l.readLockInfo()
+	if err == nil && isProcessRunning(info.PID) {
+		return false // Process still running, not stale
 	}
 
 	// Try to remove
@@ -152,14 +233,18 @@ func (l *Lock) tryRemoveStale() bool {
 	return true
 }
 
-// getHolder returns the PID of the current lock holder, if available.
+// getHolder returns the PID of the current lock holder as a string.
 func (l *Lock) getHolder() string {
-	pidFile := filepath.Join(l.path, "pid")
-	data, err := os.ReadFile(pidFile)
+	info, err := l.readLockInfo()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	return fmt.Sprintf("%d", info.PID)
+}
+
+// UpdateHeartbeat updates the heartbeat timestamp.
+func (l *Lock) UpdateHeartbeat() error {
+	return l.writeLockInfo()
 }
 
 // isProcessRunning checks if a process with the given PID is running.
@@ -190,17 +275,22 @@ func WithLock(path string, fn func() error, opts ...LockOption) error {
 	return fn()
 }
 
-// ServiceLock represents a lock for the entire service execution.
+// ServiceLock represents a lock for the entire service execution with heartbeat support.
 type ServiceLock struct {
 	*Lock
 	prdPath string
+
+	// Heartbeat management
+	mu            sync.Mutex
+	stopHeartbeat chan struct{}
+	heartbeatDone chan struct{}
 }
 
 // NewServiceLock creates a service-level lock for a PRD.
-func NewServiceLock(prdPath string) *ServiceLock {
-	lockPath := strings.TrimSuffix(prdPath, ".json") + ".service"
+func NewServiceLock(prdPath string, opts ...LockOption) *ServiceLock {
+	lockPath := prdPath[:len(prdPath)-len(filepath.Ext(prdPath))] + ".service"
 	return &ServiceLock{
-		Lock:    NewLock(lockPath),
+		Lock:    NewLock(lockPath, opts...),
 		prdPath: prdPath,
 	}
 }
@@ -212,4 +302,52 @@ func (s *ServiceLock) AcquireExclusive() error {
 		return fmt.Errorf("another Brigade instance is processing %s: %w", filepath.Base(s.prdPath), err)
 	}
 	return nil
+}
+
+// StartHeartbeat starts a background goroutine that updates the heartbeat.
+func (s *ServiceLock) StartHeartbeat(interval time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.stopHeartbeat != nil {
+		// Already running
+		return
+	}
+
+	s.stopHeartbeat = make(chan struct{})
+	s.heartbeatDone = make(chan struct{})
+
+	go func() {
+		defer close(s.heartbeatDone)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				s.Lock.UpdateHeartbeat()
+			case <-s.stopHeartbeat:
+				return
+			}
+		}
+	}()
+}
+
+// StopHeartbeat stops the heartbeat goroutine.
+func (s *ServiceLock) StopHeartbeat() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.stopHeartbeat != nil {
+		close(s.stopHeartbeat)
+		<-s.heartbeatDone
+		s.stopHeartbeat = nil
+		s.heartbeatDone = nil
+	}
+}
+
+// Release stops the heartbeat and releases the lock.
+func (s *ServiceLock) Release() error {
+	s.StopHeartbeat()
+	return s.Lock.Release()
 }

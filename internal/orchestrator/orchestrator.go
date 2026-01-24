@@ -35,11 +35,16 @@ type Orchestrator struct {
 	supervisor   *supervisor.Supervisor
 	logger       *slog.Logger
 
+	// Activity and monitoring
+	activity *ActivityLogger
+
 	// Runtime state
-	startTime       time.Time
-	taskStartTime   time.Time
-	cancelled       bool
-	runningWorkers  []*workerExecution
+	startTime        time.Time
+	taskStartTime    time.Time
+	cancelled        bool
+	runningWorkers   []*workerExecution
+	lastProgressTime time.Time
+	idleWarningShown bool
 }
 
 // Options configures the orchestrator.
@@ -95,8 +100,14 @@ func New(opts Options) (*Orchestrator, error) {
 		cfg.WalkawayMode = true
 	}
 
-	// Create service lock
-	serviceLock := state.NewServiceLock(opts.PRDPath)
+	// Create service lock with config options
+	lockOpts := []state.LockOption{
+		state.WithHeartbeatInterval(cfg.LockHeartbeatInterval),
+	}
+	if cfg.ForceOverrideLock {
+		lockOpts = append(lockOpts, state.WithForce(true))
+	}
+	serviceLock := state.NewServiceLock(opts.PRDPath, lockOpts...)
 
 	// Create workers
 	workers := createWorkerFactory(cfg)
@@ -135,6 +146,12 @@ func New(opts Options) (*Orchestrator, error) {
 		cfg.SupervisorCmdTimeout,
 	)
 
+	// Create activity logger
+	var activity *ActivityLogger
+	if cfg.ActivityLog != "" {
+		activity = NewActivityLogger(cfg.ActivityLog, cfg.ActivityLogInterval, p.Prefix())
+	}
+
 	return &Orchestrator{
 		config:        cfg,
 		prd:           p,
@@ -147,6 +164,7 @@ func New(opts Options) (*Orchestrator, error) {
 		classifier:    classifier,
 		modules:       modules,
 		supervisor:    sup,
+		activity:      activity,
 		logger:        logger,
 	}, nil
 }
@@ -208,6 +226,22 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	}
 	defer o.serviceLock.Release()
 
+	// Start lock heartbeat
+	o.serviceLock.StartHeartbeat(o.config.LockHeartbeatInterval)
+
+	// Start activity logger
+	if o.activity != nil {
+		o.activity.Start()
+		o.activity.WriteState("SERVICE_START", "", "")
+		defer func() {
+			o.activity.WriteState("SERVICE_END", "", "")
+			o.activity.Stop()
+		}()
+	}
+
+	// Initialize idle tracking
+	o.lastProgressTime = time.Now()
+
 	// Update state timestamp
 	o.state.UpdateLastStartTime()
 	if err := o.store.Save(o.state); err != nil {
@@ -241,6 +275,14 @@ func (o *Orchestrator) serviceLoop(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+
+		// Check for idle service
+		if o.checkIdle() {
+			if o.activity != nil {
+				o.activity.WriteState("LOOP_EXIT", "idle_abort", "")
+			}
+			return fmt.Errorf("service idle for too long, aborting")
 		}
 
 		// Get completed tasks
@@ -300,6 +342,7 @@ func (o *Orchestrator) serviceLoop(ctx context.Context) error {
 func (o *Orchestrator) executeTask(ctx context.Context, task *prd.Task) error {
 	o.taskStartTime = time.Now()
 	o.state.SetCurrentTask(task.ID)
+	o.markProgress()
 
 	// Determine worker tier
 	tier := o.determineWorkerTier(task)
@@ -317,6 +360,11 @@ func (o *Orchestrator) executeTask(ctx context.Context, task *prd.Task) error {
 	o.modules.Dispatch(module.TaskStartEvent(o.prd.Prefix(), task.ID, string(tier)))
 	if o.supervisor.Events().Enabled() {
 		o.supervisor.Events().WriteTaskStart(o.prd.Prefix(), task.ID, string(tier))
+	}
+
+	// Update activity logger
+	if o.activity != nil {
+		o.activity.SetTask(task.ID, string(tier))
 	}
 
 	// Update status
@@ -436,6 +484,10 @@ func (o *Orchestrator) handleComplete(ctx context.Context, task *prd.Task, w wor
 
 	o.state.ResetSkips()
 	o.state.ClearCurrentTask()
+	o.markProgress()
+	if o.activity != nil {
+		o.activity.ClearTask()
+	}
 	return nil
 }
 
@@ -460,6 +512,10 @@ func (o *Orchestrator) handleAbsorbed(task *prd.Task, absorbedBy string) error {
 	o.state.AddAbsorption(task.ID, absorbedBy)
 	o.prd.MarkTaskComplete(task.ID)
 	o.state.ClearCurrentTask()
+	o.markProgress()
+	if o.activity != nil {
+		o.activity.ClearTask()
+	}
 	return nil
 }
 
@@ -569,7 +625,32 @@ func (o *Orchestrator) handleDecision(ctx context.Context, task *prd.Task, reaso
 func (o *Orchestrator) handleWalkawayDecision(ctx context.Context, task *prd.Task, reason string) error {
 	attempts := o.state.TotalAttempts(task.ID)
 
-	// Build decision prompt
+	// Step 1: Check for supervisor command first (if enabled)
+	if o.supervisor.Commands().Enabled() {
+		question := fmt.Sprintf("Task %s failed after %d attempts: %s", task.ID, attempts, reason)
+		cmd, err := o.supervisor.RequestDecision(ctx, task.ID, question, []string{"retry", "skip", "abort"})
+		if err == nil && cmd != nil {
+			o.logger.Info("supervisor decision received",
+				"task", task.ID,
+				"action", cmd.Action,
+				"reason", cmd.Reason)
+
+			switch cmd.Action {
+			case supervisor.ActionRetry:
+				return o.executeTask(ctx, task)
+			case supervisor.ActionSkip:
+				return o.skipTask(task, cmd.Reason)
+			case supervisor.ActionAbort:
+				return fmt.Errorf("supervisor aborted: %s", cmd.Reason)
+			case supervisor.ActionPause:
+				return fmt.Errorf("supervisor paused execution")
+			}
+		} else if err != nil {
+			o.logger.Info("supervisor timeout, using exec chef", "error", err)
+		}
+	}
+
+	// Step 2: Fall back to exec chef decision
 	prompt, err := o.promptBuilder.BuildWalkawayDecisionPrompt(task, reason, attempts)
 	if err != nil {
 		o.logger.Error("failed to build decision prompt", "error", err)
@@ -626,6 +707,10 @@ func (o *Orchestrator) skipTask(task *prd.Task, reason string) error {
 
 	o.prd.MarkTaskComplete(task.ID) // Mark as "done" so we don't retry
 	o.state.ClearCurrentTask()
+	o.markProgress()
+	if o.activity != nil {
+		o.activity.ClearTask()
+	}
 	return nil
 }
 
@@ -710,6 +795,51 @@ func (o *Orchestrator) runReview(ctx context.Context, task *prd.Task, workerOutp
 	}
 
 	return parseReview(result.Output)
+}
+
+// markProgress marks that the service made progress (resets idle timer).
+func (o *Orchestrator) markProgress() {
+	o.lastProgressTime = time.Now()
+	o.idleWarningShown = false
+}
+
+// checkIdle checks if the service has been idle for too long.
+// Returns true if the service should abort due to idle.
+func (o *Orchestrator) checkIdle() bool {
+	if o.config.ServiceIdleThreshold == 0 {
+		return false
+	}
+
+	idle := time.Since(o.lastProgressTime)
+	if idle < o.config.ServiceIdleThreshold {
+		return false
+	}
+
+	// Skip if all tasks done
+	if o.prd.IsComplete() {
+		return false
+	}
+
+	if !o.idleWarningShown {
+		o.logger.Warn("service idle", "duration", idle)
+		if o.activity != nil {
+			o.activity.WriteState("IDLE", "no_progress", idle.String())
+		}
+		if o.supervisor.Events().Enabled() {
+			o.supervisor.Events().WriteAttention(o.prd.Prefix(), "", "service_idle: "+idle.String())
+		}
+		o.idleWarningShown = true
+	}
+
+	switch o.config.ServiceIdleAction {
+	case "abort":
+		return true // Signal abort
+	case "heal":
+		o.markProgress() // Reset timer
+	}
+	// "warn" is handled above
+
+	return false
 }
 
 // cleanup cleans up resources.
