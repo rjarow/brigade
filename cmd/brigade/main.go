@@ -619,6 +619,13 @@ func (s *statusInfo) Format() string {
 		workerInfo := ""
 		if t.Status == "in_progress" {
 			workerInfo = fmt.Sprintf(" %s[%s · iter %d]%s", colorYellow, t.Worker, t.Iterations, colorReset)
+		} else if t.Status == "complete" {
+			// Show worker for completed tasks too
+			iterInfo := ""
+			if t.Iterations > 1 {
+				iterInfo = fmt.Sprintf(" (%d iterations)", t.Iterations)
+			}
+			workerInfo = fmt.Sprintf(" %s[%s]%s%s", colorDim, t.Worker, iterInfo, colorReset)
 		} else if t.Status == "pending" {
 			workerInfo = fmt.Sprintf(" %s[%s]%s", colorDim, t.Worker, colorReset)
 		}

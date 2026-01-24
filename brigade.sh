@@ -6223,7 +6223,7 @@ cmd_status() {
     if .passes == true and $absorption != null then
       "  \u001b[32m✓\u001b[0m \(.id): \(.title) \u001b[90m(absorbed by \($absorption.absorbedBy))\u001b[0m"
     elif .passes == true then
-      "  \u001b[32m✓\u001b[0m \(.id): \(.title)\(if $iter_count > 1 then " \u001b[90m(\($iter_count) iterations)\u001b[0m" else "" end)"
+      "  \u001b[32m✓\u001b[0m \(.id): \(.title) \u001b[90m[\($worker_name)]\u001b[0m\(if $iter_count > 1 then " \u001b[90m(\($iter_count) iterations)\u001b[0m" else "" end)\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
     elif .id == $current then
       "  \u001b[33m→\u001b[0m \(.id): \(.title) \u001b[33m[\($current_worker | if . == "line" then "Line Cook" elif . == "sous" then "Sous Chef" elif . == "executive" then "Exec Chef" else . end) · iter \($current_iter)]\u001b[0m\(if $last_esc != null then " \u001b[33m⬆\u001b[0m" else "" end)"
     elif $has_history then
