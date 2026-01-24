@@ -16,7 +16,7 @@ your-project/
 └── ...
 ```
 
-Run `./brigade.sh init` to create a starter config.
+Run `./brigade-go init` to create a starter config.
 
 ## Workers
 

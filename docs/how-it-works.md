@@ -29,7 +29,7 @@ You: "Add user authentication"
 
 ## Planning Phase
 
-When you run `./brigade.sh plan "..."`:
+When you run `./brigade-go plan "..."`:
 
 1. **Interview** - Executive Chef asks clarifying questions upfront
 2. **Analysis** - Explores your codebase (structure, patterns, stack)
@@ -112,5 +112,5 @@ Ctrl+C anytime. Brigade:
 2. Cleans up temp files
 3. Saves state for resume
 
-Run `./brigade.sh resume` to pick up where you left off.
+Run `./brigade-go resume` to pick up where you left off.
 

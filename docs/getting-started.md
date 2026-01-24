@@ -41,45 +41,33 @@ Claude: [Runs service, reports progress]
 
 For automation, CI/CD, or terminal use.
 
-### Choose Your Version
-
-| Version | Install | Best For |
-|---------|---------|----------|
-| **Bash** | Works out of the box | Default, production-tested |
-| **Go** | `go build -o brigade-go ./cmd/brigade` | Better errors, type safety |
-
 ### Prerequisites
 
-**For Bash version:**
-- **Claude CLI** (`claude`) - required
-- **jq** - for JSON processing
-- **bash** 4.0+
-
-**For Go version:**
-- **Go 1.21+** - to build
-- **Claude CLI** (`claude`) - required
+- **Go 1.21+** - to build Brigade
+- **Claude CLI** (`claude`) - required for AI workers
 
 ### First Run
 
 ```bash
-./brigade.sh init    # Setup wizard
-./brigade.sh demo    # See what it does
+go build -o brigade-go ./cmd/brigade
+./brigade-go init    # Setup wizard
+./brigade-go demo    # See what it does
 ```
 
 ### Your First Feature
 
 ```bash
 # 1. Plan
-./brigade.sh plan "Add user authentication"
+./brigade-go plan "Add user authentication"
 
 # 2. Review
 cat brigade/tasks/prd-*.json | jq
 
 # 3. Execute
-./brigade.sh service
+./brigade-go service
 
 # 4. Monitor
-./brigade.sh status --watch
+./brigade-go status --watch
 ```
 
 ### Handling Interruptions
@@ -87,8 +75,8 @@ cat brigade/tasks/prd-*.json | jq
 Ctrl+C anytime. Resume later:
 
 ```bash
-./brigade.sh resume          # Auto-detect, prompt retry/skip
-./brigade.sh resume retry    # Retry failed task
-./brigade.sh resume skip     # Skip and continue
+./brigade-go resume          # Auto-detect, prompt retry/skip
+./brigade-go resume retry    # Retry failed task
+./brigade-go resume skip     # Skip and continue
 ```
 

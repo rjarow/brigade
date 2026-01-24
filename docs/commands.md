@@ -2,7 +2,7 @@
 
 Complete reference for Brigade CLI commands.
 
-> All commands work with both `./brigade.sh` (Bash) and `./brigade-go` (Go).
+> The legacy `./brigade.sh` also supports these commands but Go is recommended.
 
 ## Setup
 
@@ -11,7 +11,7 @@ Complete reference for Brigade CLI commands.
 First-time setup wizard. Checks tools, creates config.
 
 ```bash
-./brigade.sh init
+./brigade-go init
 ```
 
 ### demo
@@ -19,7 +19,7 @@ First-time setup wizard. Checks tools, creates config.
 Preview what Brigade does without executing.
 
 ```bash
-./brigade.sh demo
+./brigade-go demo
 ```
 
 ## Planning
@@ -29,7 +29,7 @@ Preview what Brigade does without executing.
 Generate a PRD via Executive Chef.
 
 ```bash
-./brigade.sh plan "Add user authentication with JWT"
+./brigade-go plan "Add user authentication with JWT"
 ```
 
 The Executive Chef will:
@@ -42,9 +42,9 @@ The Executive Chef will:
 Generate PRD from a template.
 
 ```bash
-./brigade.sh template                  # List templates
-./brigade.sh template api users        # REST API for "users"
-./brigade.sh template auth             # Auth system
+./brigade-go template                  # List templates
+./brigade-go template api users        # REST API for "users"
+./brigade-go template auth             # Auth system
 ```
 
 ### validate
@@ -52,7 +52,7 @@ Generate PRD from a template.
 Validate PRD structure and quality.
 
 ```bash
-./brigade.sh validate brigade/tasks/prd.json
+./brigade-go validate brigade/tasks/prd.json
 ```
 
 Checks: JSON syntax, required fields, dependency cycles, acceptance criteria quality, verification coverage.
@@ -62,7 +62,7 @@ Checks: JSON syntax, required fields, dependency cycles, acceptance criteria qua
 Generate codebase analysis (auto-included in future planning).
 
 ```bash
-./brigade.sh map
+./brigade-go map
 ```
 
 Creates `codebase-map.md` with structure, patterns, and tech stack.
@@ -74,7 +74,7 @@ Creates `codebase-map.md` with structure, patterns, and tech stack.
 Execute all tasks in a PRD.
 
 ```bash
-./brigade.sh service brigade/tasks/prd.json
+./brigade-go service brigade/tasks/prd.json
 ```
 
 #### Flags
@@ -89,10 +89,10 @@ Execute all tasks in a PRD.
 #### Partial Execution
 
 ```bash
-./brigade.sh --only US-001,US-003 service prd.json   # Run specific tasks
-./brigade.sh --skip US-007 service prd.json          # Skip specific tasks
-./brigade.sh --from US-003 service prd.json          # Start from task
-./brigade.sh --until US-005 service prd.json         # Run up to task
+./brigade-go --only US-001,US-003 service prd.json   # Run specific tasks
+./brigade-go --skip US-007 service prd.json          # Skip specific tasks
+./brigade-go --from US-003 service prd.json          # Start from task
+./brigade-go --until US-005 service prd.json         # Run up to task
 ```
 
 ### ticket
@@ -100,7 +100,7 @@ Execute all tasks in a PRD.
 Run a single task.
 
 ```bash
-./brigade.sh ticket brigade/tasks/prd.json US-001
+./brigade-go ticket brigade/tasks/prd.json US-001
 ```
 
 ### resume
@@ -108,10 +108,10 @@ Run a single task.
 Resume after interruption.
 
 ```bash
-./brigade.sh resume                         # Auto-detect, prompt retry/skip
-./brigade.sh resume brigade/tasks/prd.json  # Specify PRD
-./brigade.sh resume retry                   # Retry failed task
-./brigade.sh resume skip                    # Skip and continue
+./brigade-go resume                         # Auto-detect, prompt retry/skip
+./brigade-go resume brigade/tasks/prd.json  # Specify PRD
+./brigade-go resume retry                   # Retry failed task
+./brigade-go resume skip                    # Skip and continue
 ```
 
 ### iterate
@@ -119,7 +119,7 @@ Resume after interruption.
 Quick tweak on completed PRD.
 
 ```bash
-./brigade.sh iterate "make the button blue"
+./brigade-go iterate "make the button blue"
 ```
 
 Creates a micro-PRD and executes it.
@@ -131,10 +131,10 @@ Creates a micro-PRD and executes it.
 Check progress.
 
 ```bash
-./brigade.sh status                    # Current state
-./brigade.sh status --watch            # Auto-refresh every 30s
-./brigade.sh status --json             # Machine-readable JSON
-./brigade.sh status --brief            # Ultra-compact JSON
+./brigade-go status                    # Current state
+./brigade-go status --watch            # Auto-refresh every 30s
+./brigade-go status --json             # Machine-readable JSON
+./brigade-go status --brief            # Ultra-compact JSON
 ```
 
 #### Status Symbols
@@ -152,7 +152,7 @@ Check progress.
 Generate markdown report from state.
 
 ```bash
-./brigade.sh summary brigade/tasks/prd.json
+./brigade-go summary brigade/tasks/prd.json
 ```
 
 ### cost
@@ -160,7 +160,7 @@ Generate markdown report from state.
 Show estimated cost breakdown.
 
 ```bash
-./brigade.sh cost brigade/tasks/prd.json
+./brigade-go cost brigade/tasks/prd.json
 ```
 
 ### risk
@@ -168,8 +168,8 @@ Show estimated cost breakdown.
 Pre-execution risk assessment.
 
 ```bash
-./brigade.sh risk brigade/tasks/prd.json
-./brigade.sh risk --history brigade/tasks/prd.json  # Include historical patterns
+./brigade-go risk brigade/tasks/prd.json
+./brigade-go risk --history brigade/tasks/prd.json  # Include historical patterns
 ```
 
 ## Exit Codes

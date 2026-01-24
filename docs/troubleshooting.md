@@ -12,7 +12,7 @@
 ## Debug Mode
 
 ```bash
-BRIGADE_DEBUG=true ./brigade.sh service prd.json
+BRIGADE_DEBUG=true ./brigade-go service prd.json
 ```
 
 Shows lock timing, signal detection, and task flow details.
@@ -58,7 +58,7 @@ Usually caused by vague acceptance criteria:
 
 ```bash
 rm brigade/tasks/*.lock    # Remove stale locks
-./brigade.sh resume        # Resume execution
+./brigade-go resume        # Resume execution
 ```
 
 ### Corrupted state

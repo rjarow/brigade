@@ -8,7 +8,7 @@ Three ways to enable:
 
 ```bash
 # CLI flag
-./brigade.sh --walkaway service prd.json
+./brigade-go --walkaway service prd.json
 
 # Configuration
 WALKAWAY_MODE=true

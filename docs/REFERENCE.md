@@ -12,22 +12,17 @@ Brigade routes coding tasks to the right AI based on complexity. Using a kitchen
 
 ## Quick Start
 
-Brigade has two implementations with identical CLI - use whichever you prefer:
-
 ```bash
-# Bash version (works out of the box)
-./brigade.sh init
-./brigade.sh plan "Add user authentication with JWT"
-./brigade.sh service
-
-# Go version (build first, then same commands)
+# Build the Go binary
 go build -o brigade-go ./cmd/brigade
+
+# Setup and run
 ./brigade-go init
 ./brigade-go plan "Add user authentication with JWT"
 ./brigade-go service
 ```
 
-Both versions share the same config files, PRD format, and state files.
+A legacy Bash version (`brigade.sh`) is also available but Go is recommended for better error messages and reliability.
 
 ## The Kitchen
 
@@ -93,45 +88,33 @@ Claude: [Runs service, reports progress]
 
 For automation, CI/CD, or terminal use.
 
-### Choose Your Version
-
-| Version | Install | Best For |
-|---------|---------|----------|
-| **Bash** | Works out of the box | Default, production-tested |
-| **Go** | `go build -o brigade-go ./cmd/brigade` | Better errors, type safety |
-
 ### Prerequisites
 
-**For Bash version:**
-- **Claude CLI** (`claude`) - required
-- **jq** - for JSON processing
-- **bash** 4.0+
-
-**For Go version:**
-- **Go 1.21+** - to build
-- **Claude CLI** (`claude`) - required
+- **Go 1.21+** - to build Brigade
+- **Claude CLI** (`claude`) - required for AI workers
 
 ### First Run
 
 ```bash
-./brigade.sh init    # Setup wizard
-./brigade.sh demo    # See what it does
+go build -o brigade-go ./cmd/brigade
+./brigade-go init    # Setup wizard
+./brigade-go demo    # See what it does
 ```
 
 ### Your First Feature
 
 ```bash
 # 1. Plan
-./brigade.sh plan "Add user authentication"
+./brigade-go plan "Add user authentication"
 
 # 2. Review
 cat brigade/tasks/prd-*.json | jq
 
 # 3. Execute
-./brigade.sh service
+./brigade-go service
 
 # 4. Monitor
-./brigade.sh status --watch
+./brigade-go status --watch
 ```
 
 ### Handling Interruptions
@@ -139,9 +122,9 @@ cat brigade/tasks/prd-*.json | jq
 Ctrl+C anytime. Resume later:
 
 ```bash
-./brigade.sh resume          # Auto-detect, prompt retry/skip
-./brigade.sh resume retry    # Retry failed task
-./brigade.sh resume skip     # Skip and continue
+./brigade-go resume          # Auto-detect, prompt retry/skip
+./brigade-go resume retry    # Retry failed task
+./brigade-go resume skip     # Skip and continue
 ```
 
 <!-- section: commands -->
@@ -149,7 +132,7 @@ Ctrl+C anytime. Resume later:
 
 Complete reference for Brigade CLI commands.
 
-> All commands work with both `./brigade.sh` (Bash) and `./brigade-go` (Go).
+> The legacy `./brigade.sh` also supports these commands but Go is recommended.
 
 ## Setup
 
@@ -158,7 +141,7 @@ Complete reference for Brigade CLI commands.
 First-time setup wizard. Checks tools, creates config.
 
 ```bash
-./brigade.sh init
+./brigade-go init
 ```
 
 ### demo
@@ -166,7 +149,7 @@ First-time setup wizard. Checks tools, creates config.
 Preview what Brigade does without executing.
 
 ```bash
-./brigade.sh demo
+./brigade-go demo
 ```
 
 ## Planning
@@ -176,7 +159,7 @@ Preview what Brigade does without executing.
 Generate a PRD via Executive Chef.
 
 ```bash
-./brigade.sh plan "Add user authentication with JWT"
+./brigade-go plan "Add user authentication with JWT"
 ```
 
 The Executive Chef will:
@@ -189,9 +172,9 @@ The Executive Chef will:
 Generate PRD from a template.
 
 ```bash
-./brigade.sh template                  # List templates
-./brigade.sh template api users        # REST API for "users"
-./brigade.sh template auth             # Auth system
+./brigade-go template                  # List templates
+./brigade-go template api users        # REST API for "users"
+./brigade-go template auth             # Auth system
 ```
 
 ### validate
@@ -199,7 +182,7 @@ Generate PRD from a template.
 Validate PRD structure and quality.
 
 ```bash
-./brigade.sh validate brigade/tasks/prd.json
+./brigade-go validate brigade/tasks/prd.json
 ```
 
 Checks: JSON syntax, required fields, dependency cycles, acceptance criteria quality, verification coverage.
@@ -209,7 +192,7 @@ Checks: JSON syntax, required fields, dependency cycles, acceptance criteria qua
 Generate codebase analysis (auto-included in future planning).
 
 ```bash
-./brigade.sh map
+./brigade-go map
 ```
 
 Creates `codebase-map.md` with structure, patterns, and tech stack.
@@ -221,7 +204,7 @@ Creates `codebase-map.md` with structure, patterns, and tech stack.
 Execute all tasks in a PRD.
 
 ```bash
-./brigade.sh service brigade/tasks/prd.json
+./brigade-go service brigade/tasks/prd.json
 ```
 
 #### Flags
@@ -236,10 +219,10 @@ Execute all tasks in a PRD.
 #### Partial Execution
 
 ```bash
-./brigade.sh --only US-001,US-003 service prd.json   # Run specific tasks
-./brigade.sh --skip US-007 service prd.json          # Skip specific tasks
-./brigade.sh --from US-003 service prd.json          # Start from task
-./brigade.sh --until US-005 service prd.json         # Run up to task
+./brigade-go --only US-001,US-003 service prd.json   # Run specific tasks
+./brigade-go --skip US-007 service prd.json          # Skip specific tasks
+./brigade-go --from US-003 service prd.json          # Start from task
+./brigade-go --until US-005 service prd.json         # Run up to task
 ```
 
 ### ticket
@@ -247,7 +230,7 @@ Execute all tasks in a PRD.
 Run a single task.
 
 ```bash
-./brigade.sh ticket brigade/tasks/prd.json US-001
+./brigade-go ticket brigade/tasks/prd.json US-001
 ```
 
 ### resume
@@ -255,10 +238,10 @@ Run a single task.
 Resume after interruption.
 
 ```bash
-./brigade.sh resume                         # Auto-detect, prompt retry/skip
-./brigade.sh resume brigade/tasks/prd.json  # Specify PRD
-./brigade.sh resume retry                   # Retry failed task
-./brigade.sh resume skip                    # Skip and continue
+./brigade-go resume                         # Auto-detect, prompt retry/skip
+./brigade-go resume brigade/tasks/prd.json  # Specify PRD
+./brigade-go resume retry                   # Retry failed task
+./brigade-go resume skip                    # Skip and continue
 ```
 
 ### iterate
@@ -266,7 +249,7 @@ Resume after interruption.
 Quick tweak on completed PRD.
 
 ```bash
-./brigade.sh iterate "make the button blue"
+./brigade-go iterate "make the button blue"
 ```
 
 Creates a micro-PRD and executes it.
@@ -278,10 +261,10 @@ Creates a micro-PRD and executes it.
 Check progress.
 
 ```bash
-./brigade.sh status                    # Current state
-./brigade.sh status --watch            # Auto-refresh every 30s
-./brigade.sh status --json             # Machine-readable JSON
-./brigade.sh status --brief            # Ultra-compact JSON
+./brigade-go status                    # Current state
+./brigade-go status --watch            # Auto-refresh every 30s
+./brigade-go status --json             # Machine-readable JSON
+./brigade-go status --brief            # Ultra-compact JSON
 ```
 
 #### Status Symbols
@@ -299,7 +282,7 @@ Check progress.
 Generate markdown report from state.
 
 ```bash
-./brigade.sh summary brigade/tasks/prd.json
+./brigade-go summary brigade/tasks/prd.json
 ```
 
 ### cost
@@ -307,7 +290,7 @@ Generate markdown report from state.
 Show estimated cost breakdown.
 
 ```bash
-./brigade.sh cost brigade/tasks/prd.json
+./brigade-go cost brigade/tasks/prd.json
 ```
 
 ### risk
@@ -315,8 +298,8 @@ Show estimated cost breakdown.
 Pre-execution risk assessment.
 
 ```bash
-./brigade.sh risk brigade/tasks/prd.json
-./brigade.sh risk --history brigade/tasks/prd.json  # Include historical patterns
+./brigade-go risk brigade/tasks/prd.json
+./brigade-go risk --history brigade/tasks/prd.json  # Include historical patterns
 ```
 
 ## Exit Codes
@@ -361,7 +344,7 @@ You: "Add user authentication"
 
 ## Planning Phase
 
-When you run `./brigade.sh plan "..."`:
+When you run `./brigade-go plan "..."`:
 
 1. **Interview** - Executive Chef asks clarifying questions upfront
 2. **Analysis** - Explores your codebase (structure, patterns, stack)
@@ -444,7 +427,7 @@ Ctrl+C anytime. Brigade:
 2. Cleans up temp files
 3. Saves state for resume
 
-Run `./brigade.sh resume` to pick up where you left off.
+Run `./brigade-go resume` to pick up where you left off.
 
 <!-- section: writing-prds -->
 # Writing PRDs
@@ -584,7 +567,7 @@ your-project/
 └── ...
 ```
 
-Run `./brigade.sh init` to create a starter config.
+Run `./brigade-go init` to create a starter config.
 
 ## Workers
 
@@ -695,7 +678,7 @@ Three ways to enable:
 
 ```bash
 # CLI flag
-./brigade.sh --walkaway service prd.json
+./brigade-go --walkaway service prd.json
 
 # Configuration
 WALKAWAY_MODE=true
@@ -975,7 +958,7 @@ module_mymodule_on_task_complete() {
 ## Debug Mode
 
 ```bash
-BRIGADE_DEBUG=true ./brigade.sh service prd.json
+BRIGADE_DEBUG=true ./brigade-go service prd.json
 ```
 
 Shows lock timing, signal detection, and task flow details.
@@ -1021,7 +1004,7 @@ Usually caused by vague acceptance criteria:
 
 ```bash
 rm brigade/tasks/*.lock    # Remove stale locks
-./brigade.sh resume        # Resume execution
+./brigade-go resume        # Resume execution
 ```
 
 ### Corrupted state
