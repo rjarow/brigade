@@ -1314,8 +1314,8 @@ You are now the **Supervisor** for Brigade. Your job is to actively monitor and 
 **Read the Brigade supervisor documentation:**
 
 ```bash
-cat chef/supervisor.md        # Full supervisor guide - events, commands, intervention patterns
-cat CLAUDE.md                 # Find "Supervisor Integration" and "Autonomy Hierarchy" sections
+cat brigade/chef/supervisor.md  # Full supervisor guide - events, commands, intervention patterns
+cat brigade/CLAUDE.md           # Find "Supervisor Integration" and "Autonomy Hierarchy" sections
 ```
 
 These docs explain:
@@ -1340,7 +1340,7 @@ else
 fi
 
 # 2. Read project-specific instructions
-cat CLAUDE.md                    # Project conventions and instructions
+cat brigade/CLAUDE.md            # Project conventions and instructions
 
 # 3. Find and read active PRDs
 ls brigade/tasks/prd-*.json      # List PRDs
@@ -1479,8 +1479,8 @@ REPEAT until service_complete:
 
 | File | Contains |
 |------|----------|
-| `chef/supervisor.md` | Complete supervisor guide, intervention patterns, all event types |
-| `CLAUDE.md` | "Supervisor Integration" section - file formats, event types, config |
+| `brigade/chef/supervisor.md` | Complete supervisor guide, intervention patterns, all event types |
+| `brigade/CLAUDE.md` | "Supervisor Integration" section - file formats, event types, config |
 | `brigade/codebase-map.md` | Project structure, key files, patterns (generate with `$BRIGADE map`) |
 | `brigade/tasks/prd-*.json` | Active PRDs - what's being built, acceptance criteria |
 | `brigade/notes/supervisor-notes.md` | Optional handoff notes from planning Claude |
